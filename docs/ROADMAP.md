@@ -36,7 +36,7 @@ Each phase has a "done when" so we know when to stop polishing and move on.
 
 ### Phase 0: Tools (13–14 Oct)
 
-- Install the `cambc` CLI in a venv (`pip install cambc`; we're on 2.1.4 since 13 Oct, pinned in `cambc.toml`).
+- Install the `cambc` CLI in a venv (`pip install cambc`; we're on 2.1.5 since 13 Oct, pinned in `cambc.toml`).
 - Run `starter-python` vs itself on a couple of maps and watch one replay (`--view`).
 
 **Done when:** both of us can run a match and open a replay.
@@ -72,8 +72,8 @@ Build a **probe bot** that works through the open entries in `docs/ASSUMPTIONS.m
 Measured the same day on 2.1.4: A12 (**wrong**: the starter makes ~0.22 gems/round per champion, not 0.7), A18 (confirmed), A31 (monolith range 3), A32 (a camp sleeps after 2 rounds with no champion in range).
 
 Next:
-- Kits (A21 consumables, A22–A25) only once the draft settles on those champions. Tuning values (A14, A15, A40–A45) go to the harness.
-- Spot-checks on 2.1.4: A34 (one 2.1.2 experiment on a second map) and A33 (the arena's gems-lost formula).
+- Kits (A21 consumables, A22–A25) only once the draft settles on those champions. Tuning values (A14, A15, A36, A39, A40–A47) go to the harness.
+- Spot-checks on 2.1.5: A34 and A35 (one older experiment on a third map) and A33 (the arena's gems-lost formula).
 
 **Done when:** `ECONOMY.md` has measured clear times and damage for wolf and gem cluster.
 
@@ -115,6 +115,8 @@ The goal is a solid economy bot that never throws away gems:
 - Kill visible gem carriers when the fight-value check says we win.
 
 **Done when:** v1 beats `starter-python` on every map from both sides, and is submitted to the ladder on 16 Oct (frozen by 17 Oct).
+
+**Status 13 Oct (late)** [measured]: met on the 9 public maps. `bots/tzunami444` with group takes (BATTLEPLAN build item 1) scores 18W/0L vs `starter-python`, 9/9 maps won from both sides, 1.73 gems/round, worst map interlock (+217) [measured 13 Oct, source only]. Decided 13 Oct: **no precompiled bytecode** in submissions (`GETTING_STARTED.md`), so boot takes ~56 rounds (A29). Still to do before the lock: the first ladder submission (`HANDOFF.md` checklist, `TRACE = 0`) and a review of its losses, staged loading (optional, cuts boot), and build items 2–5.
 
 ### Phase 4: After Sprint 1 (18 Oct onwards)
 

@@ -38,6 +38,7 @@ Game in one line: draft 3–5 champions, kill camps, capture them for gold and g
 | `docs/TESTING.md` | Running matches, batch runs, replays, `--statistics` JSON. |
 | `docs/FIRST_STRATEGY.md` | The official starter loop (what `starter-python` roughly does). |
 | `docs/ART_OF_WAR.md` | Source quotes and principles P1–P23. Cite these by number. |
+| `docs/BATTLEPLAN.md` | **Plan of record** for our bot (`bots/tzunami444`): the five pillars, fuel practices, build order to the next lock. Before starting any bot feature. |
 | `docs/STRATEGY.md` | Before changing any strategic or fight logic. |
 | `docs/ECONOMY.md` | Before using any number (rewards, timings, costs). |
 | `docs/CHAMPIONS.md`, `docs/Champions/` | Before writing champion-specific code or draft logic. |
@@ -51,12 +52,12 @@ Game in one line: draft 3–5 champions, kill camps, capture them for gold and g
 - Death: killer gets all carried gems + 50 gold; victim is out 60 rounds. Camp kills destroy carried gems.
 - Tribute: channel of `ceil(gems/10)` turns; damage doesn't interrupt it, stun/death/altar lock does.
 - Capture: stand on a cleared camp's spawn tile uncontested for 5 rounds; reward is split between allies present.
-- Monsters are friendly until hit, then each hits the nearest champion every round; they don't chase. All camps have range 3; a camp sleeps after 2 rounds with no champion in range [measured A31, A32]. Maps are 30×30 to 100×100. The draft bot can see camps (SDK 2.1.4).
+- Monsters are friendly until hit, then each hits the nearest champion every round; they don't chase. All camps have range 3; a camp sleeps after 2 rounds with no champion in range [measured A31, A32]. Maps are 30×30 to 100×100. The draft bot can see camps (since SDK 2.1.4).
 - Vision is not shared between champions. Team shared memory is only **8 bytes** (plus 1,024 bytes written during the draft, read-only after).
-- Compute is limited by fuel per turn (Python gets 25x the C++ limit). Unfinished turns carry over. Cache pathing: `move_towards()` and `camp_groups()` recompute on every call.
+- Compute is limited by fuel per turn (Python gets 25x the C++ limit). Unfinished turns carry over. Compiling our source costs ~55k fuel per line of code (comments ~6k); tzunami444 boots to round 57 [measured A29]. Submit source only: no precompiled bytecode or other generated binaries (`docs/GETTING_STARTED.md`). Cache pathing: `move_towards()` and `camp_groups()` recompute on every call.
 - The SDK allows `gem_count()` on any visible champion, enemies included [sdk]; and it returns their real bag [measured A18]. Both teams' scores via `global_submitted_gems()` [sdk].
 - A camp's respawn timer starts only after its reward is claimed [rules]; a cleared camp waits unclaimed, and **either team can capture it** [measured A7, A8]. Damaged camps don't regenerate [measured A28].
-- Fuel [measured]: 2.5M per turn for Python, ~24.6M on the first draft turn, ~4.6M on the first play turn (cambc 2.1.4). Traps: `camp_groups()` and every `vision.camp*` call cost ~1M each (cache once); the first `import traceback` freezes a champion for ~136 rounds (never use it). See `docs/ARCHITECTURE.md`.
+- Fuel [measured]: 2.5M per turn for Python, ~24.6M on the first draft turn, ~4.6M on the first play turn (cambc 2.1.4). Traps: `camp_groups()` costs ~0.74M per call (cache once; on 2.1.5 single-camp lookups like `vision.camps()` are cheap, ~20–30k); the first `import traceback` freezes a champion for ~136 rounds (never use it). See `docs/ARCHITECTURE.md`.
 - Maps are at most **100×100** tiles (event info, confirmed A30; the map editor allows 256, ignore that). Budget fuel for 100×100.
 - Since cambc 2.1.4 the draft bot can read the camps (`camp_groups()`) [sdk, measured A19], so the draft can plan around them.
 
@@ -72,21 +73,28 @@ Sprint locks **17 Oct**, 24 Oct, 31 Oct · international qualifiers 4 Nov · UK 
 - [x] `docs/ART_OF_WAR.md`: key passages verbatim + principles P1–P23
 - [x] Champion profiles for all 11 picks in `docs/Champions/` + roster summary in `docs/CHAMPIONS.md`
 - [x] Game plan written up: `STRATEGY.md` (game model, principle table, fight value), `ECONOMY.md` ([rules] values + [provisional] rates), `ARCHITECTURE.md`, `ROADMAP.md`
-- [x] Assumptions register `docs/ASSUMPTIONS.md` (A1–A34, A40–A45)
-- [x] Bot language: Python (`cambc.toml`, SDK 2.1.4; upgraded 13 Oct with the new rules export)
+- [x] Assumptions register `docs/ASSUMPTIONS.md` (A1–A47)
+- [x] Bot language: Python (`cambc.toml`, SDK 2.1.5; upgraded twice on 13 Oct: 2.1.4 with the new rules export, then 2.1.5, cheap camp lookups)
 
 ### Next up (phases from `docs/ROADMAP.md`)
 - [ ] Both teammates read `GameRules.md` fully
-- [x] **Phase 0, tools:** `cambc` 2.1.4 (`.venv/` per README quick start, or global pip); starter vs starter runs on all 9 maps, ~5 s per match
+- [x] **Phase 0, tools:** `cambc` 2.1.5 (`.venv/` per README quick start, or global pip); starter vs starter runs on all 9 maps, ~5 s per match
 - [ ] Both teammates watch a replay (`.venv/bin/cambc view`)
-- [ ] **Phase 1, measure** (in progress, see ROADMAP status; probe in `bots/probe/`, logs via `tools/plog.py`). Closed: A1–A11, A13, A16, A19, A20, A26, A28, A30 (rule-stated ones are closed as [rules], not tested). Measured 13 Oct: A12 (wrong: ~0.3 gems/round alive), A18, A31 (monolith range 3), A32 (camps sleep after 2 rounds with nobody in range). Open: kits A21–A25 only if drafted; tuning A14, A15, A40–A45 via harness; spot-checks A33 (gems-lost formula), A34 (2.1.4 changed no mechanics)
+- [ ] **Phase 1, measure** (in progress, see ROADMAP status; probe in `bots/probe/`, logs via `tools/plog.py`). Closed: A1–A11, A13, A16, A19, A20, A26, A28, A30 (rule-stated ones are closed as [rules], not tested). Measured 13 Oct: A12 (wrong: ~0.3 gems/round alive), A18, A31 (monolith range 3), A32 (camps sleep after 2 rounds with nobody in range). Open: kits A21–A25 only if drafted; tuning A14, A15, A36, A39, A40–A47 via harness; spot-checks A33 (gems-lost formula), A34/A35 (2.1.4 and 2.1.5 changed no mechanics)
 - [x] **Phase 2, harness:** `tools/arena.py` plays bot A vs bot B on every map from both sides and prints win rate, gems/round, deaths, gems lost and the worst map (cached; `NAME@REV` for old versions)
 - [ ] **Phase 2b, map generator:** maps beyond the 9 public ones, via the engine's `MapBuilder` (`ROADMAP.md` → Phase 2 → Next)
 - [x] Champion "To test" lists triaged: mechanics in `ASSUMPTIONS.md` (A2, A20–A25; A20 confirmed: Cassi and Issac have separate gold); performance questions in `ROADMAP.md` → Champion experiments
 - [ ] Cassi & Issac: rule for when to split vs stay together
-- [x] First baseline: starter vs starter, one game per map (`ECONOMY.md` → Baseline; rerun on 2.1.4 with the arena)
+- [x] First baseline: starter vs starter, one game per map (`ECONOMY.md` → Baseline; rerun on 2.1.5 with the arena)
 - [ ] Baseline vs our bots from both sides with the arena (matches are deterministic, so re-running the same pair adds nothing)
 - [ ] **Phase 3, v1 (Sprint 1 lock 17 Oct):** fixed draft, cached pathing, cluster-then-wolf farming, bank at G*, retreat/recall before dying with gems, kill visible carriers when fight value > 0; must beat the starter on every map, both sides
+  - [x] `bots/tzunami444/` v1 baseline (13 Oct): cached pathing, farming, banking, retreat, single-target fights. 7W/11L vs the starter [measured]
+  - [x] `docs/BATTLEPLAN.md`: the five-pillar plan and build order
+  - [x] Build item 1, group takes R7/R8 + range-4 spells (`GROUP_TAKE`, 13 Oct): 18W/0L vs the starter, 9/9 maps both sides, 1.73 gems/round, source only (no bytecode, boot to round 57; 1.94 with bytecode) [measured]; plus fixes for three freezes and the heal-mode deaths (`HANDOFF.md`)
+  - [ ] Build order 2–5 in `BATTLEPLAN.md`: draft memory + comms v1, comp A/B, reflexes, endgame
+  - [x] Decided (13 Oct): no precompiled `.bin` bytecode ships (`docs/GETTING_STARTED.md`: no generated binaries in a submission). Source only; boot costs ~56 rounds (A29)
+  - [ ] Optional: staged loading to cut the boot (`HANDOFF.md` → What to do next)
+  - [ ] First ladder submission (checklist in `HANDOFF.md` → Trying and submitting tzunami444; `TRACE = 0` first), then review the ladder losses
 
 ### Later (Phase 4, in priority order)
 - [ ] Draft logic from champion profiles (team size, map, enemy picks so far)
@@ -100,7 +108,7 @@ Sprint locks **17 Oct**, 24 Oct, 31 Oct · international qualifiers 4 Nov · UK 
 - [ ] Toggle-and-measure each principle against the previous version
 
 ### Open questions
-Unconfirmed mechanics and numbers: `docs/ASSUMPTIONS.md` (A1–A34, tuning A40–A45). Don't test what `GameRules.md` states. Strategy questions:
+Unconfirmed mechanics and numbers: `docs/ASSUMPTIONS.md` (A1–A39, tuning A40–A47). Don't test what `GameRules.md` states. Strategy questions:
 - How much does gold spent on items speed up farming?
 - How to estimate P(win) for a fight from what a champion can see?
 - Are elks and the monolith worth taking? Targeting is now [rules] (nearest champion); monolith range is 3 [measured A31]; it hinges on A22 (spells on camps).
