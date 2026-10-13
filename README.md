@@ -24,6 +24,17 @@ Our bots are built around Sun Tzu's *Art of War*. Each principle has to earn its
 | `docs/ASSUMPTIONS.md` | Every unconfirmed number or mechanic, with an ID (A#), how to test it, and the result |
 | `CLAUDE.md` | Context for Claude Code when working in this repo |
 
+## Quick start
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install cambc==2.1.2      # SDK version pinned in cambc.toml
+.venv/bin/cambc run starter-python starter-python --map expanse --statistics replays/stats.json
+.venv/bin/cambc view                              # opens the most recent replay
+```
+
+The workspace (`cambc.toml`, `sdk/`, `maps/`) is already in the repo, so there's no need to run `cambc init`. `.venv/` and `replays/` are git-ignored. A full match takes about 5 seconds.
+
 ## Why this order
 
 Economy and champion facts come first because everything else builds on them: the fight-value formula needs the numbers, the draft needs the profiles, and the strategy needs real mechanics to point at. Numbers in the docs later become the bot's constants. Anything tagged [provisional A#] is unconfirmed: `docs/ASSUMPTIONS.md` is our list of things to measure, and nothing provisional is treated as fact.

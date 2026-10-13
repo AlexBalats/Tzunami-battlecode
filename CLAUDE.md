@@ -2,6 +2,8 @@
 
 Team Tzunami's bot for Cambridge Battlecode (CAMBC 2026, event `cambc2026a`). Shared by both teammates and Claude. Keep it current: tick tasks off and add new ones as you go.
 
+**Start here:** `docs/HANDOFF.md` says where work stopped, how to run the probe bot, the engine gotchas, and what to do next. Update it before you stop.
+
 ## The project
 
 Our bots are built around Sun Tzu's *Art of War*. The idea is not flavour text: every principle must become measurable behaviour that wins games.
@@ -23,6 +25,7 @@ Game in one line: draft 3–5 champions, kill camps, capture them for gold and g
    Every provisional claim has an entry in `docs/ASSUMPTIONS.md`. In code it lives only in `config.py` with a `# PROVISIONAL A#` comment. Never state a guess as fact: if unsure, add it to the register.
 6. **Docs and code stay in sync.** If code changes a number or behaviour, update the doc in the same commit.
 7. **Cite principles in code.** Strategic behaviour gets a short comment naming the principle, e.g. `# P8: strike the weak (low-HP gem carrier)`.
+8. **Generalise to unseen maps.** Sprints, qualifiers and finals use maps we have never seen. No map names, coordinates or fixed routes in code: derive everything at runtime from the map. Judge every change by its win rate on all maps from both sides, worst map included.
 
 ## Where things are, and when to read them
 
@@ -39,6 +42,7 @@ Game in one line: draft 3–5 champions, kill camps, capture them for gold and g
 | `docs/CHAMPIONS.md`, `docs/Champions/` | Before writing champion-specific code or draft logic. |
 | `docs/ARCHITECTURE.md` | Before writing or restructuring bot code (layout, turn pipeline, fuel, memory plans). |
 | `docs/ROADMAP.md` | Deciding what to work on next; sprint dates and "done when" criteria. |
+| `docs/HANDOFF.md` | Start of every session; update it at the end. |
 | `docs/ASSUMPTIONS.md` | Before using any number or mechanic not tagged [rules]/[sdk]/[measured]; when closing one with a measurement. |
 
 ## Key facts (from `GameRules.md`)
@@ -49,7 +53,8 @@ Game in one line: draft 3–5 champions, kill camps, capture them for gold and g
 - Vision is not shared between champions. Team shared memory is only **8 bytes** (plus 1,024 bytes written during the draft, read-only after).
 - Compute is limited by fuel per turn (Python gets 25x the C++ limit). Unfinished turns carry over. Cache pathing: `move_towards()` and `camp_groups()` recompute on every call.
 - The SDK allows `gem_count()` on any visible champion, enemies included [sdk]; that it returns their real bag is provisional (A18). Both teams' scores via `global_submitted_gems()` [sdk].
-- A camp's respawn timer starts only after its reward is claimed [rules]. Whether either team can capture a camp the other cleared is provisional (A7).
+- A camp's respawn timer starts only after its reward is claimed [rules]; a cleared camp waits unclaimed, and **either team can capture it** [measured A7, A8]. Damaged camps don't regenerate [measured A28].
+- Fuel traps [measured]: `camp_groups()` and every `vision.camp*` call cost ~1M each (cache once); the first `import traceback` freezes a champion for ~136 rounds (never use it). See `docs/ARCHITECTURE.md`.
 
 ## Season dates
 
@@ -63,17 +68,19 @@ Sprint locks **17 Oct**, 24 Oct, 31 Oct · international qualifiers 4 Nov · UK 
 - [x] `docs/ART_OF_WAR.md`: key passages verbatim + principles P1–P23
 - [x] Champion profiles for all 11 picks in `docs/Champions/` + roster summary in `docs/CHAMPIONS.md`
 - [x] Game plan written up: `STRATEGY.md` (game model, principle table, fight value), `ECONOMY.md` ([rules] values + [provisional] rates), `ARCHITECTURE.md`, `ROADMAP.md`
-- [x] Assumptions register `docs/ASSUMPTIONS.md` (A1–A19, all open)
+- [x] Assumptions register `docs/ASSUMPTIONS.md` (A1–A28)
 - [x] Bot language: Python (`cambc.toml`, SDK 2.1.2)
 
 ### Next up (phases from `docs/ROADMAP.md`)
 - [ ] Both teammates read `GameRules.md` fully
-- [ ] **Phase 0, tools:** install `cambc` in a venv, run `starter-python` vs itself, watch a replay
-- [ ] **Phase 1, measure:** probe bot that closes the open entries in `docs/ASSUMPTIONS.md` (monster attacks and targeting, clear times, `camp_damage_multiplier`, capture rules, constants, fuel)
+- [x] **Phase 0, tools:** `cambc` 2.1.2 in `.venv/` (see README quick start); starter vs starter runs on all 9 maps, ~5 s per match
+- [ ] Both teammates watch a replay (`.venv/bin/cambc view`)
+- [ ] **Phase 1, measure** (in progress, see ROADMAP status; probe in `bots/probe/`, logs via `tools/plog.py`). Closed so far: A1, A3–A8, A10, A11, A13, A19, A26, A28. Open: A2 (monster targeting), A9 (contesting), A18, A21–A25 (kits), A27 (`import draft`)
 - [ ] **Phase 2, harness:** one command plays bot A vs bot B on every map from both sides (`cambc run-batch` + `--statistics`) and prints win rate, gems/round, deaths, gems lost
-- [ ] Run the champion "To test" lists (camp targeting, per-body wards/gold for Cassi & Issac, dash + attack same turn, Ren retaliation on camps)
+- [x] Champion "To test" lists triaged: mechanics in `ASSUMPTIONS.md` (A2, A20–A25; A20 confirmed: Cassi and Issac have separate gold); performance questions in `ROADMAP.md` → Champion experiments
 - [ ] Cassi & Issac: rule for when to split vs stay together
-- [ ] Measure the starter's gems/round and gold/round as our baseline numbers
+- [x] First baseline: starter vs starter, one game per map (`ECONOMY.md` → Baseline)
+- [ ] Baseline vs our bots from both sides once the harness exists (matches are deterministic, so re-running the same pair adds nothing)
 - [ ] **Phase 3, v1 (Sprint 1 lock 17 Oct):** fixed draft, cached pathing, cluster-then-wolf farming, bank at G*, retreat/recall before dying with gems, kill visible carriers when fight value > 0; must beat the starter on every map, both sides
 
 ### Later (Phase 4, in priority order)
@@ -88,7 +95,7 @@ Sprint locks **17 Oct**, 24 Oct, 31 Oct · international qualifiers 4 Nov · UK 
 - [ ] Toggle-and-measure each principle against the previous version
 
 ### Open questions
-Unconfirmed mechanics and numbers: `docs/ASSUMPTIONS.md` (A1–A19). Strategy questions:
+Unconfirmed mechanics and numbers: `docs/ASSUMPTIONS.md` (A1–A28). Strategy questions:
 - How much does gold spent on items speed up farming?
 - How to estimate P(win) for a fight from what a champion can see?
-- Are elks and the monolith worth taking once A1–A5 are measured?
+- Are elks and the monolith worth taking? A1, A3–A5 are measured; it now hinges on A2 (targeting) and A22 (spells on camps).

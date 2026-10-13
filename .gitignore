@@ -5,3 +5,5 @@ replays/
 bots/*/build/
 bots/*/target/
 .DS_Store
+.venv/
+runs/

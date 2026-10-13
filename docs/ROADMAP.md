@@ -41,9 +41,11 @@ Each phase has a "done when" so we know when to stop polishing and move on.
 
 **Done when:** both of us can run a match and open a replay.
 
+**Status (13 Oct):** CLI installed (`.venv/`, see README → Quick start); starter vs starter runs on all 9 maps; first baseline is in `ECONOMY.md` → Baseline. Still to do: each of us opens a replay.
+
 ### Phase 1: Measure (14–15 Oct)
 
-Build a **probe bot** that works through the open entries in `docs/ASSUMPTIONS.md` (A1–A19) and turns each **[provisional]** tag into **[measured]** or a correction:
+Build a **probe bot** that works through the open entries in `docs/ASSUMPTIONS.md` and turns each **[provisional]** tag into **[measured]** or a correction:
 
 - Engine constants: all of `cambc.constants`, checked against the rules (A10, A11).
 - Per champion: the hidden `camp_damage_multiplier` (A4). Also check base stats and shard growths against the rules tables.
@@ -55,8 +57,25 @@ Build a **probe bot** that works through the open entries in `docs/ASSUMPTIONS.m
 - Fuel: `cambc.fuel_remaining()` per turn and per pathfinding call (A16, A17).
 - Per map: camp groups and their sizes (A5), and distances from spawn to camps and altars (A13).
 - Enemy `gem_count()` (A18), and what the draft bot can see (A19).
+- Champion kits (A21–A25):
+  - Cassi & Issac's own wards and items;
+  - area spells and stuns on camps;
+  - Ren's retaliation;
+  - Vesper Vale's dash + attack in the same turn.
+- Clear time per champion per camp type (A3, A4). This answers the clear-speed questions in the champion profiles.
 
-**Done when:** A1–A11 and A16–A19 are closed, and `ECONOMY.md` has measured clear times and damage for wolf and gem cluster.
+**Status (13 Oct):** probe bot in `bots/probe/` (`plan.py` picks the experiment; read logs with `tools/plog.py`).
+- **Closed:** A1 (one monster vs one champion), A3 (now a formula), A4, A5, A6 (wolf), A7, A8, A10, A11, A13, A19, A26, A28 (new: camps don't regenerate).
+- **Partly:** A16, A17 (fuel; the camp-index trap and the traceback stall are in `ARCHITECTURE.md`), A27 (`import plan` works in the draft; `import draft` doesn't).
+- Per-map table for all 9 maps in `ECONOMY.md` → Maps.
+
+Next, in this order:
+- A2 (monster targeting with two champions in range) and A9 (what contests a capture). Both shape v1's farming and capture logic.
+- A22, A23 (area spells and stuns on camps), then A18, A21, A24, A25.
+- A27: `import draft` vs `import drafter`.
+- Check A1/A6 on an elk, and A3 with one more champion, on a second map.
+
+**Done when:** A1–A11 and A16–A25 are closed, and `ECONOMY.md` has measured clear times and damage for wolf and gem cluster.
 
 ### Phase 2: Harness (15 Oct)
 
@@ -67,6 +86,15 @@ A script that plays bot A vs bot B on **every map, from both sides** (Team A and
 - deaths, kills, and gems lost to deaths.
 
 **Done when:** one command compares two bot folders and prints a table.
+
+**Unseen maps.** Sprints, qualifiers and finals are played on maps we haven't seen, so the 9 public maps are a test set, not the target. The harness reports the worst map as well as the average. Once it works, add custom maps (`cambc mapeditor`) that stretch what the public maps cover: no home altar, far camps, unreachable altars, odd sizes, 3 vs 5 champions.
+
+**Champion experiments (after the harness).** These are performance comparisons from the "To test" lists in `docs/Champions/`, not unknown mechanics. Run them once the harness exists, and write the results back into the champion files as **[measured]**:
+- duels: Ryth vs Vendetta, Marcella vs Ryth and Vendetta, Ren vs Vendetta;
+- pairs vs solo farmers: Willow + tank, Cassi & Issac split vs together;
+- gold: Vesper Vale's Treasure break-even round, and Tavi's field shopping and selling;
+- stun value: Prism vs Tavi, how often stuns cancel tributes, Tavi + Stellar kill rate;
+- carriers: does routing gems through Ryth or Marcella cut gems lost per game?
 
 ### Phase 3: v1 for Sprint 1 (15–17 Oct)
 

@@ -14,8 +14,41 @@ Tags (full definitions in `docs/ASSUMPTIONS.md`):
 - Pace needed (arithmetic on the rules):
   - **0.5 tributed gems per round** as a team to reach 1,000 by round 2,000;
   - 2 per round to reach it by round 500.
-- 1,000 gems is about **45 wolves, 42 gem clusters, 28 elks or 5 monoliths**, counted per monster. **[rules]** arithmetic. A camp group may hold several monsters (**[provisional A5]**).
+- 1,000 gems is about **45 wolves, 42 gem clusters, 28 elks or 5 monoliths**, counted per monster. **[rules]** arithmetic. A camp group may hold several monsters: from 1 up to 9 on the public maps **[measured A5]**, see Maps.
 - Gold counts in the tiebreak as **earned**, not banked, so spending it costs nothing there. Tavi's refunds don't count as earned. **[rules]**
+
+## Baseline: starter vs starter **[measured]**
+
+`starter-python` against itself, one game per map, cambc 2.1.2, 13 Oct 2026.
+
+**Matches are deterministic [measured]:** re-running expanse gave an identical statistics file. The starter seeds its random generator from its spawn position. So the same two bots on the same map always play the same game, and re-running adds no new data. Differences between Team A and Team B here come from the map and the side, not chance. Each row is still only one game, so read the numbers as rough. To get more data, vary the bot or the map, not the number of runs.
+
+| Map | Picks per team | Round 1,000 reached | Winner gems/round | Loser gems/round | Deaths (A / B) | Champion kills (A / B) |
+| --- | --- | --- | --- | --- | --- | --- |
+| collision | 3 | 1,216 | 0.83 | 0.58 | 26 / 22 | 13 / 12 |
+| corners | 5 | 778 | 1.29 | 0.95 | 21 / 24 | 12 / 7 |
+| elkring | 5 | 1,134 | 0.89 | 0.75 | 40 / 41 | 6 / 8 |
+| expanse | 3 | 991 | 1.03 | 0.81 | 7 / 7 | 0 / 0 |
+| interlock | 4 | 823 | 1.22 | 1.04 | 17 / 22 | 14 / 7 |
+| lanes | 5 | 742 | 1.36 | 1.06 | 16 / 14 | 0 / 0 |
+| monolith | 5 | 1,265 | 0.80 | 0.58 | 28 / 37 | 8 / 7 |
+| packs | 3 | 809 | 1.24 | 0.79 | 11 / 9 | 2 / 2 |
+| rows | 4 | 1,036 | 0.98 | 0.76 | 10 / 15 | 0 / 0 |
+
+Gems/round = tributed gems ÷ final round. Cassi & Issac count as two bodies for deaths.
+
+What it tells us:
+
+- **The bar is high already.** Every game ended at 1,000 gems, between rounds 742 and 1,265. The naive starter makes roughly 0.6–1.4 tributed gems per round per team. To beat it, we must reach 1,000 clearly faster, or slow them down.
+- **Most deaths aren't caused by enemy champions.** Deaths far outnumber enemy kills; for example, on elkring there were 40 deaths against 8 enemy kills. The rest are very likely camp deaths, which destroy the carried gems. Not dying to camps (P3) looks like a big, cheap win; confirm the cause in replays.
+- The starter's picks were probably made at random by the engine, not by its draft code: its `main.py` imports `draft.py`, which kills our draft instance (**[provisional A27]**).
+- **Team size varies by map: 3, 4 or 5 picks.** Both teams can draft the same champion; Ryth and Tavi appeared on both sides on corners.
+- The `--statistics` JSON gives, per champion:
+  - `submittedGems`, `collectedGems`, `deaths`, `kills`, `assists`;
+  - `earnedGold`, `spentGold`, `itemsBought`;
+  - `monsterDamageDone`, `monsterDamageTaken`, `championDamageDone`, `championDamageTaken`.
+
+  The harness (Phase 2) reads these.
 
 ## Camps
 
@@ -41,30 +74,32 @@ Confirmed facts that matter **[rules]**:
   - Leaving the tiles empty or letting an enemy in resets it.
   - So one champion captures and the others move on.
 - **Respawn timers start after the reward is claimed.** An occupied spawn tile delays the whole group.
-- Unconfirmed:
-  - whether a cleared camp stays dead until someone captures it (**[provisional A8]**);
-  - whether the enemy can capture a camp we cleared (**[provisional A7]**).
 
-### Farming rates **[provisional]**: illustrative only, don't use as truth
+Measured on top of the rules **[measured]** (probe `wolf` experiment, collision, 13 Oct, cambc 2.1.2):
 
-> ⚠ **Every number in this table is a guess.** It shows the *shape* of the trade-offs until the probe bot measures real values. It rests on four unconfirmed assumptions:
-> - **A1**: each monster hits one champion once per round for its Strength.
-> - **A3**: our champion deals 50 damage per round to camps.
-> - **A5**: one monster per camp.
-> - No walking time.
+- **A cleared camp stays dead until someone captures it** (A8): it was still `RewardAvailable` 85 rounds after the clear. The respawn timer started on the round the reward was paid. A champion standing on a spawn tile held the timer at 0 for 70+ rounds.
+- **The enemy can capture a camp we cleared** (A7). Team B walked onto a wolf Team A had cleared and got the full 90 gold + 22 gems. So clear a camp only if we can capture it, and capture straight away (P13).
+- **A sleeping wolf ignores a champion standing 3 tiles away** (A6, 12 rounds, no damage).
+- **A wolf hits one champion for its Strength (20) every round** (A1). Its first hit lands the round after our first attack.
+- **Capture paid out 5 rounds after arrival**: the champion stepped onto the tile in round 183 and had the reward in round 188.
+
+### Farming rates: one monster, one champion, basic attacks only
+
+Each basic attack does exactly its Strength to a camp: `camp_damage_multiplier` is 1.0 for every champion (A4) **[measured]**. A monster hits one champion for its Strength every round, starting the round after our first hit (A1, measured for one champion vs one wolf). So for a champion with Strength S:
+
+- clear = `ceil(HP / S)` rounds;
+- damage taken = monster Strength × (clear − 1);
+- capture = +5 rounds.
+
+The table uses S = 50 (Ryth's base; the range is 30–70 **[rules]**). The **wolf row is measured exactly** (Ryth on collision: 27 rounds, 520 damage). The others follow from the same formula. Not included: walking, abilities (A22), several champions sharing a camp (A2), and items.
 
 | Camp | Solo clear (rounds) | Damage taken | Clear + capture (rounds) | Gems/round | Gold/round |
 | --- | --- | --- | --- | --- | --- |
 | Gem cluster | 10 | 0 **[rules]** | 15 | 1.6 | 0 |
 | Gold cluster | 10 | 0 **[rules]** | 15 | 0 | 2.3 |
-| Wolf | 27 | 540 | 32 | 0.69 | 2.8 |
-| Elk | 48 | 2,880 | 53 | 0.68 | 3.0 |
-| Monolith | 400 | 80,000 | 405 | 0.49 | 0.7 |
-
-How each column is worked out:
-- clear = HP ÷ 50;
-- damage taken = Strength × clear rounds;
-- capture = +5 rounds.
+| Wolf | 27 **[measured]** | 520 **[measured]** | 32 | 0.69 | 2.8 |
+| Elk | 48 | 2,820 | 53 | 0.68 | 3.0 |
+| Monolith | 400 | 79,800 | 405 | 0.49 | 0.7 |
 
 What it *suggests*, all to be confirmed:
 
@@ -72,6 +107,29 @@ What it *suggests*, all to be confirmed:
 - Elks may be impossible to solo.
 - The monolith looks like a whole-team job.
 - How monsters pick their targets (**A2**) decides whether we can share the damage around.
+
+## Maps **[measured]**
+
+The 9 public maps, from the probe's map dump (13 Oct, cambc 2.1.2). Distances are walking distances from a team's spawn, through walls, holes and altars. The maps are mirror-symmetric, so both teams see the same numbers. **Sprints, qualifiers and finals use unseen maps**, so this table shows the *range* the bot must handle; nothing may be tuned to one row.
+
+| Map | Size | Champions | Groups | Altars (walking distance) | Nearest group | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| collision | 41×41 | 3 | 20 | 2: one **unreachable on foot**, one central at 21 | wolf at 4 | elk + 3 gem clusters (108 gems) at 31 / 44 |
+| corners | 71×71 | 5 | 30 | 5: one at 19, the rest 31–53 | wolf at 5 | 4 gem-cluster pairs at 18–20 |
+| elkring | 30×30 | 5 | 10 | 2, both central at 23 | elk + gold at 3 | only elk + gold-cluster groups |
+| expanse | 80×80 | 3 | 30 | 10: home altar at 7 | wolf at 6 | 6× elk + 3 gem clusters; groups up to 77 away |
+| interlock | 40×40 | 4 | 16 | 4: nearest at 17 | wolf at 5 | gem-cluster triple (72 gems) at 15 |
+| lanes | 90×30 | 5 | 42 | 18: home altars at 7–10 | **31** | every group is ≥ 31 from spawn |
+| monolith | 50×50 | 5 | 22 | 6: nearest at 25 | wolf at 5 | 2× monolith + 8 gem clusters (392 gems) at 42 / 45 |
+| packs | 31×31 | 3 | 8 | 6: home altar at 3 | wolf pair at 5 | central gem + gold cluster groups at 14–15 |
+| rows | 50×50 | 4 | 9 | 2: home altar at 10 | wolf triple at 12 | 2 monoliths + 2 gem clusters (448 gems) at 35; groups up to 96 away |
+
+What this means for a general bot:
+
+- **Nothing about distance is a constant.** The nearest farm runs from 3 to 31 tiles, the nearest altar from 3 to 25, and a "home" altar may not exist (collision, elkring and monolith have only central or far ones). Read every distance off a distance field built at game start.
+- **Some altars can't be reached on foot** (collision). Path costs must handle "unreachable" (distance field value 65535 or -1) without crashing or walking into a wall.
+- **Group composition varies a lot**: single, paired and triple wolves, elks mixed with gem clusters, monoliths inside big gem groups. Score a group by its total reward, total HP and total Strength, never by its "type".
+- Team size runs from 3 to 5, and it changes how many groups each champion can cover.
 
 ## Kills and deaths
 
@@ -116,11 +174,11 @@ Dying costs us the same. This is why P3 (don't die with gems) comes first.
 
 - 5 turn-ends (3 with a Home emblem), counting the start turn.
 - **Any damage or stun cancels it.** Carried gems are kept.
-- Arrives at turn start. Staying on spawn until the end of that turn heals to full. The `SPAWN_HEALING` value is **[provisional A11]**.
+- Arrives at turn start. Staying on spawn until the end of that turn heals to full. `SPAWN_HEALING` is 1.0 **[measured A11]**.
 - Buying Health shards on spawn heals by the amount gained.
 
 Costs compared:
-- **Recall:** 5 rounds **[rules]** plus the walk back out, about 10–30 rounds **[provisional A13]**.
+- **Recall:** 5 rounds **[rules]** plus the walk back out: 3–31 tiles to the nearest group on the public maps, up to 96 to the farthest **[measured A13]**. Read it from a distance field; it is map-dependent.
 - **Dying:** 60 rounds plus the carried gems **[rules]**.
 
 Recall early, because it fails under fire.
@@ -150,7 +208,7 @@ Recall early, because it fails under fire.
 
 **Gold income [rules]:**
 - wolf 90, elk 160, gold cluster 35, monolith 300, kill 50;
-- plus `PASSIVE_GOLD`, whose amount and timing are **[provisional A11]**.
+- `PASSIVE_GOLD` is **0** **[measured A11]**: no gold for idling, on spawn or anywhere.
 
 ## Open questions
 

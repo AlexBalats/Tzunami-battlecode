@@ -10,17 +10,30 @@ Tags as in `docs/ASSUMPTIONS.md`: **[rules]**, **[sdk]**, **[measured]**, and **
 
 - Python gets 25x the C++ budget per turn **[rules]**, but the event site's FAQ says 20x, so the real figure is **[provisional A16]**. The first draft turn gets 10x and the first play turn 2x. Unused fuel doesn't carry over. **[rules]**
 - **A turn that runs out of fuel is suspended and resumes next round** **[rules]**. In a fight that means skipping a turn, so every turn must finish with a margin.
-- `Champion.move_towards()` (and the starter's `move_towards_closest`) runs a fresh BFS (`DistanceField`) on every call **[sdk]**. How much fuel that costs is **[provisional A17]**.
-- `game_map.camp_groups()` and `game_map.camp()` rebuild the camp index from the host on every call **[sdk]**.
+- `Champion.move_towards()` (and the starter's `move_towards_closest`) runs a fresh BFS (`DistanceField`) on every call **[sdk]**.
+- **The camp index trap** **[sdk]**: `game_map.camp_groups()`, `game_map.camp()`, `vision.camps()`, `vision.camp_at()`, `vision.camp_groups()` and `Camp.camp_group()` all rebuild every camp group from the host on every call (~1M fuel each). Call `game_map.camp_groups()` **once** and keep the `CampGroup` and `Camp` objects. `camp.health()`, `camp.position()`, `camp.is_visible()` and `group.state()` on those objects are cheap host reads.
+- **Measured fuel costs** **[measured]** (probe bot, expanse and collision, 13 Oct; details in `docs/ASSUMPTIONS.md` A16, A17, A19, A27):
+  - A normal turn has ~2.49M fuel, in both play and draft.
+  - `game_map.camp_groups()` costs **~1M per call**, 40% of a turn.
+  - A full `DistanceField.compute` on 80x80 costs ~285k; `move_towards()` ~100k.
+  - **The first import of a module costs ~1.2M**, even a tiny one; later imports ~10k. Import everything on the first play turn.
+  - Typical turns: ~23k idle, 65–90k for a champion stepping along a cached field.
+  - **Never `import traceback` in a bot.** The first `import traceback` + `format_exc()` froze every champion for **~136 rounds** (one turn, rounds 87–224). A frozen Ryth next to a wolf died. Later calls cost ~1M each. Raising and catching an exception is cheap (~6k). Error handlers log the exception type, message and line number (`error.__traceback__.tb_lineno`), nothing more.
+  - Python reflection (`dir`/`getattr` loops) is also expensive: keep it out of the game loop.
+- **Allies out of our vision are still listed** by `cambc.champions(Team.ALLY)`, but reading them (e.g. `champion_name()`) raises "Unit is not in vision" **[measured]**. Check `is_visible()` first, or work out team-wide facts (who leads, roles) once at the start while everyone stands on spawn.
+- **The draft instance dies if it imports our own `draft.py`** **[measured]**: no pick is made and the engine picks at random. Importing a module with another name (`plan.py`) works, so the likely cause is a clash with the SDK's `cambc.draft` (**[provisional A27]**). Until that's tested, don't name a module `draft`. Keep the draft code inline in `main.py`, branching on `cambc.is_draft()` before any other import (see `bots/probe/src/main.py`).
+- Draft memory works: the champions read the bytes from the **last** `submit()` **[measured]**.
+- Bots' stdout (`print`) lands in the replay bundle, but only for games that finish. `tools/plog.py` extracts the probe's lines **[measured]**.
 - → Compute distance fields to altars, camps and spawn **once** (first turn, 2x fuel) and cache them in module state. Only re-path locally around units.
 - → Read `cambc.fuel_remaining()` and skip optional work (wards, comms, re-planning) when low.
 
 ### State and memory
 
 - The bot is one long-running loop per champion (`main.py`), so **module-level state persists across turns** **[sdk]**. Each champion has its own private memory for free.
-- **Draft memory, 1,024 bytes**: written by the draft bot (`cambc.draft_memory`, `.submit(bytes)`), read-only for champions afterwards **[rules]**. The draft bot sees the whole map **[rules]** but `camp_groups()` is empty during the draft **[sdk]**. Whether it can find camps another way is **[provisional A19]**.
+- **Draft memory, 1,024 bytes**: written by the draft bot (`cambc.draft_memory`, `.submit(bytes)`), read-only for champions afterwards **[rules]**. The draft bot can read the terrain (size, symmetry, walls, altars, spawns) but **every camp API errors during the draft** **[measured A19]**. So the draft can't plan camp routes; champions build the camp table on their first turns.
 - **Shared memory, 8 bytes**: `cambc.shared_memory`, read/write for the whole team all game. The enemy can't read it. **[rules]**
 - Python randomness is always zero in matches, so seed our own generator. Source: a comment in the official starter's `randomness.py`, which seeds an LCG from the spawn position **[sdk]**.
+- **Matches are deterministic** **[measured]**: the same bots on the same map give an identical game (expanse re-run, 13 Oct). Any change in a game comes from a change in code or map, never from luck. Debugging is easy, but beware of tuning to one exact game.
 
 ### What we can see
 

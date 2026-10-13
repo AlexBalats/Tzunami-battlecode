@@ -7,11 +7,11 @@ Numbers come from `docs/ECONOMY.md`; the code structure is in `docs/ARCHITECTURE
 ## The game model
 
 1. **It's a gem race.** Only tributed gems score. Everything else (fights, items, the draft) matters only through our gem rate or theirs. **[rules]**
-2. **Gem clusters first.** They give 3x the gems per HP of any other camp and can't attack (Strength 0) **[rules]**. Wolves next. Elks and the monolith look like group jobs **[provisional A1–A5]**: depends on how hard monsters hit and how many sit in a group.
+2. **Gem clusters first.** They give 3x the gems per HP of any other camp and can't attack (Strength 0) **[rules]**. Wolves next. A monster hits one champion for its Strength every round **[measured A1]**, and a basic-attack solo clear takes `ceil(HP / Strength)` rounds **[measured A3, A4]**. A solo elk is 48 rounds and ~2,800 damage at Strength 50, more than any champion's base HP, so elks and the monolith look like group jobs. Group sizes vary a lot by map **[measured A5]**: score groups by total reward, HP and Strength.
 3. **Carried gems are a liability.** The killer takes them all and the victim loses 60 rounds **[rules]**. Bank often and never walk into a fight carrying a big bag.
 4. **Enemy carriers are visible.** The SDK lets us call `gem_count()` on any champion we can see **[sdk]**; that it returns their real bag is **[provisional A18]**. If so, we always know who's worth killing, and killing a carrier on its way to an altar is the biggest swing in the game.
 5. **Tributes can be broken.** Damage doesn't stop a tribute, but stun, death and altar locks do **[rules]**. Stunners and 10-gold locks deny the enemy's banking.
-6. **Captures can be contested, and maybe stolen.** An enemy present resets a capture **[rules]**. Whether a cleared camp waits until someone captures it **[provisional A8]**, and whether either team can capture a camp the other cleared **[provisional A7]**, are unconfirmed. If both hold, capturing camps the enemy cleared takes their income.
+6. **Captures can be contested and stolen.** An enemy present resets a capture **[rules]**. A cleared camp waits, unclaimed, until someone captures it **[measured A8]**, and either team can capture a camp the other cleared **[measured A7]**. So capturing camps the enemy cleared takes their income, and clearing a camp we can't capture hands it to them.
 7. **Information is personal.** No shared vision, 8 bytes of shared memory **[rules]**. The team acts as one only through the draft plan and those 8 bytes.
 
 ## Principles
@@ -25,7 +25,7 @@ Status: **proposed** (not built yet) · **built** · **kept** (beat the baseline
 | P1, P4 Calculate; only fight won battles | `damage_amount()`, visible HP, ally/enemy counts | FIGHT only if fight value > 0 (below) | Fight gate vs the starter's "attack anything in range": K/D, gems lost | proposed |
 | P6 Foreknowledge | Free permanent wards; map symmetry; `gem_count` on enemies (A18); ladder replays | Ward altars and routes; mirror the map for enemy spawn and camps; remember last-seen enemies with round stamps | Wards on vs off: surprise deaths | proposed |
 | P8 Strike weakness | Enemy HP is visible; enemy gems too if A18 holds | Target score = (carried gems + kill value) / turns to kill | Value targeting vs nearest: gems stolen | proposed |
-| P13 Forage on the enemy | Killer takes all gems; capturing camps the enemy cleared (if A7 holds) | Hunt carriers heading to altars; capture camps the enemy cleared; contest their captures | Gems stolen per game | proposed |
+| P13 Forage on the enemy | Killer takes all gems; capturing camps the enemy cleared (A7 confirmed) | Hunt carriers heading to altars; capture camps the enemy cleared; contest their captures | Gems stolen per game | proposed |
 | P9 Attack where they are not | Camps don't chase; vision is personal | Farm score penalises camps near last-seen enemies; prefer altars away from them | Farm interruptions per game | proposed |
 | P10, P11 Concentrate; numbers | Rewards split; fights are local | Focus fire one target; engage only with local advantage; group for elk/monolith | Focus fire on vs off | proposed |
 | P12 Tempo | 1,000 gems ends the game; respawn timers | Plan a camp route on turn 1; no idle turns; bank as soon as a trip is cheap | Rounds to 1,000 gems | proposed |
@@ -67,7 +67,7 @@ Tribute when carried gems ≥ **G\*** (**[provisional A15]**: start at 40), or �
 
 Unconfirmed mechanics and numbers are tracked with IDs in `docs/ASSUMPTIONS.md`. Strategy questions:
 
-- Are elks and the monolith worth taking, once A1–A5 are measured?
+- Are elks and the monolith worth taking? A1, A3–A5 are measured; it now hinges on A2 (monster targeting) and on abilities (A22).
 - How much does gold spent on items speed up farming?
 - How to estimate P(win) for a fight from what one champion can see?
 - Is a monolith take ever worth it before the late game?
