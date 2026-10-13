@@ -1609,7 +1609,7 @@ module Game_map : sig
   (** [spawn_region team] is the team's spawn region.
       @param team Team whose spawn region to return. *)
   val spawn_region : Team.t -> Bitboard.t
-  (** Every camp group on the map. *)
+  (** Every camp group on the map, also available in draft. *)
   val camp_groups : unit -> Camp_group.t list
   (** [camp_at p] is the camp that spawns at [p]; raises if none does.
       @param p Spawn tile. *)

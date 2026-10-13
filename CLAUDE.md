@@ -34,7 +34,7 @@ Game in one line: draft 3–5 champions, kill camps, capture them for gold and g
 | `GameRules.md` | Any question about mechanics. Read in full before designing a new behaviour. |
 | `BotAPIPython.md` | Writing bot code. It's large: search for the function you need, don't guess signatures. |
 | `docs/GETTING_STARTED.md` | Setting up the `cambc` CLI / workspace, building, submitting. |
-| `docs/QUICKSTART_MATCHES.md` | **Start here** to run a match: verified commands, map names, batch format, stats JSON keys. |
+| `docs/QUICKSTART_MATCHES.md`, `tools/arena.py` | **Start here** to run a match: verified commands, map names, batch format, stats JSON keys. Judge any change with the arena (`python3 -I tools/arena.py BOT_A BOT_B`: every map, both sides, worst map). |
 | `docs/TESTING.md` | Running matches, batch runs, replays, `--statistics` JSON. |
 | `docs/FIRST_STRATEGY.md` | The official starter loop (what `starter-python` roughly does). |
 | `docs/ART_OF_WAR.md` | Source quotes and principles P1–P23. Cite these by number. |
@@ -55,7 +55,9 @@ Game in one line: draft 3–5 champions, kill camps, capture them for gold and g
 - Compute is limited by fuel per turn (Python gets 25x the C++ limit). Unfinished turns carry over. Cache pathing: `move_towards()` and `camp_groups()` recompute on every call.
 - The SDK allows `gem_count()` on any visible champion, enemies included [sdk]; that it returns their real bag is provisional (A18). Both teams' scores via `global_submitted_gems()` [sdk].
 - A camp's respawn timer starts only after its reward is claimed [rules]; a cleared camp waits unclaimed, and **either team can capture it** [measured A7, A8]. Damaged camps don't regenerate [measured A28].
-- Fuel traps [measured]: `camp_groups()` and every `vision.camp*` call cost ~1M each (cache once); the first `import traceback` freezes a champion for ~136 rounds (never use it). See `docs/ARCHITECTURE.md`.
+- Fuel [measured]: 2.5M per turn for Python, ~24.6M on the first draft turn, ~4.6M on the first play turn (cambc 2.1.4). Traps: `camp_groups()` and every `vision.camp*` call cost ~1M each (cache once); the first `import traceback` freezes a champion for ~136 rounds (never use it). See `docs/ARCHITECTURE.md`.
+- Maps are at most **100×100** tiles (event info, confirmed A30; the map editor allows 256, ignore that). Budget fuel for 100×100.
+- Since cambc 2.1.4 the draft bot can read the camps (`camp_groups()`) [sdk, measured A19], so the draft can plan around them.
 
 ## Season dates
 
@@ -69,19 +71,20 @@ Sprint locks **17 Oct**, 24 Oct, 31 Oct · international qualifiers 4 Nov · UK 
 - [x] `docs/ART_OF_WAR.md`: key passages verbatim + principles P1–P23
 - [x] Champion profiles for all 11 picks in `docs/Champions/` + roster summary in `docs/CHAMPIONS.md`
 - [x] Game plan written up: `STRATEGY.md` (game model, principle table, fight value), `ECONOMY.md` ([rules] values + [provisional] rates), `ARCHITECTURE.md`, `ROADMAP.md`
-- [x] Assumptions register `docs/ASSUMPTIONS.md` (A1–A28)
-- [x] Bot language: Python (`cambc.toml`, SDK 2.1.2)
+- [x] Assumptions register `docs/ASSUMPTIONS.md` (A1–A32)
+- [x] Bot language: Python (`cambc.toml`, SDK 2.1.4 since 13 Oct)
 
 ### Next up (phases from `docs/ROADMAP.md`)
 - [ ] Both teammates read `GameRules.md` fully
-- [x] **Phase 0, tools:** `cambc` 2.1.2 in `.venv/` (see README quick start); starter vs starter runs on all 9 maps, ~5 s per match
+- [x] **Phase 0, tools:** `cambc` in `.venv/` (2.1.4, upgraded from 2.1.2 on 13 Oct) (see README quick start); starter vs starter runs on all 9 maps, ~5 s per match
 - [ ] Both teammates watch a replay (`.venv/bin/cambc view`)
-- [ ] **Phase 1, measure** (in progress, see ROADMAP status; probe in `bots/probe/`, logs via `tools/plog.py`). Closed so far: A1, A3–A8, A10, A11, A13, A19, A26, A28. Open: A2 (monster targeting), A9 (contesting), A18, A21–A25 (kits), A27 (`import draft`)
-- [ ] **Phase 2, harness:** one command plays bot A vs bot B on every map from both sides (`cambc run-batch` + `--statistics`) and prints win rate, gems/round, deaths, gems lost
+- [ ] **Phase 1, measure** (in progress, see ROADMAP status; probe in `bots/probe/`, logs via `tools/plog.py`). Closed so far: A1–A11, A13, A16, A19, A26, A28, A30. Open: A18, A21–A25 (kits), A27 (`import draft`), A29 (first-turn cost vs source size), A31 (gems-lost formula), A32 (2.1.4 changed no mechanics)
+- [x] **Phase 2, harness:** `tools/arena.py` plays bot A vs bot B on every map from both sides and prints win rate, gems/round, deaths, gems lost and the worst map (cached; `NAME@REV` for old versions)
+- [ ] **Phase 2b, map generator:** maps beyond the 9 public ones, via the engine's `MapBuilder` (`ROADMAP.md` → Phase 2 → Next)
 - [x] Champion "To test" lists triaged: mechanics in `ASSUMPTIONS.md` (A2, A20–A25; A20 confirmed: Cassi and Issac have separate gold); performance questions in `ROADMAP.md` → Champion experiments
 - [ ] Cassi & Issac: rule for when to split vs stay together
-- [x] First baseline: starter vs starter, one game per map (`ECONOMY.md` → Baseline)
-- [ ] Baseline vs our bots from both sides once the harness exists (matches are deterministic, so re-running the same pair adds nothing)
+- [x] First baseline: starter vs starter, one game per map (`ECONOMY.md` → Baseline; rerun on 2.1.4 with the arena)
+- [ ] Baseline vs our bots from both sides with the arena (matches are deterministic, so re-running the same pair adds nothing)
 - [ ] **Phase 3, v1 (Sprint 1 lock 17 Oct):** fixed draft, cached pathing, cluster-then-wolf farming, bank at G*, retreat/recall before dying with gems, kill visible carriers when fight value > 0; must beat the starter on every map, both sides
 
 ### Later (Phase 4, in priority order)
@@ -96,7 +99,7 @@ Sprint locks **17 Oct**, 24 Oct, 31 Oct · international qualifiers 4 Nov · UK 
 - [ ] Toggle-and-measure each principle against the previous version
 
 ### Open questions
-Unconfirmed mechanics and numbers: `docs/ASSUMPTIONS.md` (A1–A28). Strategy questions:
+Unconfirmed mechanics and numbers: `docs/ASSUMPTIONS.md` (A1–A32). Strategy questions:
 - How much does gold spent on items speed up farming?
 - How to estimate P(win) for a fight from what a champion can see?
 - Are elks and the monolith worth taking? A1, A3–A5 are measured; it now hinges on A2 (targeting) and A22 (spells on camps).

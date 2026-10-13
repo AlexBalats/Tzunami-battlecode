@@ -1982,8 +1982,7 @@ let champion_design_raw kind =
   designs_area + Champion_type.to_int kind * champion_design_size
 
 let all_camp_groups () =
-  if (cache ()).self_champion = None then
-    fail Error_code.Api_invalid_perspective "camp groups are unavailable in draft";
+  ignore (cache ());
   load_camp_groups ()
 
 module Champion = struct

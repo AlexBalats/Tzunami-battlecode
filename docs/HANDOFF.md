@@ -1,18 +1,19 @@
 # Handoff: where we are and what to do next
 
-Written 13 Oct 2026, at the end of a Phase 1 session. For whichever teammate (or Claude session) picks this up next. Read it first, then `CLAUDE.md`. Keep it current: when you stop, update it for the next person.
+Written 13 Oct 2026. Updated the same evening after the Phase 2 session (harness done, cambc upgraded to 2.1.4). For whichever teammate (or Claude session) picks this up next. Read it first, then `CLAUDE.md`. Keep it current: when you stop, update it for the next person.
 
 ## The situation in five lines
 
-- **Today's job is Phase 1: measure.** A probe bot plays scripted experiments and we turn the **[provisional A#]** entries in `docs/ASSUMPTIONS.md` into **[measured]** facts. The status and order of work are in `docs/ROADMAP.md` → Phase 1.
-- **Sprint 1 locks 17 Oct.** Phase 2 (harness) and Phase 3 (v1 bot that beats the starter on every map, both sides) still have to happen before then. Don't let Phase 1 eat all the time: once A2 and A9 are done, the rest of Phase 1 can run alongside v1.
+- **Two tracks in parallel.** Phase 1 (measure): a probe bot plays scripted experiments, and we turn the **[provisional A#]** entries in `docs/ASSUMPTIONS.md` into **[measured]** facts (`docs/ROADMAP.md` → Phase 1). Phase 2 (harness) is **done**: `tools/arena.py` plays bot A vs bot B on every map from both sides (see "Comparing two bots" below). Next on that track: a map generator, then v1.
+- **Sprint 1 locks 17 Oct.** Phase 3 (v1 bot that beats the starter on every map, both sides) has to happen before then. A2 and A9 are answered, so the rest of Phase 1 can run alongside v1.
+- **We're on cambc 2.1.4** (upgraded 13 Oct from 2.1.2). Run `.venv/bin/python -m pip install cambc==2.1.4` if your venv is older. What changed is in "The 2.1.4 upgrade" below. Most importantly: the draft can now see camps, and the first draft turn has ~10x more fuel.
 - **Tournaments use maps we have never seen** (`CLAUDE.md` rule 8). The 9 public maps are a test set. No map names, coordinates or routes in code. Check each mechanic on more than one map. Budget fuel for the worst case.
 - Everything measured so far is already written into the docs: `ASSUMPTIONS.md` (results per entry), `ECONOMY.md` (camp facts, clear-time formula, per-map table), `ARCHITECTURE.md` (fuel traps) and `STRATEGY.md`.
 - Nothing in `bots/probe/` is meant to ship. It's a measuring tool. v1 goes in a new bot folder.
 
 ## Running the probe
 
-Set up once (see `README.md` → Quick start): `python3 -m venv .venv && .venv/bin/python -m pip install cambc==2.1.2`.
+Set up once (see `README.md` → Quick start): `python3 -m venv .venv && .venv/bin/python -m pip install cambc==2.1.4`.
 
 ```sh
 # 1. Pick the experiment and the draft in bots/probe/src/plan.py (EXPERIMENT = "wolf", PICKS_A, PICKS_B).
@@ -27,6 +28,23 @@ python3 -I tools/plog.py runs/wolf4 wolf error
 - Bots' stdout is saved **only for games that finish**: don't use `--rounds`.
 - Matches are deterministic. Re-running the same code on the same map gives the same game.
 - `runs/` is git-ignored.
+
+## Comparing two bots (the arena)
+
+```sh
+python3 -I tools/arena.py my-bot starter-python          # 9 maps x 2 sides, cached, ~30 s fresh
+python3 -I tools/arena.py my-bot my-bot@HEAD~1           # against an older git version of a bot
+```
+
+Full usage: `docs/QUICKSTART_MATCHES.md` → Arena. The table is from A's side. Look at **maps won from both sides** and the **worst map**, not just the win rate. The 2.1.4 starter baseline is in `ECONOMY.md` → Baseline (mean 0.85 gems/round). Results are cached by engine version, source hashes and map, so only changed games replay. Everything lands in `runs/arena/` (git-ignored).
+
+## The 2.1.4 upgrade (13 Oct)
+
+How it was done: `pip install cambc==2.1.4`, then the files `cambc init . --yes` refreshes (`cambc.toml` and `sdk/`) were copied in from a scratch copy of the repo. We didn't run `cambc init` in the repo itself because it re-downloads the 9 maps under new UUID names (byte-identical to ours) and adds a C++ `cmake/` folder. What changed:
+- **The draft can read camps** [sdk] [measured A19]: `camp_groups()` works in the draft (20 groups on collision, ~0.54M fuel). So a draft that plans around camps and writes the plan to draft memory is now possible.
+- **Fuel matches the rules** [measured A16]: normal turns ~2.50M (same as before), the first draft turn ~24.6M (was ~5.5M), and the first play turn ~4.6M when our code starts (was ~2.1M). That's enough to finish the ~3.2M of first imports inside the turn.
+- **Game mechanics look unchanged** [provisional A32]: the probe's `wolf` run on collision gave an identical stats file on both versions. Only one map was checked, so the Phase 1 results measured on 2.1.2 should be spot-checked on 2.1.4 as experiments get rerun anyway.
+- **The starter's games all changed**, because its random draft came out differently (A27). The baseline was rerun.
 
 ## Probe layout (`bots/probe/src/`)
 
@@ -48,6 +66,7 @@ python3 -I tools/plog.py runs/wolf4 wolf error
 3. **Invisible allies are listed.** `cambc.champions(Team.ALLY)` includes allies out of vision, and reading their `champion_name()` raises "Unit is not in vision". Check `is_visible()`, or decide team roles once on turn 1 (as `is_lead` does). `probe.py`'s mapper check reads all allies' names; it's fine because it only runs on early turns, while everyone is still at spawn.
 4. **Don't name a module `draft`.** The draft instance dies if it imports our own `draft.py`, and the engine then picks at random. `import plan` works. A27 (exactly why) is still open.
 5. **Fuel budget:**
+   - (measured on 2.1.2; turn costs and the first-import cost were the same on 2.1.4);
    - first import of a module ~1.2M;
    - full 80x80 DistanceField ~285k;
    - `move_towards` ~100k per call (don't use it every turn);
@@ -61,12 +80,14 @@ python3 -I tools/plog.py runs/wolf4 wolf error
 ## What to do next, in order
 
 1. **Fix the Nav bug** (gotcha 7).
-2. **A2: how monsters pick targets.** Two Team A champions stand inside a lone wolf's range (3) at different distances and HP. One attacks. Log both HPs each round to see who the wolf hits, and whether that changes when the second one attacks too. Ryth's attack range is 1 (melee). The wolf's attack range is 3.
-3. **A9: what contests a capture.** While A stands on a cleared camp's spawn tile, B stands on another spawn tile of the same group, then adjacent, then 2–3 tiles away. Log capture progress, who gets paid and when. Capture pays 5 rounds after arrival when uncontested [measured A7].
-4. Run both on **collision and one more map**. Write the results into `ASSUMPTIONS.md` (Result column + tag), `ECONOMY.md` / `STRATEGY.md` where they change a number or a rule, and the ROADMAP Phase 1 status.
-5. Then: A22/A23 (area spells and stuns on camps), A18 (does enemy `gem_count()` show their real bag), A21, A24, A25 (kits), A27 (`import draft` vs `import drafter`), plus A1/A6 on an elk and A3 with another champion.
-6. **Phase 2 harness** (`ROADMAP.md`): one command, bot A vs bot B, all 9 maps, both sides, reporting win rate, gems/round, deaths, gems lost, and the **worst map**. Look into custom maps via `cambc mapeditor` to test on layouts we haven't seen.
-7. **Phase 3 v1** for the 17 Oct lock (spec in `CLAUDE.md` → Tasks and `ROADMAP.md`).
+2. ~~A2, A9~~ **done** by the teammate on collision and interlock (see `ASSUMPTIONS.md`): monsters hit the nearest champion (Chebyshev, ties to the lowest unit id); a capture is contested only from the group's spawn tiles, and contesting resets progress.
+3. Then: A22/A23 (area spells and stuns on camps), A18 (does enemy `gem_count()` show their real bag), A21, A24, A25 (kits), A27 (`import draft` vs `import drafter`; on 2.1.4 also check whether the draft was simply running out of fuel), plus A1/A6 on an elk and A3 with another champion.
+4. **On 2.1.4, spot-check old results** as you rerun experiments (A32): one experiment behind A1/A3/A6–A8/A28 on a second map is enough. Also check A31 (does `lost` = gems carried at deaths?).
+
+The other track (Phase 2 → 3):
+
+5. **Map generator** (`ROADMAP.md` → Phase 2 → Next). Drive the engine's `MapBuilder` from Node. The proof of concept (decode, re-encode, dump) lives outside the repo for now; all 9 public maps round-trip byte for byte. Re-fetch `engine.wasm` from the 2.1.4 map editor first (the test copy was fetched before the upgrade). Put generated maps in a subfolder of `maps/` so the arena picks them up.
+6. **Phase 3 v1** for the 17 Oct lock (spec in `CLAUDE.md` → Tasks and `ROADMAP.md`). Judge it with the arena against `starter-python`: it must win every map from both sides. Since 2.1.4 the draft can plan around camps.
 
 ## House rules (for teammates and Claude)
 

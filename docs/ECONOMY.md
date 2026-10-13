@@ -19,36 +19,40 @@ Tags (full definitions in `docs/ASSUMPTIONS.md`):
 
 ## Baseline: starter vs starter **[measured]**
 
-`starter-python` against itself, one game per map, cambc 2.1.2, 13 Oct 2026.
+`starter-python` against itself, one game per map, cambc 2.1.4, 13 Oct 2026 (`python3 -I tools/arena.py starter-python starter-python`; the A and B rows of each mirror game are the two teams).
 
-**Matches are deterministic [measured]:** re-running expanse gave an identical statistics file. The starter seeds its random generator from its spawn position. So the same two bots on the same map always play the same game, and re-running adds no new data. Differences between Team A and Team B here come from the map and the side, not chance. Each row is still only one game, so read the numbers as rough. To get more data, vary the bot or the map, not the number of runs.
+**Matches are deterministic [measured]:** re-running a game gives an identical statistics file. The starter seeds its random generator from its spawn position. So the same two bots on the same map always play the same game, and re-running adds no new data. Differences between Team A and Team B here come from the map and the side, not chance. Each row is still only one game, so read the numbers as rough. To get more data, vary the bot or the map, not the number of runs.
 
-| Map | Picks per team | Round 1,000 reached | Winner gems/round | Loser gems/round | Deaths (A / B) | Champion kills (A / B) |
-| --- | --- | --- | --- | --- | --- | --- |
-| collision | 3 | 1,216 | 0.83 | 0.58 | 26 / 22 | 13 / 12 |
-| corners | 5 | 778 | 1.29 | 0.95 | 21 / 24 | 12 / 7 |
-| elkring | 5 | 1,134 | 0.89 | 0.75 | 40 / 41 | 6 / 8 |
-| expanse | 3 | 991 | 1.03 | 0.81 | 7 / 7 | 0 / 0 |
-| interlock | 4 | 823 | 1.22 | 1.04 | 17 / 22 | 14 / 7 |
-| lanes | 5 | 742 | 1.36 | 1.06 | 16 / 14 | 0 / 0 |
-| monolith | 5 | 1,265 | 0.80 | 0.58 | 28 / 37 | 8 / 7 |
-| packs | 3 | 809 | 1.24 | 0.79 | 11 / 9 | 2 / 2 |
-| rows | 4 | 1,036 | 0.98 | 0.76 | 10 / 15 | 0 / 0 |
+| Map | Picks per team | Round 1,000 reached | Winner | Winner gems/round | Loser gems/round | Deaths (A / B) | Champion kills (A / B) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| collision | 3 | 1,796 | A | 0.56 | 0.53 | 26 / 33 | 15 / 7 |
+| corners | 5 | 932 | A | 1.10 | 0.92 | 25 / 38 | 9 / 4 |
+| elkring | 5 | 1,294 | A | 0.79 | 0.67 | 40 / 54 | 8 / 11 |
+| expanse | 3 | 986 | B | 1.03 | 0.98 | 3 / 3 | 0 / 0 |
+| interlock | 4 | 957 | A | 1.07 | 0.90 | 17 / 29 | 19 / 13 |
+| lanes | 5 | 776 | A | 1.31 | 0.82 | 9 / 13 | 0 / 0 |
+| monolith | 5 | 1,388 | B | 0.73 | 0.48 | 22 / 29 | 9 / 4 |
+| packs | 3 | 986 | A | 1.02 | 0.92 | 12 / 12 | 2 / 2 |
+| rows | 4 | 1,178 | B | 0.86 | 0.56 | 18 / 14 | 0 / 0 |
+
+Mean over all 18 team-games: **0.85 tributed gems per round**, 22 deaths and 71 gems lost (**[provisional A31]**) per team.
+
+**Upgrade note.** The first baseline (cambc 2.1.2, same day) was different on every map, e.g. lanes ended at round 742 and collision at 1,216; mean ~0.94 gems per round. The starter's random draft came out differently on 2.1.4 (A27), and that changes every game. Game mechanics look unchanged (**[provisional A32]**). The 2.1.2 table is in git history (`docs/ECONOMY.md` before 13 Oct's upgrade).
 
 Gems/round = tributed gems ÷ final round. Cassi & Issac count as two bodies for deaths.
 
 What it tells us:
 
-- **The bar is high already.** Every game ended at 1,000 gems, between rounds 742 and 1,265. The naive starter makes roughly 0.6–1.4 tributed gems per round per team. To beat it, we must reach 1,000 clearly faster, or slow them down.
-- **Most deaths aren't caused by enemy champions.** Deaths far outnumber enemy kills; for example, on elkring there were 40 deaths against 8 enemy kills. The rest are very likely camp deaths, which destroy the carried gems. Not dying to camps (P3) looks like a big, cheap win; confirm the cause in replays.
+- **The bar is high already.** Every game ended at 1,000 gems, between rounds 776 and 1,796. The naive starter makes roughly 0.5–1.3 tributed gems per round per team. To beat it, we must reach 1,000 clearly faster, or slow them down.
+- **Most deaths aren't caused by enemy champions.** Deaths far outnumber enemy kills; for example, on elkring Team B died 54 times but Team A killed only 8 champions. The rest are very likely camp deaths, which destroy the carried gems. Not dying to camps (P3) looks like a big, cheap win; confirm the cause in replays.
 - The starter's picks were probably made at random by the engine, not by its draft code: its `main.py` imports `draft.py`, which kills our draft instance (**[provisional A27]**).
-- **Team size varies by map: 3, 4 or 5 picks.** Both teams can draft the same champion; Ryth and Tavi appeared on both sides on corners.
+- **Team size varies by map: 3, 4 or 5 picks.** Both teams can draft the same champion; Ryth, Stellar and Cassi & Issac appeared on both sides on corners.
 - The `--statistics` JSON gives, per champion:
   - `submittedGems`, `collectedGems`, `deaths`, `kills`, `assists`;
   - `earnedGold`, `spentGold`, `itemsBought`;
   - `monsterDamageDone`, `monsterDamageTaken`, `championDamageDone`, `championDamageTaken`.
 
-  The harness (Phase 2) reads these.
+  `tools/arena.py` reads these.
 
 ## Camps
 

@@ -467,24 +467,15 @@ pub fn altars() -> Result<&'static Bitboard> {
 pub fn spawn_region(team: Team) -> Result<&'static Bitboard> {
     Ok(&state()?.spawns[if team == Team::Ally { 0 } else { 1 }])
 }
-/// Query engine groups on every call, including merged symmetry-seam clusters; unavailable in draft.
+/// Query engine groups on every call, including merged symmetry-seam clusters; also available in draft.
 pub fn camp_groups() -> Result<Vec<CampGroup>> {
-    gameplay_perspective()?;
+    state()?;
     load_camp_groups()
 }
 /// Query one group's rewards and membership from the host.
 pub(crate) fn camp_group(handle: CampGroupHandle) -> Result<CampGroup> {
-    gameplay_perspective()?;
+    state()?;
     load_camp_group(handle.0)
-}
-fn gameplay_perspective() -> Result<()> {
-    if state()?.self_champion.is_none() {
-        return Err(Error::local(
-            ErrorCode::ApiInvalidPerspective,
-            "camp groups are unavailable in draft",
-        ));
-    }
-    Ok(())
 }
 /// Load authoritative host group membership, including merged symmetry-seam groups.
 fn load_camp_groups() -> Result<Vec<CampGroup>> {

@@ -4,7 +4,7 @@ For new Claude sessions (and teammates) who need to run a match fast. Full detai
 
 ## Already set up
 
-- `cambc` 2.1.2 is on PATH (no venv needed). Check with `cambc --version`.
+- `cambc` 2.1.4 (pinned in `cambc.toml`). Either on PATH or in the repo venv: `.venv/bin/cambc --version` (README → Quick start). Below, `cambc` means whichever you have.
 - Run every command from the repo root (the workspace, where `cambc.toml` is).
 - Bots live in `bots/<name>/src/main.py`. Pass the bot **name**, not a path. `starter-python` is the baseline.
 - Maps are in `maps/`: `collision corners elkring expanse interlock lanes monolith packs rows`. `--map` takes a bare name or a path.
@@ -32,6 +32,23 @@ cambc new my-bot --lang python
 - `--statistics` needs a finished game. A `--rounds` run ends "Unfinished ... (no result)".
 - Each run writes a new timestamped `.repl26a` bundle to `replays/` (or `-o <dir>`). It holds the replay, the map, and both bots' stdout/debug logs.
 
+## Arena: bot A vs bot B on every map, both sides
+
+The Phase 2 harness. Use it to judge any change; it's the "does this beat the previous version?" check.
+
+```bash
+python3 -I tools/arena.py my-bot starter-python              # every map in maps/, A as team A and as team B
+python3 -I tools/arena.py my-bot my-bot@HEAD~1               # against my-bot as it was one commit ago
+python3 -I tools/arena.py my-bot starter-python --maps lanes,packs --drafts
+```
+
+- `BOT` is a folder in `bots/`, or `NAME@REV` for that bot at a git revision (exported to `bots/_snap-NAME-SHA/`, git-ignored).
+- Prints one row per map and side from A's point of view (result, end round, gems, margin, gems/round, deaths, kills, gems lost, bot faults), then: record and win rate, **maps won from both sides**, means, and the **worst map** (lowest mean margin over both sides). The column definitions are in the script's docstring.
+- Results are cached in `runs/arena/cache/` by cambc version + both bots' source hashes + map file, because matches are deterministic. Re-running after a change replays only what changed. `--fresh` ignores the cache.
+- Each run saves the replays, stats JSON, CLI logs and a `summary.json` in `runs/arena/<A>-vs-<B>-<time>/` (git-ignored).
+- 18 games take ~30 s on a 10-core laptop with the default `--jobs` (each match uses ~3 cores). A mirror match (same bot both sides) plays each map once: 16 s [measured, 13 Oct]. `CAMBC=/path/to/cambc` runs another engine version.
+- Bar for keeping a change (`CLAUDE.md` rule 8): judge it on all maps from both sides, worst map included, not on the average.
+
 ## Batch runs
 
 `matches.txt` (gitignored folder `matches/` is a good home). One match per line: `botA_dir botB_dir map out_replay`, with paths relative to the file:
@@ -54,6 +71,8 @@ Top-level keys: `outcome` (`"teamA"`/`"teamB"`/...), `round` (round it ended), `
 ```bash
 python -c "import json;d=json.load(open('replays/stats.json'));print(d['outcome'],d['round'],d['botFaults'])"
 ```
+
+Per champion also: `submittedGems`, `gems` (carried at the end), `kills`, `earnedGold`, `spentGold`, `monsterDamageDone/Taken`, `team`, `type`. Gems lost = `collectedGems − submittedGems − gems` (**[provisional A31]**).
 
 ## Gotchas
 

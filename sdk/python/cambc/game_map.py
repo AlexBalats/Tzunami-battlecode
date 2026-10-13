@@ -217,15 +217,11 @@ class CampGroup:
 
 def _camp_index() -> tuple[tuple[CampGroup, ...], dict[Vec2, Camp], dict[int, Camp], dict[int, CampGroup]]:
     """Camp groups and lookup tables, built fresh from the host on every call."""
-    if _cache.my_champion == -1:
-        return (), {}, {}, {}
     return _bc.camp_groups(Camp._new, CampGroup._new)
 
 
 def camp_groups() -> tuple[CampGroup, ...]:
-    """Camp groups (empty during the draft)."""
-    if _cache.my_champion == -1:
-        _bc.map_num_camp_groups()
+    """Camp groups, also available during the draft."""
     return _camp_index()[0]
 
 

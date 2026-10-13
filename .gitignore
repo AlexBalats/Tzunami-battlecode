@@ -7,3 +7,4 @@ bots/*/target/
 .DS_Store
 .venv/
 runs/
+bots/_snap-*/

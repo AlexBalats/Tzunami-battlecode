@@ -36,7 +36,7 @@ Each phase has a "done when" so we know when to stop polishing and move on.
 
 ### Phase 0: Tools (13–14 Oct)
 
-- Install the `cambc` CLI in a venv (`pip install cambc`, SDK 2.1.2 is the latest).
+- Install the `cambc` CLI in a venv (`pip install cambc`; we're on 2.1.4 since 13 Oct, pinned in `cambc.toml`).
 - Run `starter-python` vs itself on a couple of maps and watch one replay (`--view`).
 
 **Done when:** both of us can run a match and open a replay.
@@ -65,12 +65,11 @@ Build a **probe bot** that works through the open entries in `docs/ASSUMPTIONS.m
 - Clear time per champion per camp type (A3, A4). This answers the clear-speed questions in the champion profiles.
 
 **Status (13 Oct):** probe bot in `bots/probe/` (`plan.py` picks the experiment; read logs with `tools/plog.py`).
-- **Closed:** A1 (one monster vs one champion), A3 (now a formula), A4, A5, A6 (wolf), A7, A8, A10, A11, A13, A19, A26, A28 (new: camps don't regenerate).
-- **Partly:** A16, A17 (fuel; the camp-index trap and the traceback stall are in `ARCHITECTURE.md`), A27 (`import plan` works in the draft; `import draft` doesn't).
+- **Closed:** A1 (one monster vs one champion), A2 (nearest champion, ties to lowest id), A3 (now a formula), A4, A5, A6 (wolf), A7, A8, A9 (contest region = the group's spawn tiles), A10, A11, A13, A16 (25x confirmed on 2.1.4), A19 (changed on 2.1.4: the draft now sees camps), A26, A28 (new: camps don't regenerate), A30 (maps are at most 100×100).
+- **Partly:** A17 (fuel; the camp-index trap and the traceback stall are in `ARCHITECTURE.md`), A27 (`import plan` works in the draft; `import draft` doesn't).
 - Per-map table for all 9 maps in `ECONOMY.md` → Maps.
 
 Next, in this order:
-- A2 (monster targeting with two champions in range) and A9 (what contests a capture). Both shape v1's farming and capture logic.
 - A22, A23 (area spells and stuns on camps), then A18, A21, A24, A25.
 - A27: `import draft` vs `import drafter`.
 - Check A1/A6 on an elk, and A3 with one more champion, on a second map.
@@ -87,7 +86,14 @@ A script that plays bot A vs bot B on **every map, from both sides** (Team A and
 
 **Done when:** one command compares two bot folders and prints a table.
 
-**Unseen maps.** Sprints, qualifiers and finals are played on maps we haven't seen, so the 9 public maps are a test set, not the target. The harness reports the worst map as well as the average. Once it works, add custom maps (`cambc mapeditor`) that stretch what the public maps cover: no home altar, far camps, unreachable altars, odd sizes, 3 vs 5 champions.
+**Status (13 Oct): done.** `tools/arena.py` (usage in `docs/QUICKSTART_MATCHES.md` → Arena). It runs the matches with `cambc run --statistics` in parallel (not `run-batch`, which only reports the winner), caches results by engine version, bot source hashes and map, plays `NAME@REV` against older git versions, and reports the worst map. The starter-vs-starter baseline was rerun with it on cambc 2.1.4 (`ECONOMY.md` → Baseline).
+
+**Next: the map generator (before v1).** 9 maps × 2 sides is only 18 deterministic games, so a change can look good by luck of the layout. Plan:
+- Write maps by driving the official engine's `MapBuilder` (in the map editor's `engine.wasm`) from Node. In a test it decoded and re-encoded every public map byte for byte, and the engine checks map validity (`VerifyIntegrity`), mirrors terrain and camps, and computes camp group rewards itself.
+- First variants of the public maps: transposed, other symmetry, other team sizes (3–5). Then procedural maps covering what the public ones don't: no home altar, far camps, odd sizes up to the **100×100** limit (A30), many or no walls.
+- Generated maps go in a subfolder of `maps/` with a seed in the name, so the arena picks them up and a run can be reproduced.
+
+**Unseen maps.** Sprints, qualifiers and finals are played on maps we haven't seen, so the 9 public maps are a test set, not the target. The harness reports the worst map as well as the average. Next, add generated maps (see Status above) that stretch what the public maps cover: no home altar, far camps, unreachable altars, odd sizes, 3 vs 5 champions.
 
 **Champion experiments (after the harness).** These are performance comparisons from the "To test" lists in `docs/Champions/`, not unknown mechanics. Run them once the harness exists, and write the results back into the champion files as **[measured]**:
 - duels: Ryth vs Vendetta, Marcella vs Ryth and Vendetta, Ren vs Vendetta;

@@ -22,18 +22,19 @@ Our bots are built around Sun Tzu's *Art of War*. Each principle has to earn its
 | `docs/ARCHITECTURE.md` | Engine facts that shape the code, bot layout, turn pipeline, memory plans |
 | `docs/ROADMAP.md` | Season calendar, how we work, phases with "done when" criteria |
 | `docs/ASSUMPTIONS.md` | Every unconfirmed number or mechanic, with an ID (A#), how to test it, and the result |
+| `docs/QUICKSTART_MATCHES.md` | Running matches fast, and `tools/arena.py` (bot A vs bot B on every map, both sides) |
 | `CLAUDE.md` | Context for Claude Code when working in this repo |
 
 ## Quick start
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install cambc==2.1.2      # SDK version pinned in cambc.toml
+.venv/bin/python -m pip install cambc==2.1.4      # SDK version pinned in cambc.toml
 .venv/bin/cambc run starter-python starter-python --map expanse --statistics replays/stats.json
 .venv/bin/cambc view                              # opens the most recent replay
 ```
 
-The workspace (`cambc.toml`, `sdk/`, `maps/`) is already in the repo, so there's no need to run `cambc init`. `.venv/` and `replays/` are git-ignored. A full match takes about 5 seconds.
+The workspace (`cambc.toml`, `sdk/`, `maps/`) is already in the repo, so there's no need to run `cambc init`. To compare two bots on every map from both sides: `python3 -I tools/arena.py BOT_A BOT_B` (see `docs/QUICKSTART_MATCHES.md` → Arena). `.venv/` and `replays/` are git-ignored. A full match takes about 5 seconds.
 
 ## Why this order
 
