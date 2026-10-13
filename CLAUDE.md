@@ -34,6 +34,7 @@ Game in one line: draft 3–5 champions, kill camps, capture them for gold and g
 | `GameRules.md` | Any question about mechanics. Read in full before designing a new behaviour. |
 | `BotAPIPython.md` | Writing bot code. It's large: search for the function you need, don't guess signatures. |
 | `docs/GETTING_STARTED.md` | Setting up the `cambc` CLI / workspace, building, submitting. |
+| `docs/QUICKSTART_MATCHES.md` | **Start here** to run a match: verified commands, map names, batch format, stats JSON keys. |
 | `docs/TESTING.md` | Running matches, batch runs, replays, `--statistics` JSON. |
 | `docs/FIRST_STRATEGY.md` | The official starter loop (what `starter-python` roughly does). |
 | `docs/ART_OF_WAR.md` | Source quotes and principles P1–P23. Cite these by number. |
