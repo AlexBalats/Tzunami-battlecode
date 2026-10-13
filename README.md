@@ -1,2 +1,23 @@
 # Tzunami-battlecode
-bot submission for cambridge battlecode
+
+Bot submission for Cambridge Battlecode (CAMBC 2026).
+
+## The idea
+
+Our bots are built around Sun Tzu's *Art of War*. Each principle has to earn its place: it must act on a real game mechanic, become a concrete rule or score in the bot, and be tested on/off in matches. Everything is priced in one currency (gems/gold per round), so "fight or farm" is a calculation, not a vibe.
+
+## What's where
+
+| File | What it's for |
+| --- | --- |
+| `GameRules.md` | Official game rules (reference) |
+| `BotAPIPython.md` | Official Python bot API (reference) |
+| `docs/ECONOMY.md` | What's worth what: camps, kills, tribute, recall, items. Values tagged [rules] / [estimate] / [measured] |
+| `docs/CHAMPIONS.md` | One profile per champion: strengths, weaknesses, needs, counters, bot notes |
+| `docs/ART_OF_WAR.md` | Source text: key passages quoted word for word, plus the main principles P1–P23 |
+| `docs/STRATEGY.md` | Art of War principles → mechanics → bot rules → tests |
+| `CLAUDE.md` | Context for Claude Code when working in this repo |
+
+## Why this order
+
+Economy and champion facts come first because everything else builds on them: the fight-value formula needs the numbers, the draft needs the profiles, and the strategy needs real mechanics to point at. Numbers in the docs later become the bot's constants, and [estimate] tags are our list of things to measure.
