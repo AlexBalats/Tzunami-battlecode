@@ -9,7 +9,7 @@ Numbers come from `docs/ECONOMY.md`; the code structure is in `docs/ARCHITECTURE
 1. **It's a gem race.** Only tributed gems score. Everything else (fights, items, the draft) matters only through our gem rate or theirs. **[rules]**
 2. **Gem clusters first.** They give 3x the gems per HP of any other camp and can't attack (Strength 0) **[rules]**. Wolves next. A monster hits one champion for its Strength every round **[measured A1]**, and a basic-attack solo clear takes `ceil(HP / Strength)` rounds **[measured A3, A4]**. A solo elk is 48 rounds and ~2,800 damage at Strength 50, more than any champion's base HP, so elks and the monolith look like group jobs. Group sizes vary a lot by map **[measured A5]**: score groups by total reward, HP and Strength.
 3. **Carried gems are a liability.** The killer takes them all and the victim loses 60 rounds **[rules]**. Bank often and never walk into a fight carrying a big bag.
-4. **Enemy carriers are visible.** The SDK lets us call `gem_count()` on any champion we can see **[sdk]**; that it returns their real bag is **[provisional A18]**. If so, we always know who's worth killing, and killing a carrier on its way to an altar is the biggest swing in the game.
+4. **Enemy carriers are visible.** The SDK lets us call `gem_count()` on any champion we can see **[sdk]**; and it returns their real bag **[measured A18]**. So we always know who's worth killing, and killing a carrier on its way to an altar is the biggest swing in the game.
 5. **Tributes can be broken.** Damage doesn't stop a tribute, but stun, death and altar locks do **[rules]**. Stunners and 10-gold locks deny the enemy's banking.
 6. **Captures can be contested and stolen.** An enemy present resets a capture **[rules]**. A cleared camp waits, unclaimed, until someone captures it **[measured A8]**, and either team can capture a camp the other cleared **[measured A7]**. So capturing camps the enemy cleared takes their income, and clearing a camp we can't capture hands it to them.
 7. **Information is personal.** No shared vision, 8 bytes of shared memory **[rules]**. The team acts as one only through the draft plan and those 8 bytes.
@@ -24,7 +24,7 @@ Status: **proposed** (not built yet) · **built** · **kept** (beat the baseline
 | P3 Unbeatable first | Death drops carried gems; recall fails under damage | Bank when carried ≥ G* or a threat is near; recall when HP < visible enemy burst + margin; never enter enemy vision carrying a big bag | Gems lost to deaths per game, on vs off | proposed |
 | P1, P4 Calculate; only fight won battles | `damage_amount()`, visible HP, ally/enemy counts | FIGHT only if fight value > 0 (below) | Fight gate vs the starter's "attack anything in range": K/D, gems lost | proposed |
 | P6 Foreknowledge | Free permanent wards; map symmetry; `gem_count` on enemies (A18); ladder replays | Ward altars and routes; mirror the map for enemy spawn and camps; remember last-seen enemies with round stamps | Wards on vs off: surprise deaths | proposed |
-| P8 Strike weakness | Enemy HP is visible; enemy gems too if A18 holds | Target score = (carried gems + kill value) / turns to kill | Value targeting vs nearest: gems stolen | proposed |
+| P8 Strike weakness | Enemy HP is visible; enemy gems too **[measured A18]** | Target score = (carried gems + kill value) / turns to kill | Value targeting vs nearest: gems stolen | proposed |
 | P13 Forage on the enemy | Killer takes all gems; capturing camps the enemy cleared (A7 confirmed) | Hunt carriers heading to altars; capture camps the enemy cleared; contest their captures | Gems stolen per game | proposed |
 | P9 Attack where they are not | Camps don't chase; vision is personal | Farm score penalises camps near last-seen enemies; prefer altars away from them | Farm interruptions per game | proposed |
 | P10, P11 Concentrate; numbers | Rewards split; fights are local | Focus fire one target; engage only with local advantage; group for elk/monolith | Focus fire on vs off | proposed |
@@ -40,7 +40,7 @@ Status: **proposed** (not built yet) · **built** · **kept** (beat the baseline
 
 ## Fight value
 
-All in gems, over a short horizon (a few rounds), using only what this champion can see. **This is a first-draft model, not a measured result.** The 60 rounds and 50 gold are **[rules]**; income per round is **[provisional A12]**; camp damage is **[provisional A1, A2]**. Tune it in the harness:
+All in gems, over a short horizon (a few rounds), using only what this champion can see. **This is a first-draft model, not a measured result.** The 60 rounds and 50 gold are **[rules]**; income per round is **[measured A12]** (starter: ~0.3 per round alive); camp damage is **[rules]** (each awake monster hits the nearest champion for its Strength every round). Tune it in the harness:
 
 ```
 TTK_us   = target HP / our team's damage per round   (damage_amount, abilities ready, allies in range)

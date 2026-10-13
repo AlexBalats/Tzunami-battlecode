@@ -36,46 +36,35 @@ Each phase has a "done when" so we know when to stop polishing and move on.
 
 ### Phase 0: Tools (13–14 Oct)
 
-- Install the `cambc` CLI in a venv (`pip install cambc`, SDK 2.1.2 is the latest).
+- Install the `cambc` CLI in a venv (`pip install cambc`, SDK 2.1.4 since 13 Oct).
 - Run `starter-python` vs itself on a couple of maps and watch one replay (`--view`).
 
 **Done when:** both of us can run a match and open a replay.
 
-**Status (13 Oct):** CLI installed (`.venv/`, see README → Quick start); starter vs starter runs on all 9 maps; first baseline is in `ECONOMY.md` → Baseline. Still to do: each of us opens a replay.
-
-### Phase 1: Measure (14–15 Oct)
-
-Build a **probe bot** that works through the open entries in `docs/ASSUMPTIONS.md` and turns each **[provisional]** tag into **[measured]** or a correction:
-
-- Engine constants: all of `cambc.constants`, checked against the rules (A10, A11).
-- Per champion: the hidden `camp_damage_multiplier` (A4). Also check base stats and shard growths against the rules tables.
-- Per camp type:
-  - how often monsters attack (A1) and **how they pick their target** (A2);
-  - real clear time per champion (A3);
-  - whether sleeping camps attack passers-by (A6);
-  - capture rules (A7–A9).
-- Fuel: `cambc.fuel_remaining()` per turn and per pathfinding call (A16, A17).
-- Per map: camp groups and their sizes (A5), and distances from spawn to camps and altars (A13).
-- Enemy `gem_count()` (A18), and what the draft bot can see (A19).
-- Champion kits (A21–A25):
-  - Cassi & Issac's own wards and items;
-  - area spells and stuns on camps;
-  - Ren's retaliation;
-  - Vesper Vale's dash + attack in the same turn.
-- Clear time per champion per camp type (A3, A4). This answers the clear-speed questions in the champion profiles.
-
-**Status (13 Oct):** probe bot in `bots/probe/` (`plan.py` picks the experiment; read logs with `tools/plog.py`).
-- **Closed:** A1 (one monster vs one champion), A3 (now a formula), A4, A5, A6 (wolf), A7, A8, A10, A11, A13, A19, A26, A28 (new: camps don't regenerate).
-- **Partly:** A16, A17 (fuel; the camp-index trap and the traceback stall are in `ARCHITECTURE.md`), A27 (`import plan` works in the draft; `import draft` doesn't).
+**Status (13 Oct):** probe bot in `bots/probe/` (`plan.py` picks the experiment; read logs with `tools/plog.py`). New rules export and cambc **2.1.4** installed the same day: anything the rules state is closed as **[rules]** and not tested (`ASSUMPTIONS.md` → How an entry closes).
+- **Closed:** A1, A2, A6, A8, A16, A19, A30 (by the rules; A19 also by the 2.1.4 SDK), A3 (now a formula), A4, A5, A7, A9, A10, A11, A13, A20, A26, A28.
+- **Partly:** A17 (fuel traps in `ARCHITECTURE.md`), A21 (wards settled), A27, A29.
 - Per-map table for all 9 maps in `ECONOMY.md` → Maps.
 
-Next, in this order:
-- A2 (monster targeting with two champions in range) and A9 (what contests a capture). Both shape v1's farming and capture logic.
-- A22, A23 (area spells and stuns on camps), then A18, A21, A24, A25.
-- A27: `import draft` vs `import drafter`.
-- Check A1/A6 on an elk, and A3 with one more champion, on a second map.
+Measured the same day on 2.1.4: A12 (**wrong**: the starter makes ~0.22 gems/round per champion, not 0.7), A18 (confirmed), A31 (monolith range 3), A32 (a camp sleeps after 2 rounds with no champion in range).
 
-**Done when:** A1–A11 and A16–A25 are closed, and `ECONOMY.md` has measured clear times and damage for wolf and gem cluster.
+Next:
+- Kits (A21 consumables, A22–A25) only once the draft settles on those champions. Tuning values (A14, A15, A40–A45) go to the harness.
+
+**Done when:** both of us can run a match and open a replay.
+
+**Status (13 Oct):** probe bot in `bots/probe/` (`plan.py` picks the experiment; read logs with `tools/plog.py`). New rules export and cambc **2.1.4** installed the same day: anything the rules state is closed as **[rules]** and not tested (`ASSUMPTIONS.md` → How an entry closes).
+- **Closed:** A1, A2, A6, A8, A16, A19, A30 (by the rules; A19 also by the 2.1.4 SDK), A3 (now a formula), A4, A5, A7, A9, A10, A11, A13, A20, A26, A28.
+- **Partly:** A17 (fuel traps in `ARCHITECTURE.md`), A21 (wards settled), A27, A29.
+- Per-map table for all 9 maps in `ECONOMY.md` → Maps.
+
+Next, in this order (all small):
+- A31: monolith range, 3 or 5 (the rules contradict themselves). Static dump on 2.1.4, no match needed.
+- A32: when an awake camp goes back to sleep (the rules contradict themselves). One short wolf run.
+- A12 from existing `--statistics` JSON, and A18 (enemy `gem_count()`).
+- Kits (A21 consumables, A22–A25) only once the draft settles on those champions. Tuning values (A14, A15, A40–A45) go to the harness.
+
+**Done when:** `ECONOMY.md` has measured clear times and damage for wolf and gem cluster.
 
 ### Phase 2: Harness (15 Oct)
 

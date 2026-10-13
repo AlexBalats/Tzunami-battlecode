@@ -51,9 +51,10 @@ Game in one line: draft 3–5 champions, kill camps, capture them for gold and g
 - Death: killer gets all carried gems + 50 gold; victim is out 60 rounds. Camp kills destroy carried gems.
 - Tribute: channel of `ceil(gems/10)` turns; damage doesn't interrupt it, stun/death/altar lock does.
 - Capture: stand on a cleared camp's spawn tile uncontested for 5 rounds; reward is split between allies present.
+- Monsters are friendly until hit, then each hits the nearest champion every round; they don't chase. All camps have range 3; a camp sleeps after 2 rounds with no champion in range [measured A31, A32]. Maps are 30×30 to 100×100. The draft bot can see camps (SDK 2.1.4).
 - Vision is not shared between champions. Team shared memory is only **8 bytes** (plus 1,024 bytes written during the draft, read-only after).
 - Compute is limited by fuel per turn (Python gets 25x the C++ limit). Unfinished turns carry over. Cache pathing: `move_towards()` and `camp_groups()` recompute on every call.
-- The SDK allows `gem_count()` on any visible champion, enemies included [sdk]; that it returns their real bag is provisional (A18). Both teams' scores via `global_submitted_gems()` [sdk].
+- The SDK allows `gem_count()` on any visible champion, enemies included [sdk]; and it returns their real bag [measured A18]. Both teams' scores via `global_submitted_gems()` [sdk].
 - A camp's respawn timer starts only after its reward is claimed [rules]; a cleared camp waits unclaimed, and **either team can capture it** [measured A7, A8]. Damaged camps don't regenerate [measured A28].
 - Fuel traps [measured]: `camp_groups()` and every `vision.camp*` call cost ~1M each (cache once); the first `import traceback` freezes a champion for ~136 rounds (never use it). See `docs/ARCHITECTURE.md`.
 
@@ -69,14 +70,14 @@ Sprint locks **17 Oct**, 24 Oct, 31 Oct · international qualifiers 4 Nov · UK 
 - [x] `docs/ART_OF_WAR.md`: key passages verbatim + principles P1–P23
 - [x] Champion profiles for all 11 picks in `docs/Champions/` + roster summary in `docs/CHAMPIONS.md`
 - [x] Game plan written up: `STRATEGY.md` (game model, principle table, fight value), `ECONOMY.md` ([rules] values + [provisional] rates), `ARCHITECTURE.md`, `ROADMAP.md`
-- [x] Assumptions register `docs/ASSUMPTIONS.md` (A1–A28)
-- [x] Bot language: Python (`cambc.toml`, SDK 2.1.2)
+- [x] Assumptions register `docs/ASSUMPTIONS.md` (A1–A32, A40–A45)
+- [x] Bot language: Python (`cambc.toml`, SDK 2.1.4; upgraded 13 Oct with the new rules export)
 
 ### Next up (phases from `docs/ROADMAP.md`)
 - [ ] Both teammates read `GameRules.md` fully
-- [x] **Phase 0, tools:** `cambc` 2.1.2 in `.venv/` (see README quick start); starter vs starter runs on all 9 maps, ~5 s per match
+- [x] **Phase 0, tools:** `cambc` 2.1.4 (`.venv/` per README quick start, or global pip); starter vs starter runs on all 9 maps, ~5 s per match
 - [ ] Both teammates watch a replay (`.venv/bin/cambc view`)
-- [ ] **Phase 1, measure** (in progress, see ROADMAP status; probe in `bots/probe/`, logs via `tools/plog.py`). Closed so far: A1, A3–A8, A10, A11, A13, A19, A26, A28. Open: A2 (monster targeting), A9 (contesting), A18, A21–A25 (kits), A27 (`import draft`)
+- [ ] **Phase 1, measure** (in progress, see ROADMAP status; probe in `bots/probe/`, logs via `tools/plog.py`). Closed: A1–A11, A13, A16, A19, A20, A26, A28, A30 (rule-stated ones are closed as [rules], not tested). Measured 13 Oct: A12 (wrong: ~0.3 gems/round alive), A18, A31 (monolith range 3), A32 (camps sleep after 2 rounds with nobody in range). Open: kits A21–A25 only if drafted; tuning A14, A15, A40–A45 via harness
 - [ ] **Phase 2, harness:** one command plays bot A vs bot B on every map from both sides (`cambc run-batch` + `--statistics`) and prints win rate, gems/round, deaths, gems lost
 - [x] Champion "To test" lists triaged: mechanics in `ASSUMPTIONS.md` (A2, A20–A25; A20 confirmed: Cassi and Issac have separate gold); performance questions in `ROADMAP.md` → Champion experiments
 - [ ] Cassi & Issac: rule for when to split vs stay together
@@ -96,7 +97,7 @@ Sprint locks **17 Oct**, 24 Oct, 31 Oct · international qualifiers 4 Nov · UK 
 - [ ] Toggle-and-measure each principle against the previous version
 
 ### Open questions
-Unconfirmed mechanics and numbers: `docs/ASSUMPTIONS.md` (A1–A28). Strategy questions:
+Unconfirmed mechanics and numbers: `docs/ASSUMPTIONS.md` (A1–A32, tuning A40–A45). Don't test what `GameRules.md` states. Strategy questions:
 - How much does gold spent on items speed up farming?
 - How to estimate P(win) for a fight from what a champion can see?
-- Are elks and the monolith worth taking? A1, A3–A5 are measured; it now hinges on A2 (targeting) and A22 (spells on camps).
+- Are elks and the monolith worth taking? Targeting is now [rules] (nearest champion); monolith range is 3 [measured A31]; it hinges on A22 (spells on camps).

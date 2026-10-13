@@ -396,18 +396,10 @@ pub fn call(name: &str, a: &[usize]) -> i64 {
                     0
                 }
                 "map_num_camp_groups" => {
-                    if s.draft {
-                        return 94;
-                    }
                     put(a[0], 1u32);
                     0
                 }
-                "map_camp_groups" => {
-                    if s.draft {
-                        return 94;
-                    }
-                    write_truncated(a, &[5u32])
-                }
+                "map_camp_groups" => write_truncated(a, &[5u32]),
                 "map_camp_group" => {
                     put(a[1], sys::CampGroupInfo { gems: 4, gold: 10 });
                     0

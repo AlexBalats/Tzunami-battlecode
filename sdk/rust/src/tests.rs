@@ -490,10 +490,7 @@ fn design_champions_are_draft_safe_but_not_live() {
         vec![ChampionDraft::Ryth, ChampionDraft::VesperVale]
     );
     assert_eq!(crate::draft_memory().bytes(), b"rust");
-    assert_eq!(
-        crate::map::camp_groups().unwrap_err().code(),
-        Some(ErrorCode::ApiInvalidPerspective)
-    );
+    assert!(crate::map::camp_groups().is_ok());
     crate::draft_memory().submit(b"data").unwrap();
     assert_eq!(crate::draft_memory().bytes(), b"rust");
     crate::draft::pick(ChampionDraft::Tavi).unwrap();

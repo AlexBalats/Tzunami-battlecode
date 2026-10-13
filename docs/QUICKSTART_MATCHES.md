@@ -4,7 +4,7 @@ For new Claude sessions (and teammates) who need to run a match fast. Full detai
 
 ## Already set up
 
-- `cambc` 2.1.2 is on PATH (no venv needed). Check with `cambc --version`.
+- `cambc` 2.1.4 is on PATH (no venv needed). Check with `cambc --version`.
 - Run every command from the repo root (the workspace, where `cambc.toml` is).
 - Bots live in `bots/<name>/src/main.py`. Pass the bot **name**, not a path. `starter-python` is the baseline.
 - Maps are in `maps/`: `collision corners elkring expanse interlock lanes monolith packs rows`. `--map` takes a bare name or a path.

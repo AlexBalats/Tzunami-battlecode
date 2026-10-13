@@ -67,7 +67,8 @@ Values are per monster; a group's reward is the sum of its monsters. The last tw
 Confirmed facts that matter **[rules]**:
 
 - **Gem clusters give 3x the gems per HP of anything else, and can't hurt us.** They have 0 Strength, and the engine binary contains "Camps without strength cannot attack."
-- Monsters have attack range 3 and vision 8, see through bushes, and don't chase. Damage wakes the group; it goes back to sleep after 2 rounds with no champion in range.
+- Monsters have vision 8, see through bushes, and don't chase **[rules]**. **Every camp has attack range 3**, monolith included **[measured A31]** (the rules' table says 5 for the monolith; the engine says 3).
+- Monsters are friendly until hit, and an awake monster attacks **the nearest champion** every round **[rules]** (ties: lowest unit id **[measured A2]**). Damage wakes the group. It goes back to sleep after **2 rounds with no champion in range**; standing in range without attacking keeps it awake and hitting **[measured A32]**.
 - **Capture:**
   - Stand on one of the group's spawn tiles, uncontested, for 5 rounds.
   - More allies don't speed it up, and they **split the reward** (the lowest ID gets the remainder).
@@ -140,7 +141,7 @@ What this means for a general bot:
 - A **camp** killing a champion **destroys** its carried gems.
 - Cassi & Issac die together: the killer gets both bags, but only 50 gold.
 
-Value of a kill, in gems. The formula's structure is **[rules]**; the income figure is **[provisional A12]**:
+Value of a kill, in gems. The formula's structure is **[rules]**; the income figure is **[measured A12]** for the starter:
 
 ```
 kill swing = victim's carried gems          (moved from them to us)          [rules]
@@ -148,9 +149,9 @@ kill swing = victim's carried gems          (moved from them to us)          [ru
            + 50 gold to us                                                     [rules]
 ```
 
-If income is about 0.7 gems per round (**[provisional A12]**):
-- an empty-handed kill is worth roughly 40 gems of tempo;
-- a carrier with 60 gems is worth roughly 100.
+The starter collects about **0.22 gems per round per champion** over a game, 0.31 per round alive (**[measured A12]**, all 9 maps). At that rate:
+- an empty-handed kill is worth roughly **15–20 gems** of tempo (plus 50 gold);
+- a carrier with 60 gems is worth roughly 80, so **the bag dominates**: kill carriers, not empty champions.
 
 Dying costs us the same. This is why P3 (don't die with gems) comes first.
 
@@ -213,8 +214,4 @@ Recall early, because it fails under fire.
 ## Open questions
 
 All tracked in `docs/ASSUMPTIONS.md`. The big ones:
-- how monsters attack and choose targets (A1, A2);
-- our real clear speed (A3, A4);
-- camp group sizes per map (A5);
-- capture rules (A7–A9);
 - how much gold spent on items speeds up farming.

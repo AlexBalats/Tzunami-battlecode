@@ -222,7 +222,7 @@ enum class symmetry : std::int32_t
 /// Physical camp types.
 enum class camp_type : std::int32_t
 {
-	/// Wolf camp: 1,350 health, 30 strength; drops gold and gems.
+	/// Wolf camp: 1,350 health, 20 strength; drops gold and gems.
 	wolf,
 	/// Elk camp: 2,400 health, 60 strength; drops more gold and gems than a wolf.
 	elk,
@@ -4421,7 +4421,7 @@ namespace detail
 namespace map
 {
 
-/// Query physical camp groups from the engine on every call; throws in draft.
+/// Query physical camp groups from the engine on every call; also available in draft.
 [[nodiscard]] inline std::vector<camp_group> camp_groups()
 {
 	std::uint32_t count{};
