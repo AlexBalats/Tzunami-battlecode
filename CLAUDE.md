@@ -46,12 +46,13 @@ Game in one line: draft 3–5 champions, kill camps, capture them for gold and g
 - [x] Repo set up and shared on GitHub
 - [x] Docs structure: `README.md`, `docs/ECONOMY.md`, `docs/CHAMPIONS.md`, `docs/STRATEGY.md` (skeletons)
 - [x] `docs/ART_OF_WAR.md`: key passages verbatim + principles P1–P23
+- [x] Champion profiles for all 11 picks in `docs/Champions/` + roster summary in `docs/CHAMPIONS.md`
 
 ### Next up
 - [ ] Both teammates read `GameRules.md` fully
 - [ ] Fill `docs/ECONOMY.md`: camp values, kill/death value, tribute/recall costs, items
-- [ ] Write 2 sample champion profiles (one ranged, one melee), agree on the format
-- [ ] Write the remaining champion profiles (12 total)
+- [ ] Run the champion "To test" lists (camp targeting, per-body wards/gold for Cassi & Issac, dash + attack same turn, Ren retaliation on camps)
+- [ ] Cassi & Issac: rule for when to split vs stay together
 - [ ] Fill `docs/STRATEGY.md`: map principles to mechanics, rules and tests; write the fight-value formula
 
 - [ ] Install `cambc` CLI, `cambc init` a workspace with the Python starter, run `starter-python` vs itself and watch the replay
