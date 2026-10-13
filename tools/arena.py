@@ -18,7 +18,7 @@ Columns (all from A's point of view):
     g/r     A's tributed gems per round
     deaths  A's deaths (Cassi & Issac count as two bodies); kills = A's champion kills
     lost    gems A collected but never tributed or kept: collected - tributed - carried at
-            the end. Mostly gems dropped on death [provisional A31].
+            the end. Mostly gems dropped on death [provisional A33].
     faults  bot faults (crashes) for A / B; anything but 0/0 is a bug.
 """
 import argparse

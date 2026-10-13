@@ -62,8 +62,9 @@ class Nav:
     def __init__(self, goals):
         self.goals = goals
         self.field = cambc.DistanceField()
-        blocked = static_blocked() & ~goals
-        self.field.compute(blocked, goals, cambc.Bitboard(), 65535)
+        self.blocked = static_blocked() & ~goals
+        self.field.compute(self.blocked, goals, cambc.Bitboard(), 65535)
+        self.freed = False
 
     def at_goal(self, pos):
         return self.goals.is_set(pos)
@@ -77,7 +78,14 @@ class Nav:
         if self.goals.is_set(pos) or not me.can_move():
             return False
         occupied = vision.champion_tiles() | vision.camp_tiles()
-        for delta in self.field.next_moves_from(pos):
+        moves = list(self.field.next_moves_from(pos))
+        if not moves and not self.freed:
+            # Standing on a blocked tile (a camp spawn tile after a capture) has no moves out: unblock it once.
+            self.freed = True
+            self.blocked.set(pos, False)
+            self.field.compute(self.blocked, self.goals, cambc.Bitboard(), 65535)
+            moves = list(self.field.next_moves_from(pos))
+        for delta in moves:
             dest = pos + delta
             if occupied.is_set(dest):
                 continue
@@ -202,6 +210,140 @@ def wolf(state):
     info["acted"] = acted
     if t < 260 and (visible or phase not in ("approach_wait",) or t % 10 == 0):
         log("wolf", **info)
+
+
+def _lead_setup(state, me):
+    """Shared start for sleep/carry: decide the team once."""
+    if "team" not in state:
+        state["team"] = team_letter()
+        state["since"] = state["turn"]
+    return state["team"]
+
+
+def sleep(state):
+    """A32: when does an awake wolf fall asleep? Each team's lead uses the lone wolf nearest its own spawn.
+
+    Hit it for 3 rounds, then stand adjacent without attacking for 12 rounds (in range, no damage),
+    then step out of its range for 4 rounds, then come back adjacent for 6 rounds. Log our HP every turn.
+    "2 rounds without damage" -> the hits stop ~3 rounds after our last attack.
+    "2 rounds without a champion in range" -> the hits continue while we stand there.
+    """
+    me = cambc.me()
+    t = state["turn"]
+    if not is_lead(me):
+        return
+    _lead_setup(state, me)
+    if "camp" not in state:
+        spawn = game_map.spawn_region(Team.ALLY).positions()[0]
+        g = min(lone_wolves(), key=lambda g: g.camps()[0].spawn_position().chebyshev_distance(spawn))
+        state["g"], state["camp"] = g, g.camps()[0]
+        wp = state["camp"].spawn_position()
+        blocked = static_blocked()
+        state["navs"] = {"adj": Nav(ring(wp, 1, 1, blocked)), "out": Nav(ring(wp, 5, 5, blocked))}
+        state["phase"], state["hits"] = "go", 0
+    camp, navs, phase = state["camp"], state["navs"], state["phase"]
+
+    def go(new):
+        state["phase"] = new
+        state["since"] = t
+
+    acted = None
+    if phase == "go":
+        navs["adj"].step(me)
+        if navs["adj"].at_goal(me.position()):
+            go("hit")
+    elif phase == "hit":
+        if me.can_attack() and camp.is_visible():
+            me.attack(camp)
+            acted = "attack"
+            state["hits"] += 1
+        if state["hits"] >= 3:
+            go("idle_in_range")
+    elif phase == "idle_in_range" and t - state["since"] >= 12:
+        go("out")
+    elif phase == "out":
+        navs["out"].step(me)
+        if navs["out"].at_goal(me.position()) and t - state["since"] >= 4:
+            go("back")
+    elif phase == "back":
+        navs["adj"].step(me)
+        if navs["adj"].at_goal(me.position()) and t - state["since"] >= 6:
+            go("done")
+    if phase != "done":
+        pos = me.position()
+        log("sleep", t=t, phase=phase, acted=acted, pos=[pos.x, pos.y],
+            d=pos.chebyshev_distance(camp.spawn_position()), hp=me.health(),
+            camp_hp=camp.health() if camp.is_visible() else None, gstate=group_state(state["g"]))
+
+
+def carry(state):
+    """A18: does gem_count() on a visible enemy show their real bag?
+
+    Each team's lead clears and captures the harmless group (clusters only) nearest its spawn, then walks
+    to the middle of the map and waits. Every turn it logs its own bag and every visible enemy's gem_count().
+    Compare A's view of B's lead with B's own log for the same round.
+    """
+    me = cambc.me()
+    t = state["turn"]
+    if not is_lead(me):
+        return
+    _lead_setup(state, me)
+    pos = me.position()
+    if "g" not in state:
+        spawn = game_map.spawn_region(Team.ALLY).positions()[0]
+        safe = [g for g in camp_groups(None) if all(c.is_gem_cluster() or c.is_gold_cluster() for c in g.camps())
+                and any(c.is_gem_cluster() for c in g.camps())]
+        g = min(safe, key=lambda g: min(c.spawn_position().chebyshev_distance(spawn) for c in g.camps()))
+        state["g"] = g
+        state["todo"] = sorted(g.camps(), key=lambda c: c.spawn_position().chebyshev_distance(spawn))
+        state["phase"], state["nav"] = "clear", None
+        ally = game_map.spawn_region(Team.ALLY).positions()
+        enemy = game_map.spawn_region(Team.ENEMY).positions()
+        mx = (sum(p.x for p in ally) / len(ally) + sum(p.x for p in enemy) / len(enemy)) / 2
+        my = (sum(p.y for p in ally) / len(ally) + sum(p.y for p in enemy) / len(enemy)) / 2
+        state["mid"] = cambc.Vec2(int(mx), int(my))
+        log("carry_target", camps=len(g.camps()), mid=[int(mx), int(my)])
+    g, phase = state["g"], state["phase"]
+    if phase == "clear":
+        todo = state["todo"]
+        while todo and todo[0].is_visible() and todo[0].health() <= 0:
+            todo.pop(0); state["nav"] = None
+        gs = group_state(g)
+        if not todo or gs.startswith("CampGroupRewardAvailable"):
+            state["phase"], state["nav"] = "capture", Nav(g.spawn_tiles())
+        else:
+            c = todo[0]
+            if state["nav"] is None:
+                state["nav"] = Nav(ring(c.spawn_position(), 1, 1, static_blocked()))
+            if c.is_visible() and c.health() > 0 and pos.chebyshev_distance(c.position()) <= me.attack_range():
+                if me.can_attack():
+                    me.attack(c)
+            else:
+                state["nav"].step(me)
+                if state["nav"].at_goal(me.position()) and not c.is_visible():
+                    todo.pop(0); state["nav"] = None   # dead and gone
+    elif phase == "capture":
+        state["nav"].step(me)
+        if me.gem_count() > 0:
+            blocked = static_blocked()
+            goals = ring(state["mid"], 0, 2, blocked)
+            if goals.is_empty():
+                goals = ring(state["mid"], 0, 5, blocked)
+            state["phase"], state["nav"] = "meet", Nav(goals)
+    elif phase == "meet":
+        state["nav"].step(me)
+    if state["phase"] in ("capture", "meet"):
+        seen = []
+        for c in cambc.champions(Team.ENEMY):
+            if not c.is_visible():
+                continue
+            try:
+                gems = c.gem_count()
+            except Exception as e:
+                gems = "ERR " + str(e)
+            seen.append(dict(id=int(c), name=str(c.champion_name()), pos=rec(c.position()), gems=gems))
+        if seen or t % 10 == 0:
+            log("carry", t=t, phase=state["phase"], me=int(me), gems=me.gem_count(), pos=[pos.x, pos.y], enemies=seen)
 
 
 def boom(state):

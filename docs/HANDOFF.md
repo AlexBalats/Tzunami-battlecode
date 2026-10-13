@@ -13,7 +13,7 @@ Written 13 Oct 2026. Updated the same evening after the Phase 2 session (harness
 
 ## Running the probe
 
-Set up once (see `README.md` → Quick start): `python3 -m venv .venv && .venv/bin/python -m pip install cambc==2.1.4`.
+Set up once (see `README.md` → Quick start): `python3 -m venv .venv && .venv/bin/python -m pip install cambc==2.1.4` (or `python -m pip install --upgrade cambc` for a global install, then `cambc init --yes .` in the repo to refresh `sdk/`).
 
 ```sh
 # 1. Pick the experiment and the draft in bots/probe/src/plan.py (EXPERIMENT = "wolf", PICKS_A, PICKS_B).
@@ -43,7 +43,7 @@ Full usage: `docs/QUICKSTART_MATCHES.md` → Arena. The table is from A's side. 
 How it was done: `pip install cambc==2.1.4`, then the files `cambc init . --yes` refreshes (`cambc.toml` and `sdk/`) were copied in from a scratch copy of the repo. We didn't run `cambc init` in the repo itself because it re-downloads the 9 maps under new UUID names (byte-identical to ours) and adds a C++ `cmake/` folder. What changed:
 - **The draft can read camps** [sdk] [measured A19]: `camp_groups()` works in the draft (20 groups on collision, ~0.54M fuel). So a draft that plans around camps and writes the plan to draft memory is now possible.
 - **Fuel matches the rules** [measured A16]: normal turns ~2.50M (same as before), the first draft turn ~24.6M (was ~5.5M), and the first play turn ~4.6M when our code starts (was ~2.1M). That's enough to finish the ~3.2M of first imports inside the turn.
-- **Game mechanics look unchanged** [provisional A32]: the probe's `wolf` run on collision gave an identical stats file on both versions. Only one map was checked, so the Phase 1 results measured on 2.1.2 should be spot-checked on 2.1.4 as experiments get rerun anyway.
+- **Game mechanics look unchanged** [provisional A34]: the probe's `wolf` run on collision gave an identical stats file on both versions. Only one map was checked, so the Phase 1 results measured on 2.1.2 should be spot-checked on 2.1.4 as experiments get rerun anyway.
 - **The starter's games all changed**, because its random draft came out differently (A27). The baseline was rerun.
 
 ## Probe layout (`bots/probe/src/`)
@@ -53,7 +53,7 @@ How it was done: `pip install cambc==2.1.4`, then the files `cambc init . --yes`
 | `main.py` | Entry point. Branches on `cambc.is_draft()` **before importing anything**; the draft code is inline (see the gotcha below). The play loop calls `probe.play_turn()` inside a cheap error handler, logs `error` lines, and logs a `tick` line (round, fuel at start/end) every turn when `plan.TICK` is true. |
 | `plan.py` | `EXPERIMENT` (the function name in `experiments.py` to run), the draft picks per team (ChampionDraft numbers, in pick order), `TICK`. Edit it by hand before a run. |
 | `probe.py` | `play_turn()`: counts turns in `STATE["turn"]`, runs the map/constant dumps for `EXPERIMENT = "dump"` or `"static"`, otherwise calls `experiments.<EXPERIMENT>(STATE)`. |
-| `experiments.py` | One function per experiment (`dump`, `wolf`, `boom`). Each gets a dict `state` that persists across turns. Helpers: `static_blocked()`, cached `camp_groups()`, `is_lead(me)`, `Nav(goals)` (a DistanceField computed once, then `step(me)` each turn), `ring(center, lo, hi, blocked)`, `group_state(g)`, `lone_wolves()`. |
+| `experiments.py` | One function per experiment (`dump`, `wolf`, `sleep` (A32), `carry` (A18), `boom`). Each gets a dict `state` that persists across turns. Helpers: `static_blocked()`, cached `camp_groups()`, `is_lead(me)`, `Nav(goals)` (a DistanceField computed once, then `step(me)` each turn), `ring(center, lo, hi, blocked)`, `group_state(g)`, `lone_wolves()`. |
 | `log.py` | `log(tag, **data)` and `rec(obj)` (SDK records → plain data). |
 | `tools/plog.py` | Extracts the `P|` lines from a replay bundle. |
 
@@ -64,8 +64,9 @@ How it was done: `pip install cambc==2.1.4`, then the files `cambc init . --yes`
 1. **Never `import traceback`.** Its first use froze every champion for ~136 rounds, and Ryth died to a wolf while frozen. `main.py` walks `error.__traceback__` instead (~190k fuel per error turn).
 2. **The camp-index trap.** `game_map.camp_groups()`, `game_map.camp()`, every `vision.camp*` call and `Camp.camp_group()` each rebuild the camp index (~1M fuel). Call `camp_groups()` once and keep the objects. On cached objects, `camp.health()`, `position()`, `is_visible()` and `group.state()` are cheap.
 3. **Invisible allies are listed.** `cambc.champions(Team.ALLY)` includes allies out of vision, and reading their `champion_name()` raises "Unit is not in vision". Check `is_visible()`, or decide team roles once on turn 1 (as `is_lead` does). `probe.py`'s mapper check reads all allies' names; it's fine because it only runs on early turns, while everyone is still at spawn.
-4. **Don't name a module `draft`.** The draft instance dies if it imports our own `draft.py`, and the engine then picks at random. `import plan` works. A27 (exactly why) is still open.
-5. **Fuel budget:**
+4. **Since 2.1.4 the draft can see camps** (`camp_groups()` works in the draft, A19). Still ~1M fuel per call.
+5. **Don't name a module `draft`.** The draft instance dies if it imports our own `draft.py`, and the engine then picks at random. `import plan` works. A27 (exactly why) is still open.
+6. **Fuel budget:**
    - (measured on 2.1.2; turn costs and the first-import cost were the same on 2.1.4);
    - first import of a module ~1.2M;
    - full 80x80 DistanceField ~285k;
@@ -74,20 +75,18 @@ How it was done: `pip install cambc==2.1.4`, then the files `cambc init . --yes`
    - first turn ~760k.
 
    A turn that runs out of fuel carries over into later rounds, and the champion is defenceless meanwhile. Fuel deltas measured across a turn boundary mean nothing.
-6. **`DistanceField.compute` max distance ≤ 65535.** `move_towards` returns False if the target tile is blocked (altars are).
-7. **Known bug, not fixed yet:** `Nav` blocks all camp spawn tiles. So a champion standing **on** a spawn tile (Team B after capturing in `wolf()`) gets no moves out and never leaves. Fix it by removing the current tile from the blocked set (or from the goals' complement) before computing, or by building the field from the champion's current position. Then re-run `wolf` to check B leaves.
+7. **`DistanceField.compute` max distance ≤ 65535.** `move_towards` returns False if the target tile is blocked (altars are).
+8. **Fixed 13 Oct, kept for the record:** `Nav` blocks all camp spawn tiles. So a champion standing **on** a spawn tile (Team B after capturing in `wolf()`) gets no moves out and never leaves. Fix it by removing the current tile from the blocked set (or from the goals' complement) before computing, or by building the field from the champion's current position. Then re-run `wolf` to check B leaves.
 
 ## What to do next, in order
 
-1. **Fix the Nav bug** (gotcha 7).
-2. ~~A2, A9~~ **done** by the teammate on collision and interlock (see `ASSUMPTIONS.md`): monsters hit the nearest champion (Chebyshev, ties to the lowest unit id); a capture is contested only from the group's spawn tiles, and contesting resets progress.
-3. Then: A22/A23 (area spells and stuns on camps), A18 (does enemy `gem_count()` show their real bag), A21, A24, A25 (kits), A27 (`import draft` vs `import drafter`; on 2.1.4 also check whether the draft was simply running out of fuel), plus A1/A6 on an elk and A3 with another champion.
-4. **On 2.1.4, spot-check old results** as you rerun experiments (A32): one experiment behind A1/A3/A6–A8/A28 on a second map is enough. Also check A31 (does `lost` = gems carried at deaths?).
-
-The other track (Phase 2 → 3):
-
-5. **Map generator** (`ROADMAP.md` → Phase 2 → Next). Drive the engine's `MapBuilder` from Node. The proof of concept (decode, re-encode, dump) lives outside the repo for now; all 9 public maps round-trip byte for byte. Re-fetch `engine.wasm` from the 2.1.4 map editor first (the test copy was fetched before the upgrade). Put generated maps in a subfolder of `maps/` so the arena picks them up.
-6. **Phase 3 v1** for the 17 Oct lock (spec in `CLAUDE.md` → Tasks and `ROADMAP.md`). Judge it with the arena against `starter-python`: it must win every map from both sides. Since 2.1.4 the draft can plan around camps.
+1. ~~Fix the Nav bug~~: fixed 13 Oct in `bots/probe` (`Nav.step` unblocks the tile it stands on once and recomputes).
+2. **Phase 1 is done except kits** (A21–A25, only for champions we draft). Results of 13 Oct: A12 wrong (~0.22 gems/round), A18 confirmed, A31 range 3, A32 sleep after 2 rounds with nobody in range. Don't test anything `GameRules.md` already states. Spot-checks when convenient: A34 (rerun one 2.1.2 experiment on a second map on 2.1.4) and A33 (does the arena's `lost` equal gems carried at deaths?).
+3. **Draft planning with camps:** since 2.1.4 the draft bot can read camp groups (A19). Use it for picks and the opening plan in draft memory.
+4. ~~Phase 2 harness~~ **done**: `tools/arena.py` (see "Comparing two bots" above). Use it to tune A14, A15 and A40–A45.
+5. **Map generator** (`ROADMAP.md` → Phase 2 → Next). Drive the engine's `MapBuilder` from Node (an alternative to drawing maps by hand in `cambc mapeditor`). The proof of concept (decode, re-encode, dump) lives outside the repo for now; all 9 public maps round-trip byte for byte. Re-fetch `engine.wasm` from the 2.1.4 map editor first (the test copy was fetched before the upgrade). Maps at most 100×100 (A30). Put generated maps in a subfolder of `maps/` so the arena picks them up.
+6. **Phase 3 v1** for the 17 Oct lock (spec in `CLAUDE.md` → Tasks and `ROADMAP.md`). Judge it with the arena against `starter-python`: it must win every map from both sides. A first tzunami vs starter run on expanse (2.1.4) lost 672 to 1,020, with tzunami earning 0 gold: worth a look.
+7. Kit assumptions (A21–A25) only for champions we actually draft.
 
 ## House rules (for teammates and Claude)
 

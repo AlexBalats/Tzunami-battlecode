@@ -8,7 +8,7 @@ Tags as in `docs/ASSUMPTIONS.md`: **[rules]**, **[sdk]**, **[measured]**, and **
 
 ### Compute (fuel)
 
-- Python gets 25x the C++ budget per turn **[rules]**, but the event site's FAQ says 20x, so the real figure is **[provisional A16]**. The first draft turn gets 10x and the first play turn 2x. Unused fuel doesn't carry over. **[rules]** On cambc 2.1.4 a normal turn starts with ~2.50M and the first draft turn with ~24.6M, which fits 25x and 10x of a 100k C++ budget **[measured A16]**. (On 2.1.2 the first draft turn had only ~5.5M.)
+- Python gets 25x the C++ budget of 100k, so **2.5M fuel per turn** **[rules]**. The first draft turn gets 10x and the first play turn 2x. Unused fuel doesn't carry over. **[rules]** Measured on cambc 2.1.4: a normal turn starts with ~2.50M, the first draft turn with ~24.6M, and the first play turn has ~4.6M left when our code starts **[measured A16]**. (On 2.1.2 the first draft turn had only ~5.5M.)
 - **A turn that runs out of fuel is suspended and resumes next round** **[rules]**. In a fight that means skipping a turn, so every turn must finish with a margin.
 - `Champion.move_towards()` (and the starter's `move_towards_closest`) runs a fresh BFS (`DistanceField`) on every call **[sdk]**.
 - **The camp index trap** **[sdk]**: `game_map.camp_groups()`, `game_map.camp()`, `vision.camps()`, `vision.camp_at()`, `vision.camp_groups()` and `Camp.camp_group()` all rebuild every camp group from the host on every call (~1M fuel each). Call `game_map.camp_groups()` **once** and keep the `CampGroup` and `Camp` objects. `camp.health()`, `camp.position()`, `camp.is_visible()` and `group.state()` on those objects are cheap host reads.
@@ -30,7 +30,7 @@ Tags as in `docs/ASSUMPTIONS.md`: **[rules]**, **[sdk]**, **[measured]**, and **
 ### State and memory
 
 - The bot is one long-running loop per champion (`main.py`), so **module-level state persists across turns** **[sdk]**. Each champion has its own private memory for free.
-- **Draft memory, 1,024 bytes**: written by the draft bot (`cambc.draft_memory`, `.submit(bytes)`), read-only for champions afterwards **[rules]**. The draft bot can read the terrain (size, symmetry, walls, altars, spawns). **Since cambc 2.1.4 it can also read the camps**: `camp_groups()` works in the draft (`sdk/python/cambc/game_map.py` **[sdk]**; collision gave 20 groups for ~0.54M fuel **[measured A19]**). On 2.1.2 every camp API errored. So the draft can plan around camps (and has ~24.6M fuel on its first turn to do it) and write the plan to draft memory.
+- **Draft memory, 1,024 bytes**: written by the draft bot (`cambc.draft_memory`, `.submit(bytes)`), read-only for champions afterwards **[rules]**. The draft bot sees the whole map, camps included **[rules]**: since cambc **2.1.4**, `game_map.camp_groups()` works during the draft **[sdk]** (on 2.1.2 every camp API errored). Collision gave 20 groups for ~0.54M fuel on the first call **[measured A19]**; in play each call rebuilds the camp index (~1M), so call it once. The draft can now plan camp routes (with ~24.6M fuel on its first turn) and write them to draft memory.
 - **Shared memory, 8 bytes**: `cambc.shared_memory`, read/write for the whole team all game. The enemy can't read it. **[rules]**
 - Python randomness is always zero in matches, so seed our own generator. Source: a comment in the official starter's `randomness.py`, which seeds an LCG from the spawn position **[sdk]**.
 - **Matches are deterministic** **[measured]**: the same bots on the same map give an identical game (expanse re-run, 13 Oct). Any change in a game comes from a change in code or map, never from luck. Debugging is easy, but beware of tuning to one exact game.
@@ -38,7 +38,7 @@ Tags as in `docs/ASSUMPTIONS.md`: **[rules]**, **[sdk]**, **[measured]**, and **
 ### What we can see
 
 - Vision is per champion (radius 8, shadowcasting, walls and bushes block it). **Teammates' vision is not shared**, nor are their wards. **[rules]**
-- The SDK lets us call `gem_count()` on **any visible champion**, enemies included; `gold_count()` is ours only **[sdk]**. That it returns an enemy's real bag is **[provisional A18]**.
+- The SDK lets us call `gem_count()` on **any visible champion**, enemies included; `gold_count()` is ours only **[sdk]**. It returns an enemy's real bag **[measured A18]**.
 - `cambc.global_submitted_gems(team)` gives both teams' tributed totals: we always know the score **[sdk]**.
 - `game_map.symmetry()` plus the reflect helpers give the enemy's spawn and the mirror of every camp and altar from turn one **[sdk]**.
 - `vision.camp_groups()` returns only groups with a spawn tile in sight. `CampGroup.state()` raises if the group is out of vision, so remember last-known states with the round number **[sdk]**.

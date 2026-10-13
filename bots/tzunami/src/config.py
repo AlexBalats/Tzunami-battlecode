@@ -16,7 +16,7 @@ USE_KITS = True           # cast abilities (shield, attack reset, damage on targ
 LOG = True                # one P| line per plan switch / reflex / SOS
 
 # ---------------------------------------------------------------- economy and currency
-INCOME_DEFAULT = 0.7      # PROVISIONAL A12: gems/round before the live estimate warms up
+INCOME_DEFAULT = 0.3      # measured A12 (starter, per round alive): gems/round before the live estimate warms up
 INCOME_WINDOW = 150       # rounds of history in the live income estimate
 GOLD_TO_GEM = 0.1         # PROVISIONAL A41: gem value of one gold
 STEAL_BONUS = 1.2         # PROVISIONAL A41: x value for a camp someone else cleared (P13)
@@ -46,7 +46,7 @@ TOP_K = 12                # candidate FARM plans scored in full each turn (fuel)
 
 # ---------------------------------------------------------------- survival (A43)
 CAMP_HP_RESERVE = 0.15    # PROVISIONAL A43: fraction of max HP left after a predicted clear
-CAMP_DMG_SAFETY = 1.1     # PROVISIONAL A43: x predicted camp damage (A2 open: assume all monsters hit us)
+CAMP_DMG_SAFETY = 1.1     # PROVISIONAL A43: x predicted camp damage (A2 [rules]: each monster hits the nearest champion, so alone we take every hit)
 RECALL_HP_FRAC = 0.35     # PROVISIONAL A43: recall below this (starter uses 0.35)
 RECALL_SAFE_DIST = 6      # PROVISIONAL A43: no enemy closer than this, or the recall gets interrupted
 SAFETY_MARGIN = 2         # PROVISIONAL A43: R2 flees when TTD < rounds to safety + this

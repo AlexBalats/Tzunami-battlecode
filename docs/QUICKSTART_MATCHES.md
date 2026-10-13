@@ -72,7 +72,7 @@ Top-level keys: `outcome` (`"teamA"`/`"teamB"`/...), `round` (round it ended), `
 python -c "import json;d=json.load(open('replays/stats.json'));print(d['outcome'],d['round'],d['botFaults'])"
 ```
 
-Per champion also: `submittedGems`, `gems` (carried at the end), `kills`, `earnedGold`, `spentGold`, `monsterDamageDone/Taken`, `team`, `type`. Gems lost = `collectedGems − submittedGems − gems` (**[provisional A31]**).
+Per champion also: `submittedGems`, `gems` (carried at the end), `kills`, `earnedGold`, `spentGold`, `monsterDamageDone/Taken`, `team`, `type`. Gems lost = `collectedGems − submittedGems − gems` (**[provisional A33]**).
 
 ## Gotchas
 

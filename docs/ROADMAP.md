@@ -64,17 +64,18 @@ Build a **probe bot** that works through the open entries in `docs/ASSUMPTIONS.m
   - Vesper Vale's dash + attack in the same turn.
 - Clear time per champion per camp type (A3, A4). This answers the clear-speed questions in the champion profiles.
 
-**Status (13 Oct):** probe bot in `bots/probe/` (`plan.py` picks the experiment; read logs with `tools/plog.py`).
-- **Closed:** A1 (one monster vs one champion), A2 (nearest champion, ties to lowest id), A3 (now a formula), A4, A5, A6 (wolf), A7, A8, A9 (contest region = the group's spawn tiles), A10, A11, A13, A16 (25x confirmed on 2.1.4), A19 (changed on 2.1.4: the draft now sees camps), A26, A28 (new: camps don't regenerate), A30 (maps are at most 100×100).
-- **Partly:** A17 (fuel; the camp-index trap and the traceback stall are in `ARCHITECTURE.md`), A27 (`import plan` works in the draft; `import draft` doesn't).
+**Status (13 Oct):** probe bot in `bots/probe/` (`plan.py` picks the experiment; read logs with `tools/plog.py`). New rules export and cambc **2.1.4** installed the same day: anything the rules state is closed as **[rules]** and not tested (`ASSUMPTIONS.md` → How an entry closes).
+- **Closed:** A1, A2, A6, A8, A16, A19, A30 (by the rules; A16 and A19 also measured on 2.1.4, A30 also event info), A3 (now a formula), A4, A5, A7, A9, A10, A11, A13, A20, A26, A28.
+- **Partly:** A17 (fuel traps in `ARCHITECTURE.md`), A21 (wards settled), A27, A29.
 - Per-map table for all 9 maps in `ECONOMY.md` → Maps.
 
-Next, in this order:
-- A22, A23 (area spells and stuns on camps), then A18, A21, A24, A25.
-- A27: `import draft` vs `import drafter`.
-- Check A1/A6 on an elk, and A3 with one more champion, on a second map.
+Measured the same day on 2.1.4: A12 (**wrong**: the starter makes ~0.22 gems/round per champion, not 0.7), A18 (confirmed), A31 (monolith range 3), A32 (a camp sleeps after 2 rounds with no champion in range).
 
-**Done when:** A1–A11 and A16–A25 are closed, and `ECONOMY.md` has measured clear times and damage for wolf and gem cluster.
+Next:
+- Kits (A21 consumables, A22–A25) only once the draft settles on those champions. Tuning values (A14, A15, A40–A45) go to the harness.
+- Spot-checks on 2.1.4: A34 (one 2.1.2 experiment on a second map) and A33 (the arena's gems-lost formula).
+
+**Done when:** `ECONOMY.md` has measured clear times and damage for wolf and gem cluster.
 
 ### Phase 2: Harness (15 Oct)
 
