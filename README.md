@@ -12,6 +12,9 @@ Our bots are built around Sun Tzu's *Art of War*. Each principle has to earn its
 | --- | --- |
 | `GameRules.md` | Official game rules (reference) |
 | `BotAPIPython.md` | Official Python bot API (reference) |
+| `docs/GETTING_STARTED.md` | Official: install the `cambc` CLI, create a workspace, run, submit |
+| `docs/TESTING.md` | Official: local matches, replays, stats export, batch runs |
+| `docs/FIRST_STRATEGY.md` | Official: the starter farm → capture → tribute loop |
 | `docs/ECONOMY.md` | What's worth what: camps, kills, tribute, recall, items. Values tagged [rules] / [estimate] / [measured] |
 | `docs/CHAMPIONS.md` | One profile per champion: strengths, weaknesses, needs, counters, bot notes |
 | `docs/ART_OF_WAR.md` | Source text: key passages quoted word for word, plus the main principles P1–P23 |
