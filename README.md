@@ -15,12 +15,15 @@ Our bots are built around Sun Tzu's *Art of War*. Each principle has to earn its
 | `docs/GETTING_STARTED.md` | Official: install the `cambc` CLI, create a workspace, run, submit |
 | `docs/TESTING.md` | Official: local matches, replays, stats export, batch runs |
 | `docs/FIRST_STRATEGY.md` | Official: the starter farm → capture → tribute loop |
-| `docs/ECONOMY.md` | What's worth what: camps, kills, tribute, recall, items. Values tagged [rules] / [estimate] / [measured] |
+| `docs/ECONOMY.md` | What's worth what: camps, kills, tribute, recall, items. Values tagged [rules] / [sdk] / [measured] / [provisional A#] |
 | `docs/CHAMPIONS.md` | One profile per champion: strengths, weaknesses, needs, counters, bot notes |
 | `docs/ART_OF_WAR.md` | Source text: key passages quoted word for word, plus the main principles P1–P23 |
 | `docs/STRATEGY.md` | Art of War principles → mechanics → bot rules → tests |
+| `docs/ARCHITECTURE.md` | Engine facts that shape the code, bot layout, turn pipeline, memory plans |
+| `docs/ROADMAP.md` | Season calendar, how we work, phases with "done when" criteria |
+| `docs/ASSUMPTIONS.md` | Every unconfirmed number or mechanic, with an ID (A#), how to test it, and the result |
 | `CLAUDE.md` | Context for Claude Code when working in this repo |
 
 ## Why this order
 
-Economy and champion facts come first because everything else builds on them: the fight-value formula needs the numbers, the draft needs the profiles, and the strategy needs real mechanics to point at. Numbers in the docs later become the bot's constants, and [estimate] tags are our list of things to measure.
+Economy and champion facts come first because everything else builds on them: the fight-value formula needs the numbers, the draft needs the profiles, and the strategy needs real mechanics to point at. Numbers in the docs later become the bot's constants. Anything tagged [provisional A#] is unconfirmed: `docs/ASSUMPTIONS.md` is our list of things to measure, and nothing provisional is treated as fact.
