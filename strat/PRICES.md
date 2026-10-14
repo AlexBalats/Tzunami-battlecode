@@ -18,7 +18,7 @@ Tags: **[rules]** `GameRules.md`, **[measured]** our matches (`docs/ECONOMY.md`,
 | `trib(b)` | `max(1, ceil(b / 10))` turn ends; damage does not break it, stun/death/lock do | [rules] |
 | `recall` | 5 turn ends (3 with Home), broken by damage or stun; full heal on spawn | [rules] |
 | `death` | 60 rounds out, bag lost (to the killer if a champion killed us, destroyed if a camp did) | [rules] |
-| `death_cost` | `min(DCOST_CAP 300, 60 × max(0.4, best raw price for me this turn among FARM, KILL, JOIN a fight and HUNT)) + my bag`, in gems: the one price of dying, used by HEAL (`P(die) × death_cost`; ~12 g/r at low HP: 0.8 × 300 / 20) and as the risk of KILL, JOIN a fight and the sighting hunt (`P(lose) × death_cost`). Raw = value / rounds with no multipliers and no risk term (not circular). History: with the kill multiplier included (Vesper ~7.6) it reached 4,600 and fights stopped (final1: kill choices 6-14 per game, kills 0); capped raw (final2): kill choices 22-40, kills 0-3, deaths 0, 3W/1L vs tzunami444 [measured 15 Oct] | [user plan 15 Oct, ladder 4; 0.4 and 300 guess] |
+| `death_cost` | `min(DCOST_CAP 300, 60 × max(0.4, best raw price for me this turn among FARM, KILL, JOIN a fight and HUNT)) + my bag`, in gems: the one price of dying, used by HEAL (`P(die) × death_cost`; ~12 g/r at low HP: 0.8 × 300 / 20) and as the risk of KILL, JOIN a fight and the hunts (`P(lose) × min(DCOST_FIGHT_CAP 150, death_cost)`: fights risk at most 150 [user plan 15 Oct, ladder 5; guess], HEAL keeps the 300 cap). In HEAL's `P(die) = (1 − hp/maxhp) × (1 + enemies within 8) × HEAL_K` the `(1 + enemies)` factor is 1 when my P(lose) < 0.3 [ladder 5] (a no-op today: HEAL already prices 0 with an enemy within 8 and P(lose) <= 0.5). Raw = value / rounds with no multipliers and no risk term (not circular). History: with the kill multiplier included (Vesper ~7.6) it reached 4,600 and fights stopped (final1: kill choices 6-14 per game, kills 0); capped raw (final2): kill choices 22-40, kills 0-3, deaths 0, 3W/1L vs tzunami444 [measured 15 Oct] | [user plan 15 Oct, ladder 4; 0.4 and 300 guess] |
 | `gold→gems` | `G2G` below | derived |
 
 ### Gold to gems: `G2G`
@@ -77,8 +77,24 @@ price  = value / rounds − risk
   `rounds = ∞` (user rule: never a hunt). The chase question goes to `SCENARIOS.md` (S1).
 - Being killed costs us the same value: that is why RETREAT is not an option here but a risk term in every
   price; when every price goes negative, the champion recalls or walks home (the executor's fallback).
-- `P(we lose)` from Lanchester power `Σ HP × S` of me + allies within 8 of ME vs enemies within 8 of ME **[guess]**
-  (`LANCH_R` 8; was within 5 of e: ladder 3, kills approved then 3 enemies arrived from 6-8 tiles); S2.
+- `P(we lose) = T² / (U² + T²)` (Lanchester square law; was linear `T / (U + T)`), U / T = `Σ HP × dps` of me +
+  allies / enemies within 8 of ME, dps = S × 2 for a champion with an attack reset (ours `ME['attack_reset']`,
+  others `abilities()` once per id, fallback by ChampionType: Cassi, Stellar, Prism, Ren have none) **[guess]**
+  [user plan 15 Oct, ladder 5: linear gave 0.36 vs a Varg half her strength, risk 108 > value ~70, 4 dropped kills]
+  (`LANCH_R` 8; was within 5 of e: ladder 3, kills approved then 3 enemies arrived from 6-8 tiles); S2. Only
+  `lanchester()` (KILL, HEAL gate, FARM/BANK gates, retreat) uses it; the sighting / patrol hunt and JOIN keep their
+  own linear estimate.
+- **Kill hold** [user plan 15 Oct, ladder 5]: a KILL on a still-visible target, or a sighting HUNT while it prices, is
+  held for the phase's `chase` rounds (default 3; Vesper 8) whatever its price, unless HP < 30 % or `retreat_now`
+  (other options keep `HOLD_TURNS` 2). Ladder: she chose a kill, stepped once, it priced negative, she dropped it.
+- **Retreat** (`retreat_now`, executor fallback and the hold breaker) [user plan 15 Oct, ladder 5]: enemies within 4
+  outnumber allies + 1 **and** P(lose) > 0.5, or HP < the profile / phase `retreat_hp` (default 0.6; Vesper's hunt
+  phase 0.3) with an enemy within 4.
+- **Attacker** [user plan 15 Oct, ladder 5; 1.5 guess]: `sense` marks `s.attacker` (nearest) when my HP dropped since
+  last turn and an enemy is within its attack range + 1; its KILL price × `ATTACKER_BONUS` 1.5.
+- **Flee only when it can end** (`flee_ok`) [user plan 15 Oct, ladder 5]: with the attacker within 2, spawn > 6
+  (walk field), no ally within 6 and no dash ready (`s.trapped`), HEAL prices 0, `retreat_now` is False and the
+  fallback attacks the attacker; exception: HP < `retreat_hp` and P(lose) > 0.7 (dying either way: try the recall).
 - **HUNT** [user plan 15 Oct, ladder 3; numbers guess]: profile keys `hunt` (tiles, default 0) and `chase` (rounds,
   default 3). A target is also closable when `dd <= reach + hunt` (rounds = walk beyond range + ttk, as above), and
   `exec_kill` gives up after `chase` rounds without getting closer. Only Vesper's 15-shard phase sets them (12 / 8),
@@ -88,7 +104,7 @@ price  = value / rounds − risk
   multiplier; gated by Lanchester against the sighted count at my base stats. Broadcast as kill, target 31. The
   executor walks to the altar; done when an enemy is visible (KILL takes over), failed on arrival or after 40 rounds.
 - **Patrol hunt** [user plan 15 Oct, ladder 4; guess all] (hunt > 0, nobody visible, no fresh sighting): option `hunt`
-  to the nearest enemy-side altar (draft side 2) I have not reached in `HUNT_REVISIT` 60 rounds (none reachable: the
+  to the nearest enemy-side altar (draft side 2) I have not reached in `HUNT_REVISIT` 150 rounds (was 60; chain patrol, ladder 5: arrival records the visit and the 90_main loop re-chooses the same turn, so the next unvisited altar prices at once) (none reachable: the
   side-2 group with the most gems, target 100 + h). Value `30 + 50 × G2G + DENIAL`, rounds = walk + 10, risk
   `P(lose) × death_cost` (Lanchester vs 2 enemies at my base stats), × the KILL multiplier (appetite included) ×
   **roam** = `clamp(S / 100 − 1, 0, 2)` (0 below Strength 100, 1 at 200, 2 at 300) × 0.5 while a sighting of >= 3
@@ -98,7 +114,7 @@ price  = value / rounds − risk
 - **Kill exclusion**: a failed kill excludes (kill, target) for 20 rounds; a finisher (ttk <= 2) ignores that
   exclusion, except after a chase timeout (`exec_kill` chase count or the executor deadline): then it is excluded too.
 - **Appetite** [user plan 15 Oct, ladder 3; guess], every champion: the KILL multiplier (KILL, JOIN a fight, hunt)
-  × `min(1, (hp/maxhp) / 0.6) × max(0.3, 1 − bag/100)`: hurt or loaded champions bank / heal first. One `kmul` carries it into all three (checked 15 Oct, ladder 4: already so in code).
+  × `min(1, (hp/maxhp) / 0.6) × max(0.5, 1 − bag/200)` (was max(0.3, 1 − bag/100); ladder 5: a 36 bag cut her appetite 36 %): hurt or loaded champions bank / heal first. One `kmul` carries it into all three (checked 15 Oct, ladder 4: already so in code).
 - **Dash** (micro, every champion with an `is_dash()` slot, when ready; `World.dash_to`): CLOSE in `exec_kill` when
   the target is 1-2 tiles beyond range (land in range, then attack: works [measured 15 Oct, 139 of 157 dashes hit]),
   only if `ceil(target HP / my S) <= 3` and enemies within 8 of me <= allies within 8 of me + 1, else walk
@@ -181,7 +197,7 @@ from the champion profiles. Strength-only clear maths misses spells, splash and 
 | Vendetta | Power Str, Monster Str, Durability Health | +45 of 630 (7 %) | 0.12 | profile: Strength + Monster emblem |
 | Varg | Monster Str, Power Str, Durability Health | +45 of 450 (10 %), splash scales too | 0.16 | profile: Strength + Monster emblem |
 | Marcella | Monster Str, Durability Health, Power Str | +45 of 505 (9 %) | 0.15 | profile: Strength (+Health); Monster for camps |
-| Vesper Vale | Treasure Str, Monster Str, Power Str | +45 of 405 (11 %) | 0.17 | [user decision 14 Oct] Treasure first: the gold snowball (+20 % passive becomes +40 % with the emblem), then Monster for farm speed, Power for fights. Her gold bonus is the `gold` multiplier, not item_gain. **Phases** [user's plan 15 Oct, numbers guess]: base row farm 1.2, gold 1.6, bank 1.1, kill 0.9; below 15 shards farm 1.5, gold 3.0, kill 0.9, bank 1.1, shop 2.0 (build Treasure + Monster + Power); from 15 shards (three emblems; was 10, ladder 3) farm 0.4, gold 1.0, kill 2.5, bank 1.5, shop 1.0, **hunt 12, chase 8** (see KILL: HUNT). Opening seed: her slot takes the nearest gold group first (`opening_slots`). Re-applied every 20 rounds with the shard read; `KILL_PER_SHARD` 0.15 still adds on top |
+| Vesper Vale | Treasure Str, Monster Str, Power Str | +45 of 405 (11 %) | 0.17 | [user decision 14 Oct] Treasure first: the gold snowball (+20 % passive becomes +40 % with the emblem), then Monster for farm speed, Power for fights. Her gold bonus is the `gold` multiplier, not item_gain. **Phases** [user's plan 15 Oct, numbers guess]: base row farm 1.2, gold 1.6, bank 1.1, kill 0.9; below 15 shards farm 1.5, gold 3.0, kill 0.9, bank 1.1, shop 2.0 (build Treasure + Monster + Power); from 15 shards (three emblems; was 10, ladder 3) farm 0.4, gold 3.0 (was 1.0), kill 2.5, bank 1.5, shop 0.5 (was 1.0), **hunt 20 (was 12), chase 8**, heal 0.5, retreat_hp 0.3 [ladder 5] (see KILL: HUNT). Opening seed: her slot takes the nearest gold group first (`opening_slots`). Re-applied every 20 rounds with the shard read; `KILL_PER_SHARD` 0.15 still adds on top |
 | Stellar | Monster Str, Power Str (default) | +28 of 620 (4.5 %) | 0.10 | default build (not in our roster) |
 | others (neutral rows) | Monster Str, Power Str | ~10 % | 0.12 | default build, placeholder |
 

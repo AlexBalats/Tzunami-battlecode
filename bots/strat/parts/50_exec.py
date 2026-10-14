@@ -285,7 +285,8 @@ def exec_hunt(w, s, a):
         return "done"
     key, t = (f"g{a - 100}", w.G[a - 100].anchor) if a >= 100 else (f"a{a}", w.apos[a])
     if s.pos.chebyshev_distance(t) <= 2 and (a >= 100 or w.aside[a] == 2):
-        w.hvis[a] = s.r                         # patrol arrival: recorded, done (HUNT_REVISIT)
+        w.hvis[a] = s.r                         # patrol arrival: recorded, done (HUNT_REVISIT); the loop in 90_main
+        trace("patrol", f"visit {'g' + str(a - 100) if a >= 100 else 'A' + str(a)}")    # re-chooses this turn: next altar
         return "done"
     if s.r - w.started >= HUNT_MAX or s.pos.chebyshev_distance(t) <= 2:
         return "failed"
@@ -369,12 +370,16 @@ def exec_join(w, s, k):
 
 
 def retreat_now(s):
-    """The fallback's retreat condition: enemies within 4 outnumber us + 1, or HP < RETREAT_HP with one there."""
+    """The fallback's retreat condition: enemies within 4 outnumber us + 1 AND my square-law P(lose) > 0.5, or HP <
+    the profile / phase `retreat_hp` (default RETREAT_HP) with one there [user plan 15 Oct, ladder 5]."""
     near = [e for e in s.enemies if e[4] <= 4]
-    if not near or s.spawn:
+    if not near or s.spawn or not flee_ok(s):
         return False
     allies = sum(1 for a in s.allies if a[1].chebyshev_distance(s.pos) <= 4)
-    return len(near) > allies + 1 or s.hp < RETREAT_HP * s.maxhp
+    pl = getattr(s, "plose", None)
+    if pl is None:
+        pl = lanchester(s)
+    return (len(near) > allies + 1 and pl > 0.5) or s.hp < ME["prof"].get("retreat_hp", RETREAT_HP) * s.maxhp
 
 
 def exec_heal(w, s, _t):
@@ -391,6 +396,8 @@ def exec_heal(w, s, _t):
 
 
 def exec_fall(w, s, _t):
+    if s.trapped and not flee_ok(s):
+        return exec_kill(w, s, int(s.attacker[0]))    # [ladder 5] no flee can end: fight the attacker
     near = [e for e in s.enemies if e[4] <= 4]
     if near and not s.spawn:
         if retreat_now(s):

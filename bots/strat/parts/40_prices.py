@@ -31,6 +31,8 @@ HEAL_K = 1.5                # [guess] (2.0 -> 1.5, 15 Oct ladder 2: 11 of 27 dea
 MY_RATE = 0.4               # [guess] floor of my gems per round in death_cost (60 x max(this, best FARM now) + bag)
 DEATH_OUT = 60              # [rules] rounds out after a death
 DCOST_CAP = 300             # [guess] cap on death_cost before the bag (heal ~12 at low HP: 0.8 x 300 / 20)
+DCOST_FIGHT_CAP = 150       # [guess, user plan 15 Oct ladder 5] death cost in fight risk terms (KILL/JOIN/HUNT); HEAL keeps DCOST_CAP
+ATTACKER_BONUS = 1.5        # [guess, user plan 15 Oct ladder 5] KILL multiplier on the enemy that just hit me (s.attacker)
 HOLD_TURNS = 2              # a new (option, target) is kept this many turns (unless done/failed, HEAL, retreat)
 WARD_VALUE = 4.0            # [guess] g/r of a ward placed at once (8 -> 4: at 8 it outranked every farm, 1-5 g/r)
 WARD_FROM = 10              # [guess] no ward option before this round (round 3: every idle champion chose a ward)
@@ -60,7 +62,7 @@ HEAL_FLOOR = 0.8            # [guess] whatever plose says (ladder: farm 3.34 bea
 HEAL_WB = 15                # [guess] HEAL divisor uses min(walk back, this): far from spawn must not zero the heal
 ENGAGED_HYST = 3.0          # [guess] farm -> another farm while a live monster of mine is within CAMP_R: needs 3x
 HUNT_BAG = 30               # [guess] expected bag of a sighted enemy (sighting hunt value)
-HUNT_REVISIT = 60           # [guess] rounds before a patrol hunt goes back to an enemy altar I reached
+HUNT_REVISIT = 150          # [guess; 60 -> 150 user plan 15 Oct, ladder 5: chain patrol] rounds before a patrol hunt goes back to an enemy altar I reached
 ROAM_STACK = 60             # [guess] rounds a >= 3-enemy sighting halves the no-sighting hunt
 HUNT_MAX = 40               # rounds a sighting hunt walks before it gives up
 # Posture columns: multipliers over the options (price *= POSTURE[col][key]), neutral 1.0, all [guess].
@@ -116,7 +118,7 @@ CLEAR_MEMO = {}
 class Snap:
     __slots__ = ("r", "st", "alive", "recalling", "submitting", "can_move", "can_attack", "pos", "hp", "maxhp",
                  "bag", "gold", "S", "enemies", "allies", "live", "vis", "mem", "spawn", "near_e", "P", "walt", "edps", "plose",
-                 "sc", "sa", "sage", "stack", "dcost")
+                 "sc", "sa", "sage", "stack", "dcost", "attacker", "trapped")
 
 
 def sense(w):
@@ -146,6 +148,7 @@ def sense(w):
     s.stack = s.sc >= stack_n(w) and s.sage <= SIGHT_FRESH and s.sa < len(w.apos)
     s.enemies, s.allies, s.live, s.near_e = [], [], {}, 99
     s.dcost = 0.0
+    s.attacker, s.trapped = None, False
     if not s.alive:
         s.pos, s.hp, s.maxhp, s.bag, s.S, s.vis, s.spawn = w.pos, 0, 1, 0, 1, None, False
         return s
@@ -168,6 +171,14 @@ def sense(w):
                 s.allies.append((c, p, c.health(), c.strength()))
         except Exception:
             pass
+    # [user plan 15 Oct, ladder 5] attacker: my HP dropped and an enemy is within its attack range + 1 (nearest).
+    # trapped: it is within 2 and no flee can end (spawn > 6, no ally within 6, no dash ready) -> flee_ok() gates
+    if s.hp < (getattr(w, "hp_alive", 0) or 0):
+        hit = [e for e in s.enemies if e[4] <= arng(e[0]) + 1]
+        if hit:
+            s.attacker = e = min(hit, key=lambda x: x[4])
+            wb = fget(w.F_home, pos) if w.F_home is not None else pos.chebyshev_distance(w.sp0)
+            s.trapped = e[4] <= 2 and wb > 6 and not any(a[1].chebyshev_distance(pos) <= 6 for a in s.allies)                 and not (w.dash_ab is not None and w.dash_ab.is_ready())
     s.vis = None
     hs = list(w.near6)
     cur = w.cur
@@ -336,18 +347,52 @@ def need_k(w, s, h, c):
     return None
 
 
+RESET_X = {}                # champion id -> 2 with an attack-reset ability (double hit), else 1; cached per id
+_NO_RESET_T = (3, 5, 6, 9)  # ChampionType CASSI, STELLAR, PRISM, REN: no attack reset [rules roster]
+
+
+def rmul(c):
+    k = int(c)
+    if k not in RESET_X:
+        try:
+            RESET_X[k] = 2 if any(a.is_attack_reset() for a in c.abilities()) else 1
+        except Exception:
+            RESET_X[k] = 1 if int(c.champion_name()) in _NO_RESET_T else 2
+    return RESET_X[k]
+
+
+ARNG = {}                   # champion id -> attack range (cached)
+
+
+def arng(c):
+    k = int(c)
+    if k not in ARNG:
+        try:
+            ARNG[k] = c.attack_range()
+        except Exception:
+            ARNG[k] = 1
+    return ARNG[k]
+
+
+def flee_ok(s):
+    """[user plan 15 Oct, ladder 5] HEAL / the fallback retreat only when a flee can end: not trapped (see sense), or
+    HP < retreat_hp and P(lose) > 0.7 (dying either way: try the recall)."""
+    return not s.trapped or (s.hp < ME["prof"].get("retreat_hp", RETREAT_HP) * s.maxhp and getattr(s, "plose", 1.0) > 0.7)
+
+
 def lanchester(s, e_pos=None):
-    """P(we lose) from sum(hp x str) of me + allies within LANCH_R of ME vs enemies within LANCH_R of ME [guess,
+    """P(we lose) = T^2 / (U^2 + T^2) (square law) [user plan 15 Oct, ladder 5; was T / (U + T)]. U, T = sum of
+    hp x dps of me + allies / enemies within LANCH_R of ME; dps = strength x 2 with an attack reset (rmul) [guess,
     PRICES S2]. [rule, 15 Oct ladder 3] centred on me, not the target (e_pos is ignored, kept for callers)."""
-    us = s.hp * s.S
-    for _c, p, hp, st in s.allies:
+    us = s.hp * s.S * (2 if ME.get("attack_reset") else 1)
+    for c, p, hp, st in s.allies:
         if p.chebyshev_distance(s.pos) <= LANCH_R:
-            us += hp * st
+            us += hp * st * rmul(c)
     th = 0
-    for _c, _p, hp, _b, dd, st in s.enemies:
+    for c, _p, hp, _b, dd, st in s.enemies:
         if dd <= LANCH_R:
-            th += hp * st
-    return th / max(1.0, us + th)
+            th += hp * st * rmul(c)
+    return th * th / max(1.0, us * us + th * th)
 
 
 def engaged(s, h):
@@ -563,7 +608,7 @@ def price_all(w, s, cl, by):
     kmul = prof["kill"] + KILL_PER_SHARD * w.shards     # scales with shards owned (read every 20 rounds, 90_main)
     # [user plan 15 Oct, ladder 3; numbers guess] appetite: hurt or loaded champions bank / heal first. kmul carries
     # it into KILL, JOIN a fight and the sighting hunt alike (checked 15 Oct, ladder 4: all three multiply by kmul)
-    kmul *= min(1.0, s.hp / s.maxhp / 0.6) * max(0.3, 1 - s.bag / 100)
+    kmul *= min(1.0, s.hp / s.maxhp / 0.6) * max(0.5, 1 - s.bag / 200)   # bag term [ladder 5: was max(0.3, 1 - bag/100)]
     fights = []                                 # (value, rounds, multiplier, P(lose), option, target): risk added below
     for c, p, hp, bag, dd, st in s.enemies:
         ttk = -(-int(hp) // int(s.S))
@@ -592,7 +637,8 @@ def price_all(w, s, cl, by):
             w.excl.pop(("kill", int(c)), None)  # finishers ignore the kill exclusion (P(lose) vs ~0 HP is ~0)
         # [deviation] (value - risk) / rounds: PRICES' value / rounds - risk subtracts gems from gems/round, so an
         # even fight never priced and farmers took hits without answering. Risk P(lose) x death_cost, added below.
-        fights.append((value, max(1, rounds), kmul * pm[e_side(w, p)], pl, "kill", int(c)))
+        am = ATTACKER_BONUS if s.attacker is not None and int(s.attacker[0]) == int(c) else 1.0
+        fights.append((value, max(1, rounds), kmul * pm[e_side(w, p)] * am, pl, "kill", int(c)))
     # HUNT a sighting [rule, 15 Oct ladder 3]: hunt phase only, nobody visible, fresh byte 5 -> walk to its altar.
     # value = HUNT_BAG + 50 g2g + DENIAL [guess bag], rounds = walk + 5; Lanchester vs s.sc enemies at my base stats.
     if (prof.get("hunt", 0) > 0 and not s.enemies and s.sc and s.sage <= SIGHT_FRESH and s.sa < len(w.apos)
@@ -658,8 +704,9 @@ def price_all(w, s, cl, by):
         if v / rd > bf:
             bf = v / rd
     s.dcost = dcost = min(DCOST_CAP, DEATH_OUT * max(MY_RATE, bf)) + s.bag
+    fcost = min(DCOST_FIGHT_CAP, dcost)         # [user plan 15 Oct, ladder 5] fights risk at most 150; HEAL keeps dcost
     for v, rd, m, pl, o, tg in fights:
-        out.append(((v - pl * dcost) / rd * m, o, tg))
+        out.append(((v - pl * fcost) / rd * m, o, tg))
     # HEAL: what a death costs (death_cost: bag + 60 rounds of my best farm price) x P(die), over a recall (5) + the walk back out.
     # P(die) = (1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, clamped to [0, 1]; at least STACK_HEAL with >= 3
     # enemies within 8 and no ally within 5, even at full HP (HEAL is then "go home": the executor walks while an
@@ -670,14 +717,15 @@ def price_all(w, s, cl, by):
     for e in s.enemies:
         if e[4] <= 8:
             ne8 += 1
-    pdie = min(1.0, (1 - s.hp / s.maxhp) * (1 + ne8) * HEAL_K)
+    # [user plan 15 Oct, ladder 5] near enemies I beat (plose < 0.3) are not danger: the (1 + ne8) factor is 1
+    pdie = min(1.0, (1 - s.hp / s.maxhp) * (1 + (ne8 if s.plose >= 0.3 else 0)) * HEAL_K)
     if ne8 >= 3 and s.plose > HEAL_PLOSE and not s.spawn and not any(a[1].chebyshev_distance(s.pos) <= 5 for a in s.allies):
         pdie = max(pdie, STACK_HEAL)
     if ne8 and s.plose <= HEAL_PLOSE:
         pdie = 0
     if ne8 and s.hp < HEAL_LOW * s.maxhp:
         pdie = max(pdie, HEAL_FLOOR)            # [rule, 15 Oct ladder 3] low HP near an enemy: whatever plose says
-    if pdie > 0:
+    if pdie > 0 and flee_ok(s):
         wb = fget(w.F_home, s.pos) if w.F_home is not None else s.pos.chebyshev_distance(w.sp0)
         out.append((pdie * dcost / (5 + min(wb, HEAL_WB)) * prof.get("heal", 1.0), "heal", 0))
     # SHOP
@@ -755,10 +803,21 @@ def choose(w, s):
     best = ps[0] if ps else (0.0, "fall", None)
     if best[0] <= 0:
         best = (0.0, "fall", None)
+    if TRACE and s.attacker is not None and w.cur[0] in ("heal", "fall") or TRACE and s.attacker is not None and best[1] in ("heal", "fall"):
+        trace("flee", f"{w.cur[0]}->{best[1]} att={int(s.attacker[0])} d={s.attacker[4]} trapped={int(s.trapped)} "
+                      f"ok={int(flee_ok(s))} hp={s.hp / s.maxhp:.2f} pl={s.plose:.2f}")
     if seeded(w, s) and best[1] != "heal" and not retreat_now(s):
         return False                            # the opening seed holds (only HEAL / retreat break it)
     going = curp is not None and curp > 0 and w.status == "going"
     held = going and r - w.started < HOLD_TURNS and not retreat_now(s)
+    # [user plan 15 Oct, ladder 5] a KILL on a still-visible target, or a HUNT on a fresh sighting while it prices,
+    # holds for the phase's `chase` rounds (default 3) whatever its price, unless hp < 30 % or retreat_now (ladder:
+    # Vesper chose a kill, stepped once, it priced negative and she dropped it, 4 times in one game)
+    if (w.status == "going" and s.hp >= 0.3 * s.maxhp and not retreat_now(s)
+            and r - w.started < ME["prof"].get("chase", 3)
+            and ((cur[0] == "kill" and any(int(e[0]) == cur[1] for e in s.enemies))
+                 or (cur[0] == "hunt" and curp is not None and cur[1] == s.sa and s.sc and s.sage <= SIGHT_FRESH))):
+        held = True
     hy = HYST
     if cur[0] == "farm" and best[1] == "farm" and best[2] != cur[1]:
         hy = ENGAGED_HYST if engaged(s, cur[1]) else race(w)["farm_hyst"]
@@ -777,7 +836,7 @@ def choose(w, s):
                   default=0.0)
         trace("choice", f"{new[0]} {tname(w, new[0], new[1])} {best[0]:.2f} | {t2[1]} {tname(w, t2[1], t2[2])} "
                         f"{t2[0]:.2f} cur={curp if curp is None else round(curp, 2)} bag={s.bag} "
-                        f"hp={s.hp / s.maxhp:.2f} fight={bfi:.2f} dcost={s.dcost:.0f} "
+                        f"hp={s.hp / s.maxhp:.2f} fight={bfi:.2f} dcost={s.dcost:.0f} pl={getattr(s, 'plose', 0):.2f} ne={s.near_e} "
                         f"d={w.G[new[1]].anchor.chebyshev_distance(s.pos) if new[0] == 'farm' and new[1] in w.G else '-'} "
                         f"from={cur[0]}:{cur[1]} hit={int(hit)}"
                         + (f" roam={w.roam:.2f}" if new[0] == "hunt" and new[1] != s.sa else ""))

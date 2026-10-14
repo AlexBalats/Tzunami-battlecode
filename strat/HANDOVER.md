@@ -568,6 +568,15 @@ Commits of this cycle, oldest first (each message says what was a number and wha
 - Posture columns (economy/defend/punish) and RACE rows by regime: many/pick-rich -> walk weight 2.0, farm
   hysteresis 2.0, WAIT_PARTNER 30; few -> 1.0 / 1.2 / 15, defend join 2.0, a pair counts as a stack (STACK_N 2).
 - Choice hold 2 turns (4 lost games), heal included; 3.0x hysteresis while a camp is hitting me.
+- Ladder 5 (game 953b10df: Vesper chose a kill, stepped, it priced negative, dropped it, 4 times): Lanchester square
+  law P(lose) = T^2/(U^2+T^2) with dps x2 for attack-reset champions (was linear T/(U+T), 0.36 vs a weaker Varg).
+- Appetite bag term max(0.5, 1 - bag/200) (was max(0.3, 1 - bag/100)); fights risk min(150, death_cost), HEAL 300.
+- Kill hold: a KILL on a visible target / a sighting HUNT holds `chase` rounds (Vesper 8) unless HP < 30 % or retreat.
+- retreat_now: outnumbered counts only with P(lose) > 0.5; HP line = profile `retreat_hp` (default 0.6).
+- Vesper >= 15 shards: gold 3.0, shop 0.5, hunt 20, heal 0.5, retreat_hp 0.3; HUNT_REVISIT 60 -> 150 (chain patrol);
+  HEAL's (1 + enemies within 8) factor is 1 when P(lose) < 0.3.
+- ATTACKER_BONUS 1.5 on KILL of the enemy that just hit me; trapped (attacker within 2, spawn > 6, no ally within 6,
+  no dash) -> no HEAL / retreat, fight it, unless HP < retreat_hp and P(lose) > 0.7.
 
 ### What had to be code (something the price list could not express)
 - The HEAL option itself (recall priced by the death it avoids) and, after the ladder, "never recall with an
