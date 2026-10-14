@@ -184,6 +184,8 @@ class World:
                 roots.set(t)
         elif k == "a":
             roots = disk(self.apos[int(key[1:])], 1) & ~blk
+        elif k == "w":                          # ward j: any free tile within 2 of its tile (placement reach 2 [rules])
+            roots = disk(self.ward_tile, 2) & ~blk
         else:
             roots = self.sp & ~blk
         f = DistanceField()
@@ -343,6 +345,26 @@ class World:
         f.compute_to(blk & ~roots, roots, dest, Bitboard(), FAR - 1)
         return self.step_field(f, s.pos)
 
+    def step_flee(self, s, pts):
+        """HEAL / recall refused: one step that keeps the min distance to pts (enemies) as large as possible, capped
+        at 7 (out of reach + a step), and among those the lowest home-field value (towards spawn)."""
+        if not s.can_move:
+            return "blocked"
+        hf = self.home_field()
+        pos = s.pos
+        cand = []
+        for dv in DIRS:
+            q = pos + dv
+            if not (0 <= q.x < self.Wm and 0 <= q.y < self.Hm) or self.blk_nav.is_set(q):
+                continue
+            de = min(q.chebyshev_distance(p) for p in pts)
+            cand.append((-min(de, 7), fget(hf, q), q.x, q.y))
+        cand.sort()
+        for _d, _h, x, y in cand[:3]:
+            if self.move(V(x, y)):
+                return "moved"
+        return "blocked"
+
     def step_away(self, s, pts):
         """A step maximising the min Chebyshev distance to pts (out of camp range)."""
         if not s.can_move:
@@ -365,6 +387,40 @@ WORLD = World()
 
 
 def opening_seed(w):
+    """My entry of opening_slots (None past its end)."""
+    slots = opening_slots(w)
+    return slots[w.slot] if w.slot < len(slots) else None
+
+
+def ward_assign(w):
+    """Round 1, no comms: the draft's ward tiles (d['wards'], up to 3, in draft order) go one per champion; ward j
+    goes to the free roster slot whose opening group (opening_slots) is nearest to it by Chebyshev distance (a slot
+    without one: our spawn), ties to the lower slot. Every champion computes the same table from the same inputs.
+    Sets w.ward_j / w.ward_tile for me (None when I have no ward to place)."""
+    w.ward_j, w.ward_tile = None, None
+    d = w.d
+    if not d or not d.get("wards"):
+        return
+    slots = opening_slots(w)
+    T = max(1, len(w.roster))
+    free = list(range(T))
+    for j, (x, y) in enumerate(d["wards"][:3]):
+        if not free:
+            break
+        t = V(x, y)
+        best = None
+        for k in free:
+            a = w.G[slots[k]].anchor if k < len(slots) else w.sp0
+            dk = a.chebyshev_distance(t)
+            if best is None or dk < best[0]:
+                best = (dk, k)
+        free.remove(best[1])
+        if best[1] == w.slot:
+            w.ward_j, w.ward_tile = j, t
+            return
+
+
+def opening_slots(w):
     """Every champion computes the same list with no comms: groups on our side (0) and contested (1), ranked by
     value / (d_us + clear_rounds) with a generic champion (CHAMP_STR) and gold at G2G(1); a 1-body group fills
     one slot, a 2-body group two; slot i takes entry i. Seeds only the first choice."""
@@ -380,4 +436,4 @@ def opening_seed(w):
     slots = []
     for _v, _n, h, need in rank:
         slots += [h] * need
-    return slots[w.slot] if w.slot < len(slots) else None
+    return slots

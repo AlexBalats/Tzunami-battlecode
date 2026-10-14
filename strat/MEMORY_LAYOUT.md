@@ -30,3 +30,17 @@ Records, starting at offset 16:
 
 `decode()` group tuple: `(handle, side, bodies, block, near, d_us, d_them)`. Side rule: ours if d_them - d_us > 8,
 theirs if < -8, else contested (`R_REACT`). Version 1 had 4-byte group records (no d_us, d_them).
+
+# Shared 8 bytes (play, `cambc.shared_memory`, 15 Oct, latest)
+
+Written and read by `bots/strat/parts/40_prices.py` (`sense`, `broadcast`) and `90_main.py` (death marker).
+
+| byte | written by | layout |
+| --- | --- | --- |
+| 0-4 | roster slot k (one byte each) | low 3 bits option code: 0 idle / heal / ward, 1 farm, 2 bank, 3 kill, 4 hold, 5 shop, 6 join, 7 dead; high 5 bits target: group index (draft-memory order, 31 = past index 30), altar index, enemy handle & 31, ally slot for join. Code 0 with target 1-3 = walking to place ward 0-2 (target = ward index + 1); code 0 with target 0 = idle or heal |
+| 5 | any champion seeing >= 2 enemies together | high 3 bits = enemies seen together (the largest count within 8 of one seen enemy, own vision + own ward, capped 7; 0 = no sighting); low 5 bits = `(round // 4) & 31` stamp. Overwritten when the new count >= the stored one or the stored one is older than 12 rounds. Readers clear it once 32+ rounds old (the stamp wraps at 128) |
+| 6 | same writer, with byte 5 | region: index of the altar nearest the sighted cluster (only meaningful while byte 5's count > 0) |
+| 7 | a champion that died farming | group death marker: low 5 bits = group index + 1 (0 none; groups past index 30 are not marked), high 3 bits = `(round // 32) & 7`; live while age x 32 < 100 rounds (`DEATH_MARK`), readers clear it after |
+
+Before this change: byte 5 was (altar + 1) << 4 | (round // 2) & 15 for enemies on our half, bytes 6-7 the death marker
+(group index + 1, `(round // 8) & 255`).

@@ -1,9 +1,12 @@
 """Sense, price the six options (strat/PRICES.md) in team gems per round, choose with hysteresis, broadcast.
 
-Option codes (shared byte, low 3 bits): 0 idle (also heal: recalling to heal, no target, nothing for allies to read),
-1 farm, 2 bank, 3 kill, 4 hold, 5 shop, 6 join, 7 dead; target in the high 5 bits (group index in draft-memory order, altar index, enemy handle & 31, ally slot for join).
-Byte 5: enemy sighting on our half, high nibble = altar index + 1 (0 none), low nibble = (round // 2) & 15 when seen;
-a reader treats age >= SIGHT_AGE half-rounds as stale and clears it (~30 rounds, no writer needed to decay it).
+Option codes (shared byte, low 3 bits): 0 idle (also heal: recalling to heal, target 0; and ward: target = ward
+index + 1, so a byte of 8/16/24 is "walking to place ward 0/1/2"), 1 farm, 2 bank, 3 kill, 4 hold, 5 shop, 6 join,
+7 dead; target in the high 5 bits (group index in draft-memory order, altar index, enemy handle & 31, ally slot for join).
+Byte 5: enemy sighting, high 3 bits = enemies seen together (within SIGHT_R of one of them, capped 7; 0 = none), low
+5 bits = (round // 4) & 31 when seen. Byte 6: the sighting's region, index of the altar nearest the cluster.
+A reader treats age >= SIGHT_LIVE rounds as stale and clears byte 5. Byte 7: group death marker (90_main).
+Layout: strat/MEMORY_LAYOUT.md, "Shared 8 bytes".
 """
 
 KEEP_HP = 0.4               # [guess] the hit body keeps >= 40 % of max HP (KEEP_FRAC)
@@ -13,7 +16,6 @@ DENIAL = 24                 # [measured-ish] their farm rate 0.4 g/r x 60 rounds
 THEIR_RATE = 0.4            # [guess] their gems per round per body (HOLD value 30 x 0.4)
 P_NEAR = 0.5                # [guess] P(lose the bag) with an enemy within 8
 DANGER_W = 0.2              # [guess] P(lose the bag) per unit of draft danger (cell value / 14)
-SIGHT_AGE = 15              # half-rounds (~30 rounds) a sighting stays live
 SHOP_RETURN = True          # [deviation] SHOP rounds include the walk back from spawn to where I am
 SURVIVE = 0.6               # [tuned] k bodies are enough if the most-hit body keeps > 40 % of its current HP
 WAIT_PARTNER = 15           # [guess] rounds added to a pair take while the partner is not committed
@@ -23,19 +25,55 @@ FARM_PLOSE = 0.99           # [tuned] off: 0.65 (2 v 1) lost corners and interlo
 HOLD_PLOSE = 0.3            # [guess] HOLD needs a clearly safe altar
 KILL_PLOSE = 0.45           # [tuned] fight only when locally stronger (0.5 = even; 0.99 lost 9 champions in kills)
 DEATH_EXCL = 100            # rounds a death excludes its (option, target), and kill/hold after a kill/hold death
-DEATH_MARK = 100            # rounds the team avoids a group an ally died farming (bytes 6-7)
+DEATH_MARK = 100            # rounds the team avoids a group an ally died farming (byte 7)
 HEAL_K = 1.5                # [guess] HEAL: P(die) = clamp((1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, 0, 1)
 MY_RATE = 0.4               # [guess] my gems per round, x 60 rounds out = what a death costs beyond the bag
 HOLD_TURNS = 2              # a new (option, target) is kept this many turns (unless done/failed, HEAL, retreat)
+WARD_VALUE = 8.0            # [guess] g/r of a ward placed at once: dominates the first trip (farm opens at ~1-3 g/r)
+WARD_WALK = 30              # [guess] WARD price = WARD_VALUE x WARD_WALK / (WARD_WALK + walk): 8 here, 3.4 at 40 tiles
+WARD_TRIES = 3              # choices of the ward option before it is given up (timeouts / stuck re-choose it)
+SIGHT_LIVE = 32             # rounds a sighting stays in byte 5 (readers clear it after; the stamp wraps at 128)
+SIGHT_FRESH = 8             # rounds a sighting drives posture (defend / punish) and the stack terms
+SIGHT_OVER = 12             # a weaker sighting overwrites a stronger one older than this
+SIGHT_R = 8                 # enemies within this of each other count as seen together
+STACK_N = 3                 # a fresh sighting of >= this many enemies is "the stack"
+STACK_R = 10                # FARM of groups within this of the stack's altar x STACK_FARM
+STACK_FARM = 0.2            # [guess] don't walk into the stack
+PUNISH_LEAD = 50            # ahead by more than this on score + a fresh small sighting -> punish
+STACK_HEAL = 0.6            # [guess] HEAL P(die) floor with >= 3 enemies within 8 and no ally within 5
+# Posture columns: multipliers over the options (price *= POSTURE[col][key]), neutral 1.0, all [guess].
+# Selection (posture(), every champion locally, same inputs, no byte): draft regime few -> defend, pick / many /
+# unknown -> economy; a fresh sighting (<= SIGHT_FRESH rounds) of >= STACK_N enemies -> defend; a fresh one of <= 2
+# while we lead by > PUNISH_LEAD -> punish. Our side of an enemy: its nearest altar has draft side 0 or 1; theirs: 2.
+_PK = ("farm", "farm_their_side", "bank_risk", "kill_our_side", "kill_their_side", "hold", "shop", "join", "ward")
+
+
+def _col(**kw):
+    c = dict.fromkeys(_PK, 1.0)
+    c.update(kw)
+    return c
+
+
+POSTURE = {
+    "economy": _col(),                          # open maps: the baseline prices as they are
+    # defend [guess all]: farm_their_side 0.3 their half is where the stack lives; bank_risk 1.5 cash the bag before
+    # it is caught; kill_our_side 1.3 intruders on our half are near help; kill_their_side 0.5 no dives into them;
+    # hold 1.3 deny tributes at contested altars; join 1.3 move in pairs.
+    "defend": _col(farm_their_side=0.3, bank_risk=1.5, kill_our_side=1.3, kill_their_side=0.5, hold=1.3, join=1.3),
+    # punish [guess all]: a small group seen while we lead: fight it, mostly on our half; bank a bit sooner.
+    "punish": _col(kill_our_side=1.4, kill_their_side=1.1, bank_risk=1.2),
+}
 OPT = ("idle", "farm", "bank", "kill", "hold", "shop", "join", "dead", "fall")
 CODE = {o: i for i, o in enumerate(OPT)}
 CODE["heal"] = 0            # broadcast as idle: the byte has no free code (7 is dead)
+CODE["ward"] = 0            # idle code with target = ward index + 1 (see broadcast)
 CLEAR_MEMO = {}
 
 
 class Snap:
     __slots__ = ("r", "st", "alive", "recalling", "submitting", "can_move", "can_attack", "pos", "hp", "maxhp",
-                 "bag", "gold", "S", "enemies", "allies", "live", "vis", "mem", "spawn", "near_e", "P", "walt", "edps", "plose")
+                 "bag", "gold", "S", "enemies", "allies", "live", "vis", "mem", "spawn", "near_e", "P", "walt", "edps", "plose",
+                 "sc", "sa", "sage", "stack")
 
 
 def sense(w):
@@ -59,6 +97,10 @@ def sense(w):
         cambc.shared_memory.read(0, s.mem)
     except Exception:
         pass
+    sb = s.mem[5]                               # sighting: count, region altar, age in rounds (4-round stamp)
+    s.sc, s.sa = sb >> 5, s.mem[6]
+    s.sage = (((r // 4) - (sb & 31)) & 31) * 4 if s.sc else 999
+    s.stack = s.sc >= STACK_N and s.sage <= SIGHT_FRESH and s.sa < len(w.apos)
     s.enemies, s.allies, s.live, s.near_e = [], [], {}, 99
     if not s.alive:
         s.pos, s.hp, s.maxhp, s.bag, s.S, s.vis, s.spawn = w.pos, 0, 1, 0, 1, None, False
@@ -261,10 +303,42 @@ def lanchester(s, e_pos):
     return th / max(1.0, us + th)
 
 
+def posture(w, s):
+    """Posture column (see POSTURE); traces `posture` when mine changes."""
+    d = w.d
+    col = "defend" if d and d.get("regime") == 0 else "economy"
+    if s.sc and s.sage <= SIGHT_FRESH:
+        if s.sc >= STACK_N:
+            col = "defend"
+        elif w.score[0] - w.score[1] > PUNISH_LEAD:
+            col = "punish"
+    if col != w.post:
+        w.post = col
+        trace("posture", f"{col} sight={s.sc}@A{s.sa if s.sa < 255 else '-'} age={s.sage if s.sc else '-'} "
+                         f"score={w.score[0]}-{w.score[1]} regime={d.get('regime') if d else '-'}")
+    return POSTURE[col]
+
+
+def e_side(w, p):
+    """POSTURE key for a kill at p: kill_their_side if the altar nearest p has draft side 2, else kill_our_side."""
+    if not w.apos:
+        return "kill_our_side"
+    a = min(range(len(w.apos)), key=lambda i: p.chebyshev_distance(w.apos[i]))
+    return "kill_their_side" if w.aside[a] == 2 else "kill_our_side"
+
+
 def price_all(w, s, cl, by):
-    """[(price, option, target)] for every option this turn (multipliers applied)."""
+    """[(price, option, target)] for every option this turn (multipliers: champion row x posture column)."""
     prof, r = ME["prof"], s.r
+    pm = posture(w, s)
     out = []
+    # WARD: my assigned draft ward tile (ward_assign), the first thing on the map; 0 once placed or given up
+    if w.ward_tile is not None and not w.ward_done and w.ward_tries < WARD_TRIES:
+        wk = w.walk_to(f"w{w.ward_j}", s.pos)
+        if wk is None:
+            wk = max(0, s.pos.chebyshev_distance(w.ward_tile) - 2)
+        if wk < FAR:
+            out.append((WARD_VALUE * WARD_WALK / (WARD_WALK + wk) * pm["ward"], "ward", w.ward_j))
     # FARM over the ~6 nearest groups by F_me (+ the current target, + cleared groups seen)
     cand = list(w.near6)
     cur = w.cur
@@ -280,8 +354,10 @@ def price_all(w, s, cl, by):
     s.walt = fget(w.F_alt, s.pos)
     s.plose = lanchester(s, s.pos) if s.enemies else 0.0
     dead_g = None
-    if s.mem[6] and (((r // 8) - s.mem[7]) & 255) * 8 < DEATH_MARK:
-        dead_g = w.idx.get(s.mem[6] - 1)
+    b7 = s.mem[7]                               # death marker: group index + 1 (low 5 bits), (round // 32) & 7 stamp
+    if b7 & 31 and (((r // 32) - (b7 >> 5)) & 7) * 32 < DEATH_MARK:
+        dead_g = w.idx.get((b7 & 31) - 1)
+    sap = w.apos[s.sa] if s.stack else None
     update_groups(w, s, cand)
     for h in cand:
         o = w.G[h]
@@ -299,7 +375,9 @@ def price_all(w, s, cl, by):
             wk = w.gd.get(h, FAR)
         if wk >= FAR:
             continue
-        p = farm_price(w, s, h, k, wk) * prof["farm"]
+        p = farm_price(w, s, h, k, wk) * prof["farm"] * pm["farm_their_side" if o.side == 2 else "farm"]
+        if sap is not None and o.anchor.chebyshev_distance(sap) <= STACK_R:
+            p *= STACK_FARM                     # the stack was just seen there
         out.append((p, "farm", h))
     # BANK
     if s.bag > 0 and w.apos:
@@ -307,6 +385,16 @@ def price_all(w, s, cl, by):
         a = order[0]
         if w.aside[a] == 2 and w.bank < len(w.apos):
             a = w.bank
+        if sap is not None:
+            # [deviation] spec: "the altar farthest from the sighting among safe ones". Here safe = draft side 0/1,
+            # reachable and more than STACK_R from the stack's altar, and the nearest such by walk wins (the
+            # farthest can be across the map); none safe: the one farthest from the stack.
+            ok = [i for i in order if w.aside[i] <= 1 and w.ad[i] < FAR]
+            away = [i for i in ok if w.apos[i].chebyshev_distance(sap) > STACK_R]
+            if away:
+                a = away[0]
+            elif ok:
+                a = max(ok, key=lambda i: w.apos[i].chebyshev_distance(sap))
         wk = w.walk_to(f"a{a}", s.pos)
         if wk is None or wk >= FAR:
             wk = max(0, w.ad[a] - 1)
@@ -314,7 +402,7 @@ def price_all(w, s, cl, by):
             P = s.P
             # [deviation] the risk of holding the bag is ADDED to BANK (PRICES: "at bag >= 20 with an enemy
             # within 8, risk dominates and BANK wins"); subtracting it would stop every bank near an enemy.
-            out.append((s.bag * (1 + P) / (wk + max(1, -(-s.bag // 10))) * prof["bank"], "bank", a))
+            out.append((s.bag * (1 + P) / (wk + max(1, -(-s.bag // 10))) * prof["bank"] * pm["bank_risk"], "bank", a))
     # KILL: closable targets only
     reach = ME.get("range", 1) + 1 + (2 if ME.get("has_dash") else 0)
     for c, p, hp, bag, dd, st in s.enemies:
@@ -341,26 +429,28 @@ def price_all(w, s, cl, by):
         risk = pl * (s.bag + 60 * THEIR_RATE)
         # [deviation] (value - risk) / rounds: PRICES' value / rounds - risk subtracts gems from gems/round, so an
         # even fight never priced and farmers took hits without answering
-        out.append(((value - risk) / max(1, rounds) * prof["kill"], "kill", int(c)))
+        out.append(((value - risk) / max(1, rounds) * prof["kill"] * pm[e_side(w, p)], "kill", int(c)))
     # HOLD: contested altar, stun or lock gold, a fresh sighting there
-    sb = s.mem[5]
-    if sb >> 4:
-        a = (sb >> 4) - 1
-        age = ((r // 2) - (sb & 15)) & 15
+    if s.sc and s.sage < SIGHT_LIVE:
+        a = s.sa
         # spec: stun OR lock gold; we never buy or place locks, so only a stun counts [deviation]
-        if age < SIGHT_AGE and a < len(w.apos) and w.aside[a] == 1 and ME.get("has_cc") and                 r >= w.kh_until and s.plose <= HOLD_PLOSE:
+        if a < len(w.apos) and w.aside[a] == 1 and ME.get("has_cc") and                 r >= w.kh_until and s.plose <= HOLD_PLOSE:
             wk = w.walk_to(f"a{a}", s.pos)
             if wk is None or wk >= FAR:
                 wk = max(0, w.ad[a] - 1)
-            out.append((30 * THEIR_RATE / (wk + 30) * prof["hold"], "hold", a))
+            out.append((30 * THEIR_RATE / (wk + 30) * prof["hold"] * pm["hold"], "hold", a))
     # HEAL: what a death costs (bag + 60 rounds of my farming) x P(die), over a recall (5) + the walk back out.
-    # 0 at full HP. P(die) = (1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, clamped to [0, 1].
-    if s.hp < s.maxhp:
-        ne8 = 0
-        for e in s.enemies:
-            if e[4] <= 8:
-                ne8 += 1
-        pdie = min(1.0, (1 - s.hp / s.maxhp) * (1 + ne8) * HEAL_K)
+    # P(die) = (1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, clamped to [0, 1]; at least STACK_HEAL with >= 3
+    # enemies within 8 and no ally within 5, even at full HP (HEAL is then "go home": the executor walks while an
+    # enemy is within 6 and recalls only once clear).
+    ne8 = 0
+    for e in s.enemies:
+        if e[4] <= 8:
+            ne8 += 1
+    pdie = min(1.0, (1 - s.hp / s.maxhp) * (1 + ne8) * HEAL_K)
+    if ne8 >= 3 and not s.spawn and not any(a[1].chebyshev_distance(s.pos) <= 5 for a in s.allies):
+        pdie = max(pdie, STACK_HEAL)
+    if pdie > 0:
         wb = fget(w.F_home, s.pos) if w.F_home is not None else s.pos.chebyshev_distance(w.sp0)
         out.append((pdie * (s.bag + 60 * MY_RATE) / (5 + wb) * prof.get("heal", 1.0), "heal", 0))
     # SHOP
@@ -374,7 +464,7 @@ def price_all(w, s, cl, by):
         rounds = 1 if s.spawn else 6
         if SHOP_RETURN and not s.spawn:
             rounds += fget(w.home_field(), s.pos) if w.F_home is not None else 20
-        out.append((g2g(r) * n * cost / rounds * prof["shop"], "shop", 0))
+        out.append((g2g(r) * n * cost / rounds * prof["shop"] * pm["shop"], "shop", 0))
     # JOIN: an ally farming a group that needs >= 2
     for k, (op, tg) in by.items():
         if op != 1 or tg not in w.idx:
@@ -392,17 +482,16 @@ def price_all(w, s, cl, by):
         lo = farm_price(w, s, h, b, wk) * b if b >= o.need else 0.0
         gain = farm_price(w, s, h, b + 1, wk) * (b + 1) - max(0.0, lo)
         if gain > 0:
-            out.append((gain / max(1, wk) * prof["join"], "join", k))
+            out.append((gain / max(1, wk) * prof["join"] * pm["join"], "join", k))
     return out
 
 
 def choose(w, s):
     """Argmax with a HOLD_TURNS hold, then hysteresis; returns True when the choice changed.
-    HEAL in progress is locked until its executor reports done/failed (a recall cancelled by a flip is the worst
-    outcome). HEAL is never excluded (a death or timeout while healing must not forbid the next heal)."""
+    HEAL is locked only while actually recalling (90_main does not call choose during a channel); while it walks
+    away from enemies it is re-priced like any option. HEAL is never excluded (a death or timeout while healing
+    must not forbid the next heal)."""
     cur = w.cur
-    if cur[0] == "heal" and w.status == "going":
-        return False
     cl, by = claims(w, s)
     w.claims = cl
     ps = price_all(w, s, cl, by)
@@ -442,6 +531,8 @@ def tname(w, op, tg):
         return f"g{tg}@{o.anchor.x},{o.anchor.y}" if o else str(tg)
     if op in ("bank", "hold"):
         return f"A{tg}"
+    if op == "ward" and w.ward_tile is not None:
+        return f"W{tg}@{w.ward_tile.x},{w.ward_tile.y}"
     return str(tg)
 
 
@@ -454,8 +545,11 @@ def tbits(w, op, tg):
 
 
 def broadcast(w, s, code):
-    """My byte (slot) when it changed; byte 5 sighting on our half."""
-    b = code | (tbits(w, OPT[code], w.cur[1]) << 3 if 0 < code < 7 else 0)
+    """My byte (slot) when it changed; bytes 5-6 sighting (count | stamp, region altar); stale bytes 5 and 7 cleared."""
+    if w.cur[0] == "ward" and w.cur[1] is not None:
+        b = ((w.cur[1] + 1) & 31) << 3         # code 0, target = ward index + 1
+    else:
+        b = code | (tbits(w, OPT[code], w.cur[1]) << 3 if 0 < code < 7 else 0)
     if b != w.sent:
         try:
             cambc.shared_memory[w.slot] = b
@@ -464,22 +558,34 @@ def broadcast(w, s, code):
             pass
     if not s.alive:
         return
-    sb = s.mem[5]
-    if sb >> 4 and (((s.r // 2) - (sb & 15)) & 15) >= SIGHT_AGE:
-        try:
+    try:
+        if s.sc and s.sage >= SIGHT_LIVE:
             cambc.shared_memory[5] = 0
-        except Exception:
-            pass
-    if s.enemies and w.apos:
-        hf = w.F_home
-        for _c, p, _hp, _b, _d, _st in s.enemies:
-            de = fget(w.F_enemy, p)
-            ours = (fget(hf, p) < de) if hf is not None else                 p.chebyshev_distance(w.sp0) < p.chebyshev_distance(w.esp0)
-            if ours:
-                a = min(range(len(w.apos)), key=lambda i: p.chebyshev_distance(w.apos[i]))
-                if a < 15:
-                    try:
-                        cambc.shared_memory[5] = (a + 1) << 4 | ((s.r // 2) & 15)
-                    except Exception:
-                        pass
-                break
+            s.sc, s.sage = 0, 999
+        b7 = s.mem[7]
+        if b7 & 31 and (((s.r // 32) - (b7 >> 5)) & 7) * 32 >= DEATH_MARK:
+            cambc.shared_memory[7] = 0
+    except Exception:
+        pass
+    es = s.enemies
+    if len(es) >= 2 and w.apos:
+        # enemies seen together (my vision + my ward's): the largest count within SIGHT_R of one of them
+        best, bp = 0, None
+        for e in es:
+            p = e[1]
+            n = 0
+            for f in es:
+                if p.chebyshev_distance(f[1]) <= SIGHT_R:
+                    n += 1
+            if n > best:
+                best, bp = n, p
+        best = min(7, best)
+        if best >= 2 and (best >= s.sc or s.sage > SIGHT_OVER):
+            a = min(range(len(w.apos)), key=lambda i: bp.chebyshev_distance(w.apos[i]))
+            nb = best << 5 | ((s.r // 4) & 31)
+            if nb != s.mem[5] or a != s.mem[6]:
+                try:
+                    cambc.shared_memory[5] = nb
+                    cambc.shared_memory[6] = min(a, 254)
+                except Exception:
+                    pass

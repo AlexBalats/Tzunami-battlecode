@@ -188,3 +188,39 @@ Deaths (21): farm with 2-3 enemies 9, farm with none (camp damage) 3, bank 3, sh
 
 Open: corners B and interlock B are the thinnest wins (+326, +364) and hold most deaths (4, 5); camp-damage deaths
 mean the clear model's even-spread assumption is optimistic (monsters hit the nearest body). Bench vs tzu not rerun.
+
+## 15 Oct (latest): ward rush, sighting count, posture columns, HEAL obeys the recall rules
+
+Build: `python -I tools/assemble.py --bot strat` (2,569 lines). Shared-byte layout: `MEMORY_LAYOUT.md`, "Shared 8 bytes".
+
+1. **Ward rush** (30_world `ward_assign`, `opening_slots`, goal key `w<j>`; 40_prices WARD option; 50_exec `exec_ward`;
+   90_main seed). The draft's ward tiles (`d["wards"]`, up to 3) go one per champion on round 1, no comms: ward j to
+   the free roster slot whose opening group is nearest (Chebyshev; ties lower slot). That champion's first choice is
+   `ward` (seeded instead of its farm seed); price `WARD_VALUE 8 x 30 / (30 + walk)` [guess], 0 once placed, given up
+   (unreachable, 2 failed placements) or chosen 3 times (`WARD_TRIES`). The executor walks to any tile within 2 of the
+   ward tile and places on the `ward_placement_tiles()` tile nearest it. Wards are permanent and one per champion
+   [rules]: we never place again. Broadcast: code 0, target = ward index + 1. Trace `ward place|skip|err`.
+2. **Sighting byte**: byte 5 = count (3 bits) | (round // 4) stamp (5 bits), byte 6 = altar nearest the cluster; any
+   alive champion seeing >= 2 enemies within 8 of each other (ward vision included) writes it; the group death marker
+   moved into byte 7 alone. HOLD reads the new bytes (live 32 rounds).
+3. **Posture** (40_prices `POSTURE`, `posture()`, `e_side()`): columns over farm, farm_their_side, bank_risk (scales
+   the whole BANK price), kill_our_side, kill_their_side, hold, shop, join, ward. Regime few -> defend, else economy;
+   fresh sighting (<= 8 rounds) of >= 3 -> defend; fresh of 2 while ahead by > 50 -> punish. Trace `posture` on change.
+   With a fresh stack sighting: FARM x 0.2 for groups within 10 of its altar; BANK goes to the nearest-by-walk altar
+   of side 0/1 more than 10 from it (none: the farthest from it) [deviation from "farthest among safe ones"].
+4. **HEAL / recall** (50_exec `safe_recall`, 30_world `step_flee`): no recall started or kept with an enemy within 6
+   (`RECALL_CLEAR`) or a live camp within 3; a running one is cancelled (`cancel_recall`, trace `exec recall
+   cancelled`), then one step that keeps enemies as far as possible (capped 7) and goes down the home field. HEAL
+   P(die) >= 0.6 with >= 3 enemies within 8 and no ally within 5 (also at full HP: a run home). Choice lock on heal
+   removed (choose is not called while recalling anyway).
+
+Light test [measured, cambc 2.1.5]: bench `wards1` vs tzunami444, collision + corners both sides: 3/4 (collision A
++548, B +258, corners A +484, corners B -280), 2 deaths, 0 err. Same 4 games with the previous build (`wards1-base`,
+strat@HEAD): 2/4 (+470, -178, +510, -178), 5 deaths. Expanse vs starter (`runs/strat_wards_expanse`): W 1022-626,
+0 deaths. Wards placed rounds 14-24 on collision/corners, 42-45 on expanse (80x80: ~40 tiles of walk). Posture flips
+seen on collision (few: defend <-> punish) and corners (economy <-> defend on 3-5 enemy sightings). Fuel per turn median
+0.87-0.94M (base 0.84-0.88M), max 1.5M; expanse median 0.80M, max 2.2M (the boot rounds).
+
+Open: posture flips every ~10-20 rounds on collision (2-enemy sightings age out at 12 rounds on a 4-round stamp);
+`safe_recall` also cancels for a live camp within 3 even when it is asleep; HEAL now re-prices while walking home and
+can flip to farm and back.

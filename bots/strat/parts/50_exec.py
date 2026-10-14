@@ -32,6 +32,12 @@ def _set_cur(self, new, r, s):
         walk = 15
     elif op == "heal":
         walk, work = 10, 7                      # step out of reach, 5-turn recall, the heal turn on spawn
+    elif op == "ward" and self.ward_tile is not None:
+        self.ward_tries += 1                    # WARD_TRIES choices at most (no stall)
+        walk = fget(self.F_me, self.ward_tile)
+        if walk >= FAR:
+            walk = 2 * s.pos.chebyshev_distance(self.ward_tile)
+        work = 3
     self.deadline = r + min(walk, 150) + 10 + work
 
 
@@ -50,16 +56,32 @@ def in_camp_range(s, w):
     return pts
 
 
+RECALL_CLEAR = 6            # no recall started or kept with an enemy within this (ranged reach 3 + a step + margin)
+
+
 def safe_recall(w, s):
-    """Recall unless an enemy is within 3 or a live camp within range 3 (its hit would cancel it): then step out."""
-    if s.recalling:
-        return "going"
+    """Recall only when clear [rules: damage or stun breaks it]: never start or keep one while an enemy is within
+    RECALL_CLEAR or a live camp within its range 3. Not clear: cancel a running recall, then step away from the
+    enemies towards home (step_flee) or out of camp range (step_away)."""
+    ne = [e[1] for e in s.enemies if e[4] <= RECALL_CLEAR]
     pts = in_camp_range(s, w)
+    if s.recalling:
+        if not ne and not pts:
+            return "going"
+        try:
+            w.me.cancel_recall()
+            st = int(w.me.state())
+            s.recalling, s.can_move, s.can_attack = bool(st & 2), bool(st & 8), bool(st & 16)
+            trace("exec", f"recall cancelled enemies={len(ne)} camps={len(pts)} hp={s.hp:.0f}")
+        except Exception as e:
+            trace("exec", "cancel_recall " + err_text(e))
+            return "going"
+    if ne:
+        if w.step_flee(s, ne) == "blocked":
+            w.step_to("home", s)
+        return "going"
     if pts:
         w.step_away(s, pts)
-        return "going"
-    if s.near_e <= 3:
-        w.step_to("home", s)
         return "going"
     try:
         w.me.recall()
@@ -319,5 +341,48 @@ def exec_fall(w, s, _t):
     return "going"
 
 
+WARD_FAILS = 2              # place_ward failures (False / raise / no placement tile) before the ward is given up
+
+
+def exec_ward(w, s, j):
+    """Walk to within 2 of my draft ward tile (goal field "w<j>"), place the ward on the placement tile nearest it,
+    done. Unreachable or WARD_FAILS failed placements: done without a ward (traced `ward skip`)."""
+    t = w.ward_tile
+    if w.ward_done or t is None or j != w.ward_j:
+        return "done"
+    key = f"w{j}"
+    v = fget(w.goal(key), s.pos)
+    if v >= FAR:
+        w.ward_done = True
+        trace("ward", f"skip W{j}@{t.x},{t.y} unreachable")
+        return "done"
+    if v > 0:
+        w.step_to(key, s)
+        return "going"
+    try:
+        if w.me.ward_cooldown() > 0:
+            return "going"
+        ps = (w.me.ward_placement_tiles() & disk(t, 2)).positions()
+    except Exception:
+        ps = []
+    if ps:
+        q = min(ps, key=lambda p: p.chebyshev_distance(t))
+        try:
+            ok = w.me.place_ward(q)
+        except Exception as e:
+            ok = False
+            trace("ward", f"err W{j} {q.x},{q.y} {err_text(e)}")
+        if ok:
+            w.ward_done = True
+            trace("ward", f"place {q.x},{q.y} W{j}@{t.x},{t.y} slot={w.slot} start={w.started}")
+            return "done"
+    w.ward_fails += 1
+    if w.ward_fails >= WARD_FAILS:
+        w.ward_done = True
+        trace("ward", f"skip W{j}@{t.x},{t.y} failed tiles={len(ps)}")
+        return "done"
+    return "going"
+
+
 EXEC = {"farm": exec_farm, "bank": exec_bank, "kill": exec_kill, "hold": exec_hold, "shop": exec_shop,
-        "join": exec_join, "fall": exec_fall, "heal": exec_heal}
+        "join": exec_join, "fall": exec_fall, "heal": exec_heal, "ward": exec_ward}

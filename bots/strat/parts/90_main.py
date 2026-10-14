@@ -85,9 +85,8 @@ else:
                 if op in ("kill", "hold"):
                     w.kh_until = r + DEATH_EXCL
                 if op == "farm" and tg in w.G and w.G[tg].mi < 31:
-                    try:                                  # team marker: avoid this group (bytes 6-7)
-                        cambc.shared_memory[6] = w.G[tg].mi + 1
-                        cambc.shared_memory[7] = (r // 8) & 255
+                    try:                                  # team marker: avoid this group (byte 7: index + 1, stamp)
+                        cambc.shared_memory[7] = (w.G[tg].mi + 1) | ((r // 32) & 7) << 5
                     except Exception:
                         pass
                 w.cur, w.status = ("dead", None), "done"
@@ -190,6 +189,8 @@ else:
         w.osc, w.osc_fired, w.p2 = 0, False, None
         w.kh_until = 0
         w.score = (0, 0)
+        w.post = None                                     # posture column last traced
+        w.ward_j, w.ward_tile, w.ward_done, w.ward_tries, w.ward_fails = None, None, False, 0, 0
         w.act = [0] * 7                                   # mv atk cap chan wait idle dead (turns per tick)
         w.moved = False
         errs = set()
@@ -201,7 +202,14 @@ else:
             w.boot()
             w.pos = w.fme_root
             seed = opening_seed(w)
-            if seed is not None:
+            ward_assign(w)                                # ward rush: my draft ward tile first, if I have one
+            if w.ward_tile is not None:
+                s = sense(w)
+                w.set_cur(("ward", w.ward_j), s.r, s)
+                w.seed_until = s.r + 2
+                trace("choice", f"ward {tname(w, 'ward', w.ward_j)} seed slot={w.slot} then={seed}")
+                broadcast(w, s, 0)
+            elif seed is not None:
                 s = sense(w)
                 w.set_cur(("farm", seed), s.r, s)
                 w.seed_until = s.r + 2                    # everyone writes the seed before anyone re-prices
