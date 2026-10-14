@@ -18,6 +18,7 @@ Tags: **[rules]** `GameRules.md`, **[measured]** our matches (`docs/ECONOMY.md`,
 | `trib(b)` | `max(1, ceil(b / 10))` turn ends; damage does not break it, stun/death/lock do | [rules] |
 | `recall` | 5 turn ends (3 with Home), broken by damage or stun; full heal on spawn | [rules] |
 | `death` | 60 rounds out, bag lost (to the killer if a champion killed us, destroyed if a camp did) | [rules] |
+| `death_cost` | `min(DCOST_CAP 300, 60 × max(0.4, best raw price for me this turn among FARM, KILL, JOIN a fight and HUNT)) + my bag`, in gems: the one price of dying, used by HEAL (`P(die) × death_cost`; ~12 g/r at low HP: 0.8 × 300 / 20) and as the risk of KILL, JOIN a fight and the sighting hunt (`P(lose) × death_cost`). Raw = value / rounds with no multipliers and no risk term (not circular). History: with the kill multiplier included (Vesper ~7.6) it reached 4,600 and fights stopped (final1: kill choices 6-14 per game, kills 0); capped raw (final2): kill choices 22-40, kills 0-3, deaths 0, 3W/1L vs tzunami444 [measured 15 Oct] | [user plan 15 Oct, ladder 4; 0.4 and 300 guess] |
 | `gold→gems` | `G2G` below | derived |
 
 ### Gold to gems: `G2G`
@@ -69,7 +70,7 @@ price  = value / rounds − risk, but the real question is marginal: price(BANK 
 value  = bag_e + 50 × G2G(r) + denial                   [rules: killer gets the bag + 50 gold]
 denial = their farm rate × 60 rounds / their bodies ≈ 0.4 g/r × 60 = ~24 gems   [measured: starter ~0.5 g/r per team]
 rounds = rounds to close + ttk_e (their HP / our S in range)
-risk   = P(we lose) × (my bag + 60 × my farm rate)
+risk   = P(we lose) × death_cost                        (Inputs; was my bag + 60 × 0.4)
 price  = value / rounds − risk
 ```
 - Only closable targets count: channelling, stunned, cornered, or within my reach + 1. A running target has
@@ -86,10 +87,22 @@ price  = value / rounds − risk
   to the sighting's altar: value `30 + 50 × G2G + denial` (30 = guessed bag), rounds = walk + 5, × the KILL
   multiplier; gated by Lanchester against the sighted count at my base stats. Broadcast as kill, target 31. The
   executor walks to the altar; done when an enemy is visible (KILL takes over), failed on arrival or after 40 rounds.
+- **Patrol hunt** [user plan 15 Oct, ladder 4; guess all] (hunt > 0, nobody visible, no fresh sighting): option `hunt`
+  to the nearest enemy-side altar (draft side 2) I have not reached in `HUNT_REVISIT` 60 rounds (none reachable: the
+  side-2 group with the most gems, target 100 + h). Value `30 + 50 × G2G + DENIAL`, rounds = walk + 10, risk
+  `P(lose) × death_cost` (Lanchester vs 2 enemies at my base stats), × the KILL multiplier (appetite included) ×
+  **roam** = `clamp(S / 100 − 1, 0, 2)` (0 below Strength 100, 1 at 200, 2 at 300) × 0.5 while a sighting of >= 3
+  enemies is <= `ROAM_STACK` 60 rounds old. Executor: done when an enemy is visible or on arrival (visit recorded).
+  [measured 15 Oct, expanse vs starter: Vesper at Strength 145 (roam 0.45) chose it 6 times, walked to the enemy side
+  each time and switched to a farm there ~15 tiles short of the altar; 0 kills from it]
+- **Kill exclusion**: a failed kill excludes (kill, target) for 20 rounds; a finisher (ttk <= 2) ignores that
+  exclusion, except after a chase timeout (`exec_kill` chase count or the executor deadline): then it is excluded too.
 - **Appetite** [user plan 15 Oct, ladder 3; guess], every champion: the KILL multiplier (KILL, JOIN a fight, hunt)
-  × `min(1, (hp/maxhp) / 0.6) × max(0.3, 1 − bag/100)`: hurt or loaded champions bank / heal first.
+  × `min(1, (hp/maxhp) / 0.6) × max(0.3, 1 − bag/100)`: hurt or loaded champions bank / heal first. One `kmul` carries it into all three (checked 15 Oct, ladder 4: already so in code).
 - **Dash** (micro, every champion with an `is_dash()` slot, when ready; `World.dash_to`): CLOSE in `exec_kill` when
-  the target is 1-2 tiles beyond range (land in range, then attack: works [measured 15 Oct, 139 of 157 dashes hit]);
+  the target is 1-2 tiles beyond range (land in range, then attack: works [measured 15 Oct, 139 of 157 dashes hit]),
+  only if `ceil(target HP / my S) <= 3` and enemies within 8 of me <= allies within 8 of me + 1, else walk
+  [user plan 15 Oct, ladder 4];
   ESCAPE in `safe_recall` / the fallback retreat with an enemy within 2; TRAVERSE in farm / bank / ward / hunt walks
   with no enemy within 8 (2 tiles down the goal field, then the normal step: works [measured]).
 
@@ -125,6 +138,16 @@ price  = value / rounds
 ```
 - Needs the ally's broadcast (option, target) in the 8 bytes. Positive only for groups that need k ≥ 2 and
   for a fight the ally has started (then it is KILL with their numbers).
+
+### Farm-race numbers by regime (`RACE` in `40_prices.py`) [user plan 15 Oct, ladder 4; guess all]
+
+| Row | When (draft summary) | FARM walk × | farm -> farm switch (not engaged) | WAIT_PARTNER | BANK rounds |
+| --- | --- | --- | --- | --- | --- |
+| race | regime many, or pick with `rich / S >= 4` groups per body | 2.0 | 2.0 × the current price | 30 | 2 × walk + channel (the walk back counts) |
+| base | regime few, other pick, unknown | 1.0 | HYST 1.2 | 15 | walk + channel |
+
+Engaged (a live monster of my group within 3) keeps ENGAGED_HYST 3.0; POSTURE defend join stays 2.0. Public maps:
+collision few (12/3, base), corners pick (21/5 = 4.2, race), expanse many (race).
 
 ## Roles and modes are multipliers
 

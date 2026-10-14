@@ -10,6 +10,7 @@ def _set_cur(self, new, r, s):
     op, tg = new
     self.cur, self.started, self.status = new, r, "going"
     self.kd, self.kn, self.arrived, self.waited = 99, 0, None, 0
+    self.hit = False                            # trace only: attacked since this choice (choice `hit=`)
     self.lastbag, self.lastgold = s.bag, s.gold
     walk, work = 0, 0
     if op == "farm" and tg in self.G:
@@ -47,6 +48,7 @@ def _set_cur(self, new, r, s):
 World.set_cur = _set_cur
 
 
+CLOSE_TTK = 3               # [user plan 15 Oct, ladder 4] close dash only when my hits to kill are <= this
 WAIT_CAP = 10               # [guess] rounds of pair waiting before the take fails ("failed partner")
 WAIT_EXCL = 30              # [guess] rounds that (farm, group) is excluded after a failed partner wait
 RETREAT_HP = 0.6            # [guess] fallback retreats from enemies within 4 below this HP fraction
@@ -253,19 +255,22 @@ def exec_kill(w, s, hd):
         ttk = -(-int(hp) // int(s.S))
         # a finisher chase gets 2 ttk + 2 rounds (pinned / 1 tile/turn); else the phase's `chase` (default 3)
         if w.kn >= (2 * ttk + 2 if ttk <= 2 else ME["prof"].get("chase", 3)):
+            w.kfail[hd] = s.r + EXCL            # [bug fix 15 Oct, ladder 4] finishers too (40_prices KILL)
             return "failed"
     else:
         w.kn = 0
     w.kd = dd
-    # CLOSE [user plan 15 Oct]: 1-2 tiles beyond range -> dash into range (farthest such tile), then try the attack
-    if rng < dd <= rng + 2 and w.dash_to(s, lambda q: -q.chebyshev_distance(p) if q.chebyshev_distance(p) <= rng else None, "close"):
+    # CLOSE [user plan 15 Oct]: 1-2 tiles beyond range -> dash into range (farthest such tile), then try the attack.
+    # [user plan 15 Oct, ladder 4] only onto a target I kill in <= CLOSE_TTK hits, and with enemies within 8 of me
+    # <= allies within 8 + 1 (ladder: dashes onto 750-HP targets, 5 hits, with 4 enemies in sight); else walk
+    if rng < dd <= rng + 2 and -(-int(hp) // int(s.S)) <= CLOSE_TTK             and sum(1 for x in s.enemies if x[4] <= 8) <= sum(1 for a in s.allies if a[1].chebyshev_distance(s.pos) <= 8) + 1             and w.dash_to(s, lambda q: -q.chebyshev_distance(p) if q.chebyshev_distance(p) <= rng else None, "close"):
         res = "no-attack"
         try:
             w.me.attack(c)
             w.attacked, res = True, f"attacked hp {hp:.0f}->{_uhp(c)}"
         except Exception as ex:
             res = "raise " + err_text(ex)[:60]
-        trace("dash", f"close then {res}")
+        trace("dash", f"close then {res} ttk={-(-int(hp) // int(s.S))}")
         return "going"
     if s.st & 0x800:
         w.cast(c, False)                        # dashes and ranged spells close the gap
@@ -278,9 +283,13 @@ def exec_hunt(w, s, a):
     rounds) on arrival with nobody there or after HUNT_MAX rounds."""
     if s.enemies:
         return "done"
-    if s.r - w.started >= HUNT_MAX or s.pos.chebyshev_distance(w.apos[a]) <= 2:
+    key, t = (f"g{a - 100}", w.G[a - 100].anchor) if a >= 100 else (f"a{a}", w.apos[a])
+    if s.pos.chebyshev_distance(t) <= 2 and (a >= 100 or w.aside[a] == 2):
+        w.hvis[a] = s.r                         # patrol arrival: recorded, done (HUNT_REVISIT)
+        return "done"
+    if s.r - w.started >= HUNT_MAX or s.pos.chebyshev_distance(t) <= 2:
         return "failed"
-    w.step_to(f"a{a}", s)
+    w.step_to(key, s)
     return "going"
 
 

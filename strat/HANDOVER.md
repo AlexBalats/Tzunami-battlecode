@@ -441,3 +441,101 @@ target's HP <= my Strength.
 
 Guesses to measure: HEAL_LOW 0.3, HEAL_FLOOR 0.8, HEAL_WB 15, ENGAGED_HYST 3.0, LANCH_R 8, HUNT_BAG 30, hunt 12, chase 8,
 the 15-shard threshold, Vesper's hunt-phase row, the appetite shape (0.6, 100, 0.3).
+
+## 15 Oct (latest+5): ladder 4 (death cost in one currency, close-dash gate, failed-kill exclusion)
+
+Why: newest 5 ladder games (`runs/ladder/*-logs.zip`): Vesper's 4 deaths were all fights priced 20-70 while HEAL priced
+1-2 even at 14 % HP (death cost was bag + 60 x 0.4 = 24 gems); she dashed onto 750-HP targets (5 hits) with 4 enemies
+in sight; after `exec kill 10 failed` she re-chose kill 10 in the same round (r167, game 481f8b5f) and died at r171.
+Build: `python -I tools/assemble.py --bot strat` (3,026 lines). User-approved list, numbers first.
+
+1. **death_cost** (40_prices `price_all`): after the FARM loop, `s.dcost = 60 x max(MY_RATE 0.4, best FARM price in
+   out) + bag` (FARM already ran first: no extra pricing). HEAL = P(die) x dcost / (5 + min(wb, 15)) (0.8 floor and its
+   conditions unchanged); risk = P(lose) x dcost in KILL (was pl x (bag + 24)), JOIN a fight (same), and the sighting
+   hunt (new risk term, its own Lanchester pl). `DEATH_OUT` 60 constant.
+2. **Appetite scope**: already in code: `kmul` (with the appetite factor) multiplies KILL, JOIN a fight and hunt.
+   Comment only.
+3. **Close-dash gate** (50_exec `exec_kill`, `CLOSE_TTK` 3): dash only if `ceil(hp / S) <= 3` and enemies within 8
+   <= allies within 8 + 1; else walk. The `dash close then ...` trace now ends with `ttk=`.
+4. **Failed-kill re-choice (bug)**. Cause: 90_main sets `w.excl[("kill", 10)]` on the failure, then the second
+   `choose` of the same turn runs `price_all`, where the KILL finisher branch (`ttk <= 2`) did
+   `w.excl.pop(("kill", int(c)))`: the exclusion was deleted before `choose` filtered by it, so the finisher that
+   had just chased out was re-chosen at once (r167: `exec kill 10 failed`, then `choice kill 10 31.29 ... cur=31.29`).
+   Same pattern for Ryth r366 in that game. Fix: `w.kfail` {enemy handle: round}, set on an `exec_kill` chase
+   timeout and on a kill's executor deadline timeout (90_main); KILL skips a target in `w.kfail` before the finisher
+   pop. A "failed" because the target left vision keeps the old behaviour (finisher may re-price it when seen).
+   The choice trace now also prints `hp=` (fraction), `fight=` (best kill / hunt / join-on-kill price) and `dcost=`.
+
+Light test [measured, cambc 2.1.5]: bench `death1` vs tzunami444 (collision, corners; both sides), expanse vs
+starter (`runs/strat_death_expanse`). 0 err, fuel median 0.83-1.03M (max 2.18M).
+
+| game | result (hunt2 -> death1) | Vesper heal choices at hp < 30 % | Vesper kill choices at hp < 30 % | same-round re-choice after failed kill | close dashes (ttk > 3) | Vesper deaths |
+| --- | --- | --- | --- | --- | --- | --- |
+| collision A | +816 -> W +98 | 3 | 1 | 0 | 7 (0) | 0 |
+| collision B | +554 -> **L -144** | 2 | 3 | 0 | 7 (0) | 2 |
+| corners A | +408 -> W +376 | 1 | 1 | 0 | 6 (0) | 0 |
+| corners B | +98 -> **L -28** | 0 | 0 | 0 | 0 (0) | 0 |
+| expanse | W 1042-626 -> W 1006-508 (r507) | 0 | 0 | 0 | 0 | 0 |
+
+Team deaths in the 4 bench games: 2 (hunt2: 3). Every heal chosen at hp < 30 % was above the best fight price (by
+construction: it won the argmax). **Not fixed: kills at low HP still happen (5 choices, ~0 wanted)**: in all of them
+`dcost` was 24-26, i.e. no FARM priced above 0.4 (hunt phase farm x0.4, or no farm candidate near), so death_cost fell
+to the floor; and KILL's `kmul` is 2.5 + 0.15 x 34 shards = 7.6 for Vesper, so even appetite 0.03 (2 % HP) leaves
+kill x0.25 of its raw price vs HEAL x1.0. Example collision B r856: hp 0.02, kill 0 8.13 vs heal 1.20 (dcost 24), she
+died at r862. Candidates (not done, need a user decision): death_cost from the best non-heal price (kills included)
+rather than FARM only; or multiply HEAL by the same kmul; or a hard KILL gate at hp < HEAL_LOW unless a finisher.
+
+Guesses to measure: the 0.4 floor in death_cost (it binds for Vesper's hunt phase), CLOSE_TTK 3, the +1 in the dash gate.
+
+## 15 Oct (latest+6): death cost from every earning price, farm-race numbers by regime
+
+User-approved follow-up to latest+5. Build 3,060 lines.
+
+1. **death_cost** (40_prices `price_all`): `60 x max(MY_RATE, best price this turn among FARM, KILL, JOIN a fight,
+   HUNT) + bag`. The three fight options are collected in `fights` (value, rounds, multiplier, P(lose)) and enter the
+   max before their risk term (no circularity); then each is priced `(value - pl x dcost) / rounds x mult`. The JOIN-a-fight
+   block moved above HEAL (order in `out` does not matter). HEAL unchanged: `pdie x dcost / (5 + min(wb, 15))`.
+2. **RACE** (40_prices, next to POSTURE; `race(w)` caches the row on `w.race`, traces `race` once): rows above in
+   PRICES.md. Used in `farm_price` (walk x walk_w; WAIT_PARTNER -> wait), BANK (walk x bank_ret), `choose`
+   (farm -> farm, not engaged: farm_hyst).
+3. Trace only: choice lines add `d=` (tiles to the farm target's anchor), `from=op:tgt`, `hit=` (attacked since the
+   previous choice; `w.hit`, reset in `set_cur`, set in 90_main from last turn's `attacked`).
+
+Light test [measured, cambc 2.1.5]. "before" = latest+5 code rebuilt with the new trace (a variant with the base RACE
+row and death_cost from FARM only; `runs/bench/death1pos`, `runs/strat_d1pos_expanse`; same results as death1 on
+collision, corners differs by the trace's fuel), "after" = `runs/bench/final1`, `runs/strat_final_expanse`.
+
+| game (row) | result before -> after | farm choices > 12 tiles | farm -> farm before a hit | kill choices | fuel med |
+| --- | --- | --- | --- | --- | --- |
+| collision A (base) | W +98 -> **L -94** | 7 % -> 9 % | 47/56 -> 33/48 | 98 -> 14 | 0.95M |
+| collision B (base) | L -144 -> **L -462** | 8 % -> 14 % | 23/34 -> 34/50 | 96 -> 10 | 0.98M |
+| corners A (race) | W +84 -> W +342 | 18 % -> 26 % | 32/36 -> 33/42 | 86 -> 6 | 0.97M |
+| corners B (race) | W +220 -> **L -614** | 23 % -> 24 % | 45/57 -> 35/41 | 61 -> 14 | 1.05M |
+| expanse vs starter (race) | W 1006-508 r507 -> W 1028-674 r588 | 45 % -> 56 % | 23/27 -> 36/40 | 0 -> 0 | 0.85M |
+
+0 err. Kills in the 4 bench games: 11 -> 0; deaths 2 -> 0. Vesper choices at hp < 30 %: kill / hunt 4 -> 0, heal
+7 -> 2. Heal-vs-kill check: the collision B r856 state does not recur (the game now ends r783); the nearest case,
+collision A r462, Vesper hp 0.17: heal 25.93 vs best fight -25.29 (dcost 648) -> heal. At r856's numbers (kill raw
+~8-10 g/r) dcost would be ~500-600 and heal ~25-30 vs kill negative unless P(lose) < ~0.15.
+
+Finding: dcost is 60 x the best kill price, and Vesper's kill multiplier (2.5 + 0.15 x shards, ~7.6) makes that
+500-4,600 gems, so any fight with P(lose) above a few % prices negative: the team stopped fighting (kills 0), which
+lost collision B / corners B to tzunami444. Candidates (not done): take the fight prices into the max without kmul
+(raw value / rounds), or cap dcost (e.g. at 60 x the best FARM x 3). The farm-to-farm "before a hit" switches did not
+fall on the race maps in proportion (corners A 32 -> 33); not investigated (guess: switches after the current group
+vanished, a claim or a clear, which the hysteresis does not cover).
+
+Follow-up (final2, user decision): `dcost = min(DCOST_CAP 300, 60 x max(0.4, best raw FARM, best raw fight)) + bag`,
+raw = value / rounds without multipliers or risk. Bench `final2` vs tzunami444: collision A W +388, collision B W +742,
+corners A L -74, corners B W +550; kills 3/3/0/0, deaths 0, 0 err, fuel median 0.95-1.02M. Kill choices 28/40/24/22
+(final1 14/10/6/14; death1pos 98/96/86/61: not back to that range). Low-HP check: collision B r296 Vesper hp 0.22 heal
+12.00 vs best fight -11.19 -> heal; r589/598 hp 0.28 she still chose kills at 16.5/14.7 over heal 12.0 (no death).
+
+Patrol hunt (user plan, 40_prices `price_all` after the sighting hunt; 50_exec `exec_hunt`; `w.hvis`, `w.roam`,
+`w.big3`): see PRICES.md KILL "Patrol hunt". Choice trace adds `roam=` on patrol hunts. Bench `final2` (now with the
+patrol + roam): collision A L -194 (Vesper died once, r590 banking 22 with 2 enemies), collision B W +692, corners A
+W +276, corners B L -194; kill choices 30/40/44/18, kills 2/3/1/0, 0 err, fuel median 0.98-1.04M; patrol hunt choices
+13/5/5/0. Expanse vs starter (`runs/strat_final_expanse2`): W 1028-762 r674 (final1 1028-674 r588); Vesper (Strength
+145, roam 0.45) chose patrol hunt A6 6 times (r243-592) plus sighting hunt A7 once; each time she switched to farm
+g29 (62,45) ~15 tiles out, never arrived (no visit recorded), 0 kills from it. Open: a patrol never completes while a
+farm near the target beats it on arrival distance (no hysteresis exception), so HUNT_REVISIT never fires.

@@ -76,6 +76,8 @@ else:
         r = s.r
         flags = (w.attacked, w.capt, w.waiting)
         w.attacked = w.capt = w.waiting = w.moved = False
+        if flags[0]:
+            w.hit = True
         if not s.alive:
             w.act[6] += 1
             if w.was_alive:
@@ -153,6 +155,8 @@ else:
         if w.status == "going" and r > w.deadline and not (s.recalling or s.submitting):
             trace("exec", f"{w.cur[0]} {tname(w, w.cur[0], w.cur[1])} failed timeout")
             w.excl[w.cur] = r + EXCL
+            if w.cur[0] == "kill":
+                w.kfail[w.cur[1]] = r + EXCL      # a timed-out kill: finishers excluded too (40_prices KILL)
             w.status = "failed"
         for _k in range(2):
             if not (s.recalling or s.submitting) and fuel() > FUEL_FLOOR:
@@ -208,6 +212,9 @@ else:
         w.pair_until = 0
         w.osc, w.osc_fired, w.p2 = 0, False, None
         w.kh_until = 0
+        w.hit = False
+        w.hvis, w.roam, w.big3 = {}, 0.0, -999                                       # hunt patrol: altar (or 100 + group) -> round I reached it
+        w.kfail = {}                                      # enemy handle -> round a chased-out kill stays excluded to
         w.score = (0, 0)
         w.post = None                                     # posture column last traced
         w.ward_done, w.ward_fails = False, {}
