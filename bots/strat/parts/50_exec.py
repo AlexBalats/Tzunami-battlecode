@@ -333,7 +333,7 @@ def buy_all(w, s):
     n = 0
     try:
         while n < 10:
-            item, _c = build_target(w.me, build)
+            item, _c = build_target(w.me, build, ME["prof"].get("alt"))
             ME["target"] = item
             if not w.me.can_buy(item):
                 break

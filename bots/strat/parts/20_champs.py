@@ -16,14 +16,15 @@ _IT = cambc.ItemType
 _KEYS = ("farm", "gold", "bank", "kill", "hold", "shop", "join", "heal")
 
 
-def _row(farm, gold, bank, kill, hold, shop, join, item, gain, heal=1.0, build=None, phases=None):
+def _row(farm, gold, bank, kill, hold, shop, join, item, gain, heal=1.0, build=None, phases=None, alt=None):
     """build: ordered shard types; the shop buys the first whose emblem is not complete (build_target()).
     `item` stays the first entry so older readers keep working. phases: optional ((shards_threshold, overrides), ...)
     ascending; the last entry whose threshold <= shards owned overrides the row's keys (apply_phase())."""
     if build is None:
         build = (item,)
     return {"farm": farm, "gold": gold, "bank": bank, "kill": kill, "hold": hold, "shop": shop, "join": join,
-            "item": build[0], "item_gain": gain, "heal": heal, "build": tuple(build), "phases": phases}
+            "item": build[0], "item_gain": gain, "heal": heal, "build": tuple(build), "phases": phases,
+            "alt": tuple(alt) if alt else (build[-1],)}   # after the build: alternate these by emblem count
 
 
 _MS, _TS, _PS, _DH = (_IT.MONSTER_SHARD_OF_STRENGTH, _IT.TREASURE_SHARD_OF_STRENGTH, _IT.POWER_SHARD_OF_STRENGTH,
@@ -75,7 +76,8 @@ PROFILES = {
     1: _row(1.2, 1.6, 1.1, 0.9, 0.0, 1.0, 1.0, _TS, 0.17, 1.0, (_TS, _MS, _PS),
             ((0, {"farm": 1.5, "gold": 3.0, "kill": 0.9, "bank": 1.1, "shop": 2.0}),
              (15, {"farm": 0.4, "gold": 3.0, "kill": 2.5, "bank": 1.5, "shop": 0.5, "hunt": 20, "chase": 8,
-                   "heal": 0.5, "retreat_hp": 0.3}))),
+                   "heal": 0.5, "retreat_hp": 0.3})),
+            alt=(_DH, _PS)),   # [user decision 15 Oct] after Treasure/Monster/Power: alternate Durability Health and Power
     # Stellar [guess all]: farm 1.5 spells deal ~77/turn vs 35 Str (2.2x), cut for cast-only-standing and 2 casts per
     # 8; bank 1.2 750 HP, fragile carrier; kill 1.2 235 burst at range 4 finishes carriers; hold 0.5 no stun;
     # join 1.2 area spell on groups, needs a frontline. Build: the default (Monster, Power Strength).
@@ -122,7 +124,7 @@ def shards_owned(c):
     return t
 
 
-def build_target(c, build):
+def build_target(c, build, alt=None):
     """First entry of `build` whose emblem is not complete: fewer than 5 (combine_count) of that shard and no emblem
     (the 5 shards combine into a separate item, ItemType.result() [sdk]). All complete: the last entry (shard stats
     stack, GameRules "Stats stack"). Returns (ItemType, item_count list or None)."""
@@ -143,7 +145,25 @@ def build_target(c, build):
         if 0 <= j < len(n) and n[j] > 0:
             continue
         return it, n
-    return build[-1], n
+    return alt_target(alt or (build[-1],), n), n
+
+
+def alt_target(alt, n):
+    """After the build: finish a started alt shard, else the alt family with the fewest emblems (ties: last)."""
+    best, bc = alt[0], 1e9
+    for it in alt:
+        i = int(it)
+        try:
+            need, res = it.combine_count(), it.result()
+            j = int(res) if res is not None else -1
+        except Exception:
+            need, j = 5, -1
+        if i < len(n) and 0 < n[i] < need:
+            return it
+        c = n[j] if 0 <= j < len(n) else 0
+        if c <= bc:                 # ties go to the later entry, so the pair alternates (DH, PS, DH, PS)
+            best, bc = it, c
+    return best
 
 
 def apply_phase(w):
