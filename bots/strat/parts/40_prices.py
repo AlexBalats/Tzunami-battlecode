@@ -1,7 +1,7 @@
 """Sense, price the six options (strat/PRICES.md) in team gems per round, choose with hysteresis, broadcast.
 
-Option codes (shared byte, low 3 bits): 0 idle, 1 farm, 2 bank, 3 kill, 4 hold, 5 shop, 6 join, 7 dead; target in
-the high 5 bits (group index in draft-memory order, altar index, enemy handle & 31, ally slot for join).
+Option codes (shared byte, low 3 bits): 0 idle (also heal: recalling to heal, no target, nothing for allies to read),
+1 farm, 2 bank, 3 kill, 4 hold, 5 shop, 6 join, 7 dead; target in the high 5 bits (group index in draft-memory order, altar index, enemy handle & 31, ally slot for join).
 Byte 5: enemy sighting on our half, high nibble = altar index + 1 (0 none), low nibble = (round // 2) & 15 when seen;
 a reader treats age >= SIGHT_AGE half-rounds as stale and clears it (~30 rounds, no writer needed to decay it).
 """
@@ -24,8 +24,12 @@ HOLD_PLOSE = 0.3            # [guess] HOLD needs a clearly safe altar
 KILL_PLOSE = 0.45           # [tuned] fight only when locally stronger (0.5 = even; 0.99 lost 9 champions in kills)
 DEATH_EXCL = 100            # rounds a death excludes its (option, target), and kill/hold after a kill/hold death
 DEATH_MARK = 100            # rounds the team avoids a group an ally died farming (bytes 6-7)
+HEAL_K = 1.5                # [guess] HEAL: P(die) = clamp((1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, 0, 1)
+MY_RATE = 0.4               # [guess] my gems per round, x 60 rounds out = what a death costs beyond the bag
+HOLD_TURNS = 2              # a new (option, target) is kept this many turns (unless done/failed, HEAL, retreat)
 OPT = ("idle", "farm", "bank", "kill", "hold", "shop", "join", "dead", "fall")
 CODE = {o: i for i, o in enumerate(OPT)}
+CODE["heal"] = 0            # broadcast as idle: the byte has no free code (7 is dead)
 CLEAR_MEMO = {}
 
 
@@ -313,19 +317,27 @@ def price_all(w, s, cl, by):
             out.append((s.bag * (1 + P) / (wk + max(1, -(-s.bag // 10))) * prof["bank"], "bank", a))
     # KILL: closable targets only
     reach = ME.get("range", 1) + 1 + (2 if ME.get("has_dash") else 0)
-    for c, p, hp, bag, dd, st in (s.enemies if r >= w.kh_until else ()):
+    for c, p, hp, bag, dd, st in s.enemies:
+        ttk = -(-int(hp) // int(s.S))
+        fin = ttk <= 2                          # finisher: dies in <= 2 of my hits
+        if r < w.kh_until and not fin:
+            continue
         try:
             chan = c.is_submitting_gems() or c.is_recalling()
             stun = (not chan) and dd <= reach + 3 and c.buffs().has_stun()
         except Exception:
             chan = stun = False
-        if not (chan or stun or dd <= reach):
+        # P8 finisher: a recall / tribute pins >= 5 turn ends and a walker gains <= 1 tile/turn [rules], so a
+        # near-dead target within reach + 2 ttk + 2 is closable (ladder: a 1-HP enemy recalled 3 tiles away)
+        if not (chan or stun or dd <= reach or (fin and dd <= reach + 2 * ttk + 2)):
             continue
         value = bag + 50 * g2g(r) + DENIAL
-        rounds = max(0, dd - ME.get("range", 1)) + -(-int(hp) // int(s.S))
+        rounds = max(0, dd - ME.get("range", 1)) + ttk
         pl = lanchester(s, p)
-        if pl > KILL_PLOSE:
+        if pl > KILL_PLOSE:                     # tried 15 Oct: x min(1, hp/maxhp/0.5), x0.67 carrying > 40 [measured: worse]
             continue
+        if fin:
+            w.excl.pop(("kill", int(c)), None)  # finishers ignore the kill exclusion (P(lose) vs ~0 HP is ~0)
         risk = pl * (s.bag + 60 * THEIR_RATE)
         # [deviation] (value - risk) / rounds: PRICES' value / rounds - risk subtracts gems from gems/round, so an
         # even fight never priced and farmers took hits without answering
@@ -341,6 +353,16 @@ def price_all(w, s, cl, by):
             if wk is None or wk >= FAR:
                 wk = max(0, w.ad[a] - 1)
             out.append((30 * THEIR_RATE / (wk + 30) * prof["hold"], "hold", a))
+    # HEAL: what a death costs (bag + 60 rounds of my farming) x P(die), over a recall (5) + the walk back out.
+    # 0 at full HP. P(die) = (1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, clamped to [0, 1].
+    if s.hp < s.maxhp:
+        ne8 = 0
+        for e in s.enemies:
+            if e[4] <= 8:
+                ne8 += 1
+        pdie = min(1.0, (1 - s.hp / s.maxhp) * (1 + ne8) * HEAL_K)
+        wb = fget(w.F_home, s.pos) if w.F_home is not None else s.pos.chebyshev_distance(w.sp0)
+        out.append((pdie * (s.bag + 60 * MY_RATE) / (5 + wb) * prof.get("heal", 1.0), "heal", 0))
     # SHOP
     item = prof["item"]
     try:
@@ -375,14 +397,18 @@ def price_all(w, s, cl, by):
 
 
 def choose(w, s):
-    """Argmax with hysteresis; returns True when the choice changed."""
+    """Argmax with a HOLD_TURNS hold, then hysteresis; returns True when the choice changed.
+    HEAL in progress is locked until its executor reports done/failed (a recall cancelled by a flip is the worst
+    outcome). HEAL is never excluded (a death or timeout while healing must not forbid the next heal)."""
+    cur = w.cur
+    if cur[0] == "heal" and w.status == "going":
+        return False
     cl, by = claims(w, s)
     w.claims = cl
     ps = price_all(w, s, cl, by)
     r = s.r
-    ps = [t for t in ps if w.excl.get((t[1], t[2]), -1) <= r]
+    ps = [t for t in ps if t[1] == "heal" or w.excl.get((t[1], t[2]), -1) <= r]
     ps.sort(key=lambda t: -t[0])
-    cur = w.cur
     curp = None
     for t in ps:
         if t[1] == cur[0] and t[2] == cur[1]:
@@ -391,7 +417,9 @@ def choose(w, s):
     best = ps[0] if ps else (0.0, "fall", None)
     if best[0] <= 0:
         best = (0.0, "fall", None)
-    keep = (curp is not None and curp > 0 and w.status == "going" and best[0] <= curp * HYST) or \
+    going = curp is not None and curp > 0 and w.status == "going"
+    held = going and r - w.started < HOLD_TURNS and best[1] != "heal" and not retreat_now(s)
+    keep = held or (going and best[0] <= curp * HYST) or \
            (cur[0] == "fall" and best[1] == "fall" and w.status == "going")
     if keep:
         return False

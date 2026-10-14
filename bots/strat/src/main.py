@@ -790,57 +790,58 @@ Keys are int(ChampionDraft) [sdk]: RYTH 0, VESPER_VALE 1, VENDETTA 2, CASSI_AND_
 MARCELLA 6, WILLOW 7, REN 8, VARG 9, TAVI 10. NOTE: me().champion_name() returns ChampionType, a DIFFERENT enum
 (CASSI 3, ISSAC 4, STELLAR 5, ... VARG 10, TAVI 11) [sdk]; _TYPE_TO_DRAFT maps it. ME['id'] is the draft id.
 
-Multipliers scale a price (1.0 neutral, 0 kills the option); `gold` scales only the FARM gold term; farm/kill/... strength-only clear maths does not see
+Multipliers scale a price (1.0 neutral, 0 kills the option); `gold` scales only the FARM gold term; `heal` scales
+HEAL (recall to heal when P(die) x what a death costs is worth it), 1.0 in every row for now (keyword, last); farm/kill/... strength-only clear maths does not see
 spells, splash or resets, so the farm column carries that. item_gain: gems/round per 100 gold on `item`
 [guess, derivation in strat/PRICES.md "Roles and modes"].
 """
 
 _IT = cambc.ItemType
-_KEYS = ("farm", "gold", "bank", "kill", "hold", "shop", "join")
+_KEYS = ("farm", "gold", "bank", "kill", "hold", "shop", "join", "heal")
 
 
-def _row(farm, gold, bank, kill, hold, shop, join, item, gain):
+def _row(farm, gold, bank, kill, hold, shop, join, item, gain, heal=1.0):
     return {"farm": farm, "gold": gold, "bank": bank, "kill": kill, "hold": hold, "shop": shop, "join": join,
-            "item": item, "item_gain": gain}
+            "item": item, "item_gain": gain, "heal": heal}
 
 
-NEUTRAL = _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.POWER_SHARD_OF_STRENGTH, 0.12)   # starter's shard [guess gain]
+NEUTRAL = _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.POWER_SHARD_OF_STRENGTH, 0.12, 1.0)   # starter's shard [guess gain]
 
 PROFILES = {
     # Ryth [guess all]: farm 1.1 stun adds 1x Focus and hits connected monsters; bank 0.9 safest carrier (1200 HP),
     # can carry longer; kill 1.2 area stun holds the target (PRICES); hold 1.5 stun breaks channels (PRICES);
     # join 1.2 front body for pair takes and stun in fights. Item: Strength over the profile's Health shard,
     # for farm speed (+5 Str vs +1 Str per shard); Monster for +10% camp damage.
-    0: _row(1.1, 1.0, 0.9, 1.2, 1.5, 1.0, 1.2, _IT.MONSTER_SHARD_OF_STRENGTH, 0.14),
+    0: _row(1.1, 1.0, 0.9, 1.2, 1.5, 1.0, 1.2, _IT.MONSTER_SHARD_OF_STRENGTH, 0.14, 1.0),
     # Vendetta [guess all]: farm 1.1 monster kills reset her reset (faster group clears); bank 1.1 800 HP and no
     # escape once the dash is spent, bank sooner; kill 1.3 dash closes, kill resets cooldowns (PRICES);
     # hold 0.5 no stun (PRICES says 0; a 10-gold lock still lets anyone break a channel).
-    2: _row(1.1, 1.0, 1.1, 1.3, 0.5, 1.0, 1.0, _IT.MONSTER_SHARD_OF_STRENGTH, 0.12),
+    2: _row(1.1, 1.0, 1.1, 1.3, 0.5, 1.0, 1.0, _IT.MONSTER_SHARD_OF_STRENGTH, 0.12, 1.0),
     # Varg [guess all]: farm 1.3 splash = Strength on adjacent monsters, 2-3x on groups; kill 0.8 no mobility, no CC,
     # mediocre single target; hold 0.5 no stun; join 1.2 packs are where splash pays.
-    9: _row(1.3, 1.0, 1.0, 0.8, 0.5, 1.0, 1.2, _IT.MONSTER_SHARD_OF_STRENGTH, 0.16),
+    9: _row(1.3, 1.0, 1.0, 0.8, 0.5, 1.0, 1.2, _IT.MONSTER_SHARD_OF_STRENGTH, 0.16, 1.0),
     # Marcella [guess all]: farm 1.1 2x Focus nuke on camps beyond her 45 Str; bank 0.8 stun-immune tributer, the
     # designated carrier; kill 1.1 enhanced attack stuns; hold 1.2 melee stun + immune to theirs; join 1.1 1200 HP
     # front body. Item: Strength (profile: Strength and Health), Monster for farm speed.
-    6: _row(1.1, 1.0, 0.8, 1.1, 1.2, 1.0, 1.1, _IT.MONSTER_SHARD_OF_STRENGTH, 0.15),
+    6: _row(1.1, 1.0, 0.8, 1.1, 1.2, 1.0, 1.1, _IT.MONSTER_SHARD_OF_STRENGTH, 0.15, 1.0),
     # Vesper Vale [guess all but gold]: farm 1.2 ranged (range 3, hits from outside melee monsters' reach) and the
     # best basic-attack scaling (+5 Str = +45 of 405 per cycle); gold 1.2 [rules] passive +20 % gold (1.4 with a
     # Treasure emblem: the turn loop should read the live value from her emblem later, not this constant);
     # bank 1.1 dash 2 makes her hard to catch, a good gem runner; kill 0.9 dash closes and the reset adds a hit,
     # but no stun to hold a target; hold 0.0 no stun (later: the altar-lock buyer); join 1.0.
     # Item: Strength first; Treasure (150) pays back only after ~750 gold of base income (profile), a mid-game buy.
-    1: _row(1.2, 1.2, 1.1, 0.9, 0.0, 1.0, 1.0, _IT.MONSTER_SHARD_OF_STRENGTH, 0.17),
+    1: _row(1.2, 1.2, 1.1, 0.9, 0.0, 1.0, 1.0, _IT.MONSTER_SHARD_OF_STRENGTH, 0.17, 1.0),
     # Stellar [guess all]: farm 1.5 spells deal ~77/turn vs 35 Str (2.2x), cut for cast-only-standing and 2 casts per
     # 8; bank 1.2 750 HP, fragile carrier; kill 1.2 235 burst at range 4 finishes carriers; hold 0.5 no stun;
     # join 1.2 area spell on groups, needs a frontline. Item: Focus (profile; +34/cycle vs +28 for Strength).
-    4: _row(1.5, 1.0, 1.2, 1.2, 0.5, 1.0, 1.2, _IT.MONSTER_SHARD_OF_FOCUS, 0.10),
+    4: _row(1.5, 1.0, 1.2, 1.2, 0.5, 1.0, 1.2, _IT.MONSTER_SHARD_OF_FOCUS, 0.10, 1.0),
     # Stellar's row above stays in case the roster changes back. Not in our roster: neutral multipliers, item from
     # the profile where it names one, else the starter's shard.
-    3: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.POWER_SHARD_OF_STRENGTH, 0.12),      # Cassi & Issac: mixed, starter
-    5: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.MONSTER_SHARD_OF_FOCUS, 0.12),       # Prism: Focus shards
-    7: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.MONSTER_SHARD_OF_FOCUS, 0.12),       # Willow: Focus shards
-    8: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.POWER_SHARD_OF_STRENGTH, 0.12),      # Ren: mixed, starter
-    10: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.POWER_SHARD_OF_STRENGTH, 0.12),     # Tavi: none named, starter
+    3: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.POWER_SHARD_OF_STRENGTH, 0.12, 1.0),      # Cassi & Issac: mixed, starter
+    5: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.MONSTER_SHARD_OF_FOCUS, 0.12, 1.0),       # Prism: Focus shards
+    7: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.MONSTER_SHARD_OF_FOCUS, 0.12, 1.0),       # Willow: Focus shards
+    8: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.POWER_SHARD_OF_STRENGTH, 0.12, 1.0),      # Ren: mixed, starter
+    10: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.POWER_SHARD_OF_STRENGTH, 0.12, 1.0),     # Tavi: none named, starter
 }
 
 _TYPE_TO_DRAFT = (0, 1, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10)     # ChampionType -> ChampionDraft [sdk enums]
@@ -1280,8 +1281,8 @@ def opening_seed(w):
 # ---- 40_prices.py ----
 """Sense, price the six options (strat/PRICES.md) in team gems per round, choose with hysteresis, broadcast.
 
-Option codes (shared byte, low 3 bits): 0 idle, 1 farm, 2 bank, 3 kill, 4 hold, 5 shop, 6 join, 7 dead; target in
-the high 5 bits (group index in draft-memory order, altar index, enemy handle & 31, ally slot for join).
+Option codes (shared byte, low 3 bits): 0 idle (also heal: recalling to heal, no target, nothing for allies to read),
+1 farm, 2 bank, 3 kill, 4 hold, 5 shop, 6 join, 7 dead; target in the high 5 bits (group index in draft-memory order, altar index, enemy handle & 31, ally slot for join).
 Byte 5: enemy sighting on our half, high nibble = altar index + 1 (0 none), low nibble = (round // 2) & 15 when seen;
 a reader treats age >= SIGHT_AGE half-rounds as stale and clears it (~30 rounds, no writer needed to decay it).
 """
@@ -1304,8 +1305,12 @@ HOLD_PLOSE = 0.3            # [guess] HOLD needs a clearly safe altar
 KILL_PLOSE = 0.45           # [tuned] fight only when locally stronger (0.5 = even; 0.99 lost 9 champions in kills)
 DEATH_EXCL = 100            # rounds a death excludes its (option, target), and kill/hold after a kill/hold death
 DEATH_MARK = 100            # rounds the team avoids a group an ally died farming (bytes 6-7)
+HEAL_K = 1.5                # [guess] HEAL: P(die) = clamp((1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, 0, 1)
+MY_RATE = 0.4               # [guess] my gems per round, x 60 rounds out = what a death costs beyond the bag
+HOLD_TURNS = 2              # a new (option, target) is kept this many turns (unless done/failed, HEAL, retreat)
 OPT = ("idle", "farm", "bank", "kill", "hold", "shop", "join", "dead", "fall")
 CODE = {o: i for i, o in enumerate(OPT)}
+CODE["heal"] = 0            # broadcast as idle: the byte has no free code (7 is dead)
 CLEAR_MEMO = {}
 
 
@@ -1593,19 +1598,27 @@ def price_all(w, s, cl, by):
             out.append((s.bag * (1 + P) / (wk + max(1, -(-s.bag // 10))) * prof["bank"], "bank", a))
     # KILL: closable targets only
     reach = ME.get("range", 1) + 1 + (2 if ME.get("has_dash") else 0)
-    for c, p, hp, bag, dd, st in (s.enemies if r >= w.kh_until else ()):
+    for c, p, hp, bag, dd, st in s.enemies:
+        ttk = -(-int(hp) // int(s.S))
+        fin = ttk <= 2                          # finisher: dies in <= 2 of my hits
+        if r < w.kh_until and not fin:
+            continue
         try:
             chan = c.is_submitting_gems() or c.is_recalling()
             stun = (not chan) and dd <= reach + 3 and c.buffs().has_stun()
         except Exception:
             chan = stun = False
-        if not (chan or stun or dd <= reach):
+        # P8 finisher: a recall / tribute pins >= 5 turn ends and a walker gains <= 1 tile/turn [rules], so a
+        # near-dead target within reach + 2 ttk + 2 is closable (ladder: a 1-HP enemy recalled 3 tiles away)
+        if not (chan or stun or dd <= reach or (fin and dd <= reach + 2 * ttk + 2)):
             continue
         value = bag + 50 * g2g(r) + DENIAL
-        rounds = max(0, dd - ME.get("range", 1)) + -(-int(hp) // int(s.S))
+        rounds = max(0, dd - ME.get("range", 1)) + ttk
         pl = lanchester(s, p)
-        if pl > KILL_PLOSE:
+        if pl > KILL_PLOSE:                     # tried 15 Oct: x min(1, hp/maxhp/0.5), x0.67 carrying > 40 [measured: worse]
             continue
+        if fin:
+            w.excl.pop(("kill", int(c)), None)  # finishers ignore the kill exclusion (P(lose) vs ~0 HP is ~0)
         risk = pl * (s.bag + 60 * THEIR_RATE)
         # [deviation] (value - risk) / rounds: PRICES' value / rounds - risk subtracts gems from gems/round, so an
         # even fight never priced and farmers took hits without answering
@@ -1621,6 +1634,16 @@ def price_all(w, s, cl, by):
             if wk is None or wk >= FAR:
                 wk = max(0, w.ad[a] - 1)
             out.append((30 * THEIR_RATE / (wk + 30) * prof["hold"], "hold", a))
+    # HEAL: what a death costs (bag + 60 rounds of my farming) x P(die), over a recall (5) + the walk back out.
+    # 0 at full HP. P(die) = (1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, clamped to [0, 1].
+    if s.hp < s.maxhp:
+        ne8 = 0
+        for e in s.enemies:
+            if e[4] <= 8:
+                ne8 += 1
+        pdie = min(1.0, (1 - s.hp / s.maxhp) * (1 + ne8) * HEAL_K)
+        wb = fget(w.F_home, s.pos) if w.F_home is not None else s.pos.chebyshev_distance(w.sp0)
+        out.append((pdie * (s.bag + 60 * MY_RATE) / (5 + wb) * prof.get("heal", 1.0), "heal", 0))
     # SHOP
     item = prof["item"]
     try:
@@ -1655,14 +1678,18 @@ def price_all(w, s, cl, by):
 
 
 def choose(w, s):
-    """Argmax with hysteresis; returns True when the choice changed."""
+    """Argmax with a HOLD_TURNS hold, then hysteresis; returns True when the choice changed.
+    HEAL in progress is locked until its executor reports done/failed (a recall cancelled by a flip is the worst
+    outcome). HEAL is never excluded (a death or timeout while healing must not forbid the next heal)."""
+    cur = w.cur
+    if cur[0] == "heal" and w.status == "going":
+        return False
     cl, by = claims(w, s)
     w.claims = cl
     ps = price_all(w, s, cl, by)
     r = s.r
-    ps = [t for t in ps if w.excl.get((t[1], t[2]), -1) <= r]
+    ps = [t for t in ps if t[1] == "heal" or w.excl.get((t[1], t[2]), -1) <= r]
     ps.sort(key=lambda t: -t[0])
-    cur = w.cur
     curp = None
     for t in ps:
         if t[1] == cur[0] and t[2] == cur[1]:
@@ -1671,7 +1698,9 @@ def choose(w, s):
     best = ps[0] if ps else (0.0, "fall", None)
     if best[0] <= 0:
         best = (0.0, "fall", None)
-    keep = (curp is not None and curp > 0 and w.status == "going" and best[0] <= curp * HYST) or \
+    going = curp is not None and curp > 0 and w.status == "going"
+    held = going and r - w.started < HOLD_TURNS and best[1] != "heal" and not retreat_now(s)
+    keep = held or (going and best[0] <= curp * HYST) or \
            (cur[0] == "fall" and best[1] == "fall" and w.status == "going")
     if keep:
         return False
@@ -1769,6 +1798,8 @@ def _set_cur(self, new, r, s):
         walk = 6
     elif op == "fall":
         walk = 15
+    elif op == "heal":
+        walk, work = 10, 7                      # step out of reach, 5-turn recall, the heal turn on spawn
     self.deadline = r + min(walk, 150) + 10 + work
 
 
@@ -1909,7 +1940,7 @@ def exec_bank(w, s, a):
             return "going"
         except Exception:
             return "failed"
-    if w.step_to(f"a{a}", s) == "blocked" and w.walk_to(f"a{a}", s.pos) >= FAR:
+    if w.step_to(f"a{a}", s) == "blocked" and (w.walk_to(f"a{a}", s.pos) or FAR) >= FAR:
         return "failed"
     return "going"
 
@@ -1942,7 +1973,8 @@ def exec_kill(w, s, hd):
         return "going"
     if dd >= w.kd:
         w.kn += 1
-        if w.kn >= 3:
+        ttk = -(-int(hp) // int(s.S))
+        if w.kn >= (2 * ttk + 2 if ttk <= 2 else 3):   # a finisher chase gets 2 ttk + 2 rounds (pinned / 1 tile/turn)
             return "failed"
     else:
         w.kn = 0
@@ -2015,11 +2047,32 @@ def exec_join(w, s, k):
     return "going"
 
 
+def retreat_now(s):
+    """The fallback's retreat condition: enemies within 4 outnumber us + 1, or HP < RETREAT_HP with one there."""
+    near = [e for e in s.enemies if e[4] <= 4]
+    if not near or s.spawn:
+        return False
+    allies = sum(1 for a in s.allies if a[1].chebyshev_distance(s.pos) <= 4)
+    return len(near) > allies + 1 or s.hp < RETREAT_HP * s.maxhp
+
+
+def exec_heal(w, s, _t):
+    """Recall (safe_recall steps out of camp range / away from enemies first); done on spawn at full HP, or at
+    >= 0.9 max HP once arrived. Standing on spawn heals to full at turn end [rules]."""
+    if not s.spawn:
+        return safe_recall(w, s)
+    if s.hp >= s.maxhp or (w.arrived is not None and s.hp >= 0.9 * s.maxhp):
+        return "done"
+    if w.arrived is None:
+        w.arrived = s.r
+    w.capt = True                               # healing on spawn: a deliberate stand
+    return "going"
+
+
 def exec_fall(w, s, _t):
     near = [e for e in s.enemies if e[4] <= 4]
     if near and not s.spawn:
-        allies = sum(1 for a in s.allies if a[1].chebyshev_distance(s.pos) <= 4)
-        if len(near) > allies + 1 or s.hp < RETREAT_HP * s.maxhp:
+        if retreat_now(s):
             if s.near_e <= 3:                   # retreat: out of their reach first, recall once clear
                 w.step_away(s, [e[1] for e in near])
                 return "going"
@@ -2035,7 +2088,7 @@ def exec_fall(w, s, _t):
 
 
 EXEC = {"farm": exec_farm, "bank": exec_bank, "kill": exec_kill, "hold": exec_hold, "shop": exec_shop,
-        "join": exec_join, "fall": exec_fall}
+        "join": exec_join, "fall": exec_fall, "heal": exec_heal}
 
 # ---- 90_main.py ----
 """Entry. Draft: pick on every draft turn (Varg, Vesper Vale, Ryth, Vendetta, Marcella), run the model stages under

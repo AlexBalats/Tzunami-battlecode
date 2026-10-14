@@ -30,6 +30,8 @@ def _set_cur(self, new, r, s):
         walk = 6
     elif op == "fall":
         walk = 15
+    elif op == "heal":
+        walk, work = 10, 7                      # step out of reach, 5-turn recall, the heal turn on spawn
     self.deadline = r + min(walk, 150) + 10 + work
 
 
@@ -170,7 +172,7 @@ def exec_bank(w, s, a):
             return "going"
         except Exception:
             return "failed"
-    if w.step_to(f"a{a}", s) == "blocked" and w.walk_to(f"a{a}", s.pos) >= FAR:
+    if w.step_to(f"a{a}", s) == "blocked" and (w.walk_to(f"a{a}", s.pos) or FAR) >= FAR:
         return "failed"
     return "going"
 
@@ -203,7 +205,8 @@ def exec_kill(w, s, hd):
         return "going"
     if dd >= w.kd:
         w.kn += 1
-        if w.kn >= 3:
+        ttk = -(-int(hp) // int(s.S))
+        if w.kn >= (2 * ttk + 2 if ttk <= 2 else 3):   # a finisher chase gets 2 ttk + 2 rounds (pinned / 1 tile/turn)
             return "failed"
     else:
         w.kn = 0
@@ -276,11 +279,32 @@ def exec_join(w, s, k):
     return "going"
 
 
+def retreat_now(s):
+    """The fallback's retreat condition: enemies within 4 outnumber us + 1, or HP < RETREAT_HP with one there."""
+    near = [e for e in s.enemies if e[4] <= 4]
+    if not near or s.spawn:
+        return False
+    allies = sum(1 for a in s.allies if a[1].chebyshev_distance(s.pos) <= 4)
+    return len(near) > allies + 1 or s.hp < RETREAT_HP * s.maxhp
+
+
+def exec_heal(w, s, _t):
+    """Recall (safe_recall steps out of camp range / away from enemies first); done on spawn at full HP, or at
+    >= 0.9 max HP once arrived. Standing on spawn heals to full at turn end [rules]."""
+    if not s.spawn:
+        return safe_recall(w, s)
+    if s.hp >= s.maxhp or (w.arrived is not None and s.hp >= 0.9 * s.maxhp):
+        return "done"
+    if w.arrived is None:
+        w.arrived = s.r
+    w.capt = True                               # healing on spawn: a deliberate stand
+    return "going"
+
+
 def exec_fall(w, s, _t):
     near = [e for e in s.enemies if e[4] <= 4]
     if near and not s.spawn:
-        allies = sum(1 for a in s.allies if a[1].chebyshev_distance(s.pos) <= 4)
-        if len(near) > allies + 1 or s.hp < RETREAT_HP * s.maxhp:
+        if retreat_now(s):
             if s.near_e <= 3:                   # retreat: out of their reach first, recall once clear
                 w.step_away(s, [e[1] for e in near])
                 return "going"
@@ -296,4 +320,4 @@ def exec_fall(w, s, _t):
 
 
 EXEC = {"farm": exec_farm, "bank": exec_bank, "kill": exec_kill, "hold": exec_hold, "shop": exec_shop,
-        "join": exec_join, "fall": exec_fall}
+        "join": exec_join, "fall": exec_fall, "heal": exec_heal}
