@@ -388,7 +388,7 @@ WORLD = World()
 
 def opening_seed(w):
     """My entry of opening_slots (None past its end)."""
-    slots = opening_slots(w)
+    slots = opening_slots(w, 5)               # 5: the same list whatever roster I saw at boot
     return slots[w.slot] if w.slot < len(slots) else None
 
 
@@ -406,23 +406,36 @@ def ward_init(w):
         w.ward_pending.add(j)
 
 
-def opening_slots(w):
-    """Every champion computes the same list with no comms. Groups on our side (0) and contested (1), ranked by the
-    walk from our spawn (d_us; ties: higher value per round). Solo groups (need 1) first, one slot each; then pair groups
-    (need 2), two consecutive slots each (both bodies on the same pair). Slot i takes entry i, so pairs only get
-    slots once every champion before them has a solo group. Seeds only the first choice."""
-    solo, pair = [], []
+VESPER_ID = 1                # draft id of Vesper Vale (her slot takes a gold group first)
+
+
+def opening_slots(w, n):
+    """n DISTINCT group handles (slot i takes entry i); every champion computes the same list with no comms.
+    Groups on our side (0) and contested (1), ranked by the walk from our spawn (d_us; ties: higher value per round),
+    solo groups (need 1) first, then pair groups (need 2). [rule, 15 Oct ladder 2] Vesper's slot first takes the nearest
+    group with gold > 0 (one she can take alone if any: all gold to Vesper); no group is given to two slots (the
+    50x50 4-pick ladder map had one seedable group and three champions on it); when the list runs out, the
+    next-nearest unused reachable group of any need and side. Seeds only the first choice."""
+    solo, pair, rest = [], [], []
     for h in w.order:
         o = w.G[h]
-        if o.side > 1 or o.d_us >= 255 or o.need > 2:
+        if o.d_us >= 255:
             continue
         hp = sum(m[0] for m in o.mons)
-        cr = -(-hp // (CHAMP_STR * o.need))
+        cr = -(-hp // (CHAMP_STR * max(1, o.need)))
         key = (o.d_us, -(o.gems + g2g(1) * o.gold) / (o.d_us + cr + 1), h)
-        (solo if o.need <= 1 else pair).append(key)
+        (rest if o.side > 1 or o.need > 2 else solo if o.need <= 1 else pair).append(key)
     solo.sort()
     pair.sort()
-    slots = [k[2] for k in solo]
-    for k in pair:
-        slots += [k[2], k[2]]
+    rest.sort()
+    order = [k[2] for k in solo + pair + rest]
+    vs = w.roster.index(VESPER_ID) if VESPER_ID in w.roster else -1
+    vg = None
+    if 0 <= vs < n:
+        gold = sorted((w.G[h].side > 1, w.G[h].need > 1, w.G[h].d_us, h) for h in order if w.G[h].gold > 0)
+        vg = gold[0][3] if gold else None
+    slots, it = [], iter(h for h in order if h != vg)
+    for i in range(n):
+        slots.append(vg if i == vs and vg is not None else next(it, None))
+    assert len(set(h for h in slots if h is not None)) == sum(1 for h in slots if h is not None), "seed dup"
     return slots

@@ -311,6 +311,12 @@ def exec_shop(w, s, _t):
 
 def exec_join(w, s, k):
     b = s.mem[k] if k < 5 else 0
+    if (b & 7) == 3:                            # a fight (40_prices JOIN a fight): walk to the ally, then KILL
+        p = next((a[1] for a in s.allies if w.ally_slot(a[0]) == k), None)
+        if p is None or p.chebyshev_distance(s.pos) <= 2:
+            return "done"
+        w.step_near(p, 1, s)
+        return "going"
     if (b & 7) != 1 or (b >> 3) not in w.idx:
         return "failed"
     h = w.idx[b >> 3]

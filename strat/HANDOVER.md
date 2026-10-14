@@ -318,3 +318,50 @@ r284 (11) corners B, r164 (11) expanse. Fuel per turn median 0.84-0.96M per game
 Open: r100 is lower on corners (seeds held to r40, first banks later); Vesper with gold 3.0 out-prices SHOP and sits on
 170-276 gold for 50-150 rounds before buying (collision A, corners B), which delays her phase flip; expanse places
 no wards now (bag > 0 blocks the trips that passed them).
+
+## 15 Oct (latest+3): ladder 2 (all gold to Vesper, distinct seeds, HEAL gate, KILL 0.6, fight convergence)
+
+Why: newest 6 ladder games (`runs/ladder/*-logs.zip`, 0 wins): Vesper held 0 gold at r50/100/150 while Ryth / Varg /
+Vendetta held 70-135; on the 50x50 4-pick map only slot 0 got a seed (one seedable group) and three champions chose the
+same group at round 3; 14 of the deaths were `cur=heal` (many at 316-644 HP, 1-3 enemies); nobody converged on a fight.
+Build: `python -I tools/assemble.py --bot strat` (2,863 lines). User-approved list, numbers first.
+
+1. **Gold** (20_champs PROFILES): `gold` 1.0 -> 0.05 in every row but Vesper's (Ryth, Vendetta, Varg, Marcella,
+   Stellar, the neutral rows, NEUTRAL) [user plan: all gold to Vesper]. Vesper unchanged (base 1.6, phases 3.0 / 1.0).
+2. **Vesper shop** (phases): `shop` 2.0 below 10 shards, 1.0 from 10 [guess].
+3. **HEAL** (40_prices): `HEAL_K` 2.0 -> 1.5; `STACK_HEAL` floor only while `s.plose > HEAL_PLOSE` 0.5; new rule: with
+   an enemy within 8 and `s.plose <= HEAL_PLOSE`, HEAL prices 0 (fight instead). No enemy within 8: unchanged (camp
+   damage still heals). Note `s.plose` counts enemies within 5 only, so one at 6-8 alone gives plose 0 -> no heal.
+4. **KILL_PLOSE** 0.45 -> 0.6.
+5. **Opening seed** (30_world `opening_slots(w, n)`, always n = 5 so a roster seen partially at boot gives the same
+   list): every reachable group, solo (side 0/1, need 1) then pair (need 2) then the rest (side 2 or need > 2), each by
+   d_us; Vesper's slot (`VESPER_ID` 1 in `w.roster`) first takes the nearest gold > 0 group (side 0/1 and need 1
+   preferred); every group at most once (an `assert` in the function). Slot 0 traces the whole list (`choice seeds ...`).
+6. **JOIN a fight** (40_prices `price_all`, end; 50_exec `exec_join`): an ally 3-10 tiles away (`JOIN_FIGHT_R` 10)
+   broadcasting kill (code 3) prices JOIN = KILL's price with me and that ally in the Lanchester bodies (target not
+   visible: the ally's tile, bag 0, ttk `JOIN_TTK` 3 [guess]), gated by KILL_PLOSE and `kh_until`, x kmul x
+   `POSTURE["defend"]["join"]` (2.0) whatever the posture. Within 2 of the ally it does not price (KILL prices itself);
+   `exec_join` on a kill byte steps to the ally and is done within 2 (ally gone or no longer fighting: done). The first
+   version priced it within 2 too: join chosen / done every turn (359 join choices a game).
+
+Light test [measured, cambc 2.1.5]: bench `gold1b` vs tzunami444 (collision + corners, both sides) 4/4 W (phase1b 3/4),
+margins collision A +334 (was +816), B +318 (+532), corners A +104 (+348), B +182 (-456); expanse vs starter
+(`runs/strat_gold_expanse`) W 1006-508 at round 500 (was 1020-604). 0 err. Fuel tick median 0.80-0.99M, max 1.9M.
+Deaths 12 in the 4 bench games (phase1b: 0), 8 of them corners A; deaths with cur=heal: 2, at 12 % and 2 % HP.
+Kill choices 66-87 per game (was 7-38), fight joins 6-21.
+
+Vesper at the r50 / r100 / r150 / r300 ticks, shards (gold held), phase1b -> gold1b; first buy round:
+
+| game | before | after | first buy before -> after |
+| --- | --- | --- | --- |
+| collision A | 0(42) 0(234) 0(276) 17(6) | 0(0) 0(150) 9(6) 15(127) | 158 -> 101 |
+| collision B | 0(42) 2(24) 2(174) 17(18) | 0(0) 0(0) 5(0) 17(18) | 71 -> 99 |
+| corners A | 0(0) 0(0) 0(0) 6(138) | 0(18) 3(0) 14(6) 22(144) | 199 -> 48 |
+| corners B | 0(0) 0(0) 0(84) 11(6) | 0(18) 3(0) 14(6) 22(18) | 274 -> 48 |
+| expanse | 0(0) 0(216) 7(132) 19(24) | 0(18) 3(18) 7(6) 15(18) | 109 -> 50 |
+
+Open: on collision Varg (slot 0) and Ryth still take the wolves: their seeds (g8, g2) carry gold and the solo
+tie-break lets Varg (lower slot) take Vesper's seeded g0 at r27 after his own clear (he got its 90 gold, she got
+nothing until r96). Candidate rule (not done): a gold group Vesper claims is hers whatever the slot, and the others'
+seeds skip gold groups. Corners A: 8 deaths in the centre stack fights (KILL 0.6 / no-heal vs 3-5 enemies); HEAL
+flips on/off as plose crosses 0.5 (122 heal choices).

@@ -23,10 +23,11 @@ FUEL_FLOOR = 400_000        # after sensing: below this skip pricing, repeat the
 P_LOSE_MAX = 0.5            # [guess] FARM / BANK / KILL price 0 when the local Lanchester P(lose) exceeds this
 FARM_PLOSE = 0.99           # [tuned] off: 0.65 (2 v 1) lost corners and interlock (we must contest the centre)
 HOLD_PLOSE = 0.3            # [guess] HOLD needs a clearly safe altar
-KILL_PLOSE = 0.45           # [tuned] fight only when locally stronger (0.5 = even; 0.99 lost 9 champions in kills)
+KILL_PLOSE = 0.6            # [user plan 15 Oct, ladder 2; was 0.45 tuned] fight even and slightly worse local fights
+                            # (ladder: nobody fought back; 0.5 = even; 0.99 lost 9 champions in kills)
 DEATH_EXCL = 100            # rounds a death excludes its (option, target), and kill/hold after a kill/hold death
 DEATH_MARK = 100            # rounds the team avoids a group an ally died farming (byte 7)
-HEAL_K = 2.0                # [guess] (1.5 -> 2.0, 15 Oct ladder phase 1) HEAL: P(die) = clamp((1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, 0, 1)
+HEAL_K = 1.5                # [guess] (2.0 -> 1.5, 15 Oct ladder 2: 11 of 27 deaths healing at 316-644 HP) HEAL: P(die) = clamp((1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, 0, 1)
 MY_RATE = 0.4               # [guess] my gems per round, x 60 rounds out = what a death costs beyond the bag
 HOLD_TURNS = 2              # a new (option, target) is kept this many turns (unless done/failed, HEAL, retreat)
 WARD_VALUE = 4.0            # [guess] g/r of a ward placed at once (8 -> 4: at 8 it outranked every farm, 1-5 g/r)
@@ -46,7 +47,10 @@ STACK_N_FEW = 2             # [guess] regime few (small / one-choke maps): a pai
 STACK_R = 10                # FARM of groups within this of the stack's altar x STACK_FARM
 STACK_FARM = 0.2            # [guess] don't walk into the stack
 PUNISH_LEAD = 50            # ahead by more than this on score + a fresh small sighting -> punish
-STACK_HEAL = 0.6            # [guess] HEAL P(die) floor with >= 3 enemies within 8 and no ally within 5
+STACK_HEAL = 0.6            # [guess] HEAL P(die) floor with >= 3 enemies within 8, no ally within 5 and plose > HEAL_PLOSE
+HEAL_PLOSE = 0.5            # [user plan 15 Oct, ladder 2] HEAL prices 0 with an enemy within 8 while my local plose <= this
+JOIN_FIGHT_R = 10           # [user plan 15 Oct, ladder 2] allies within this of a fighting ally price JOIN on its fight
+JOIN_TTK = 3                # [guess] my hits to finish a fight target I cannot see (JOIN on a fight)
 # Posture columns: multipliers over the options (price *= POSTURE[col][key]), neutral 1.0, all [guess].
 # Selection (posture(), every champion locally, same inputs, no byte): draft regime few -> defend, pick / many /
 # unknown -> economy; a fresh sighting (<= SIGHT_FRESH rounds) of >= STACK_N enemies -> defend; a fresh one of <= 2
@@ -543,14 +547,18 @@ def price_all(w, s, cl, by):
     # HEAL: what a death costs (bag + 60 rounds of my farming) x P(die), over a recall (5) + the walk back out.
     # P(die) = (1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, clamped to [0, 1]; at least STACK_HEAL with >= 3
     # enemies within 8 and no ally within 5, even at full HP (HEAL is then "go home": the executor walks while an
-    # enemy is within 6 and recalls only once clear).
+    # enemy is within 6 and recalls only once clear), but only while s.plose > HEAL_PLOSE.
+    # [rule, 15 Oct ladder 2] an enemy within 8 and s.plose <= HEAL_PLOSE: HEAL 0, I can win or trade, fight instead
+    # (ladder: healthy champions ran from one enemy and took free hits). No enemy within 8: camp damage heals as before.
     ne8 = 0
     for e in s.enemies:
         if e[4] <= 8:
             ne8 += 1
     pdie = min(1.0, (1 - s.hp / s.maxhp) * (1 + ne8) * HEAL_K)
-    if ne8 >= 3 and not s.spawn and not any(a[1].chebyshev_distance(s.pos) <= 5 for a in s.allies):
+    if ne8 >= 3 and s.plose > HEAL_PLOSE and not s.spawn and not any(a[1].chebyshev_distance(s.pos) <= 5 for a in s.allies):
         pdie = max(pdie, STACK_HEAL)
+    if ne8 and s.plose <= HEAL_PLOSE:
+        pdie = 0
     if pdie > 0:
         wb = fget(w.F_home, s.pos) if w.F_home is not None else s.pos.chebyshev_distance(w.sp0)
         out.append((pdie * (s.bag + 60 * MY_RATE) / (5 + wb) * prof.get("heal", 1.0), "heal", 0))
@@ -584,6 +592,23 @@ def price_all(w, s, cl, by):
         gain = farm_price(w, s, h, b + 1, wk) * (b + 1) - max(0.0, lo)
         if gain > 0:
             out.append((gain / max(1, wk) * prof["join"] * pm["join"], "join", k))
+    # JOIN a fight [rule, 15 Oct ladder 2: nobody converged]: an ally within JOIN_FIGHT_R broadcasting kill (code 3) ->
+    # KILL's price with the ally and me in the Lanchester bodies, x POSTURE["defend"]["join"] whatever my posture.
+    # Target not in my vision: its spot = the ally's, bag 0, ttk JOIN_TTK. exec_join walks to the ally; KILL takes over.
+    for c, p, hp, st in s.allies:
+        k = w.ally_slot(c)
+        op, tg = by.get(k, (0, 0))
+        if op != 3 or not 2 < p.chebyshev_distance(s.pos) <= JOIN_FIGHT_R or r < w.kh_until:    # <= 2: there, KILL
+            continue
+        e = next((x for x in s.enemies if int(x[0]) & 31 == tg), None)
+        ep, eb, ttk = (e[1], e[3], -(-int(e[2]) // int(s.S))) if e else (p, 0, JOIN_TTK)
+        th = sum(x[2] * x[5] for x in s.enemies if x[1].chebyshev_distance(ep) <= 5)
+        us = s.hp * s.S + sum(a[2] * a[3] for a in s.allies if a[0] == c or a[1].chebyshev_distance(ep) <= 5)
+        pl = th / max(1.0, us + th)
+        if pl <= KILL_PLOSE:
+            v = eb + 50 * g2g(r) + DENIAL - pl * (s.bag + 60 * THEIR_RATE)
+            out.append((v / max(1, max(0, s.pos.chebyshev_distance(ep) - ME.get("range", 1)) + ttk) * kmul
+                        * POSTURE["defend"]["join"], "join", k))
     return out
 
 

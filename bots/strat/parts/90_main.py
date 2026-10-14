@@ -230,6 +230,8 @@ else:
                 w.seed, w.seed_until = seed, SEED_UNTIL   # choose keeps it until then unless HEAL / retreat (seeded)
                 trace("choice", f"farm {tname(w, 'farm', seed)} seed slot={w.slot}")
                 broadcast(w, s, 1)
+            if w.slot == 0 and TRACE:                     # the whole list (S = 5; S = 3 / 4 are its prefixes)
+                trace("choice", "seeds " + " ".join(tname(w, "farm", h) for h in opening_slots(w, 5)))
         except Exception as e:
             trace("err", "boot " + err_text(e))
         trace("boot", f"round1 fuel={f0 - fuel()} left={fuel()}")

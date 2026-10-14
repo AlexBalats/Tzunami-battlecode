@@ -31,25 +31,28 @@ _MS, _TS, _PS, _DH = (_IT.MONSTER_SHARD_OF_STRENGTH, _IT.TREASURE_SHARD_OF_STREN
 _B_OTHER = (_MS, _PS)        # [user decision 14 Oct] default build: Monster (farm speed), then Power (fights)
 
 
-NEUTRAL = _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.POWER_SHARD_OF_STRENGTH, 0.12, 1.0, _B_OTHER)   # starter's shard [guess gain]
+NEUTRAL = _row(1.0, 0.05, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.POWER_SHARD_OF_STRENGTH, 0.12, 1.0, _B_OTHER)   # starter's shard [guess gain]
 
 PROFILES = {
+    # gold 0.05 in every row but Vesper's [user plan 15 Oct, ladder 2]: all gold to Vesper. The others price a
+    # group's gold at ~0 (0.05 keeps gold-only groups above exactly 0), so the wolves / elks go to her (ladder: she
+    # held 0 gold at r50-150 while Ryth / Varg / Vendetta held 70-135).
     # Ryth [guess all]: farm 1.1 stun adds 1x Focus and hits connected monsters; bank 0.9 safest carrier (1200 HP),
     # can carry longer; kill 1.2 area stun holds the target (PRICES); hold 1.5 stun breaks channels (PRICES);
     # join 1.2 front body for pair takes and stun in fights. Item: Strength over the profile's Health shard,
     # for farm speed (+5 Str vs +1 Str per shard); Monster for +10% camp damage.
-    0: _row(1.1, 1.0, 0.9, 1.2, 1.5, 1.0, 1.2, _MS, 0.14, 1.0, (_MS, _DH, _PS)),
+    0: _row(1.1, 0.05, 0.9, 1.2, 1.5, 1.0, 1.2, _MS, 0.14, 1.0, (_MS, _DH, _PS)),
     # Vendetta [guess all]: farm 1.1 monster kills reset her reset (faster group clears); bank 1.1 800 HP and no
     # escape once the dash is spent, bank sooner; kill 1.3 dash closes, kill resets cooldowns (PRICES);
     # hold 0.5 no stun (PRICES says 0; a 10-gold lock still lets anyone break a channel).
-    2: _row(1.1, 1.0, 1.1, 1.3, 0.5, 1.0, 1.0, _PS, 0.12, 1.0, (_PS, _MS, _DH)),
+    2: _row(1.1, 0.05, 1.1, 1.3, 0.5, 1.0, 1.0, _PS, 0.12, 1.0, (_PS, _MS, _DH)),
     # Varg [guess all]: farm 1.3 splash = Strength on adjacent monsters, 2-3x on groups; kill 0.8 no mobility, no CC,
     # mediocre single target; hold 0.5 no stun; join 1.2 packs are where splash pays.
-    9: _row(1.3, 1.0, 1.0, 0.8, 0.5, 1.0, 1.2, _MS, 0.16, 1.0, (_MS, _PS, _DH)),
+    9: _row(1.3, 0.05, 1.0, 0.8, 0.5, 1.0, 1.2, _MS, 0.16, 1.0, (_MS, _PS, _DH)),
     # Marcella [guess all]: farm 1.1 2x Focus nuke on camps beyond her 45 Str; bank 0.8 stun-immune tributer, the
     # designated carrier; kill 1.1 enhanced attack stuns; hold 1.2 melee stun + immune to theirs; join 1.1 1200 HP
     # front body. Item: Strength (profile: Strength and Health), Monster for farm speed.
-    6: _row(1.1, 1.0, 0.8, 1.1, 1.2, 1.0, 1.1, _MS, 0.15, 1.0, (_MS, _DH, _PS)),
+    6: _row(1.1, 0.05, 0.8, 1.1, 1.2, 1.0, 1.1, _MS, 0.15, 1.0, (_MS, _DH, _PS)),
     # Vesper Vale [guess all but gold]: farm 1.2 ranged (range 3, hits from outside melee monsters' reach) and the
     # best basic-attack scaling (+5 Str = +45 of 405 per cycle); gold 1.2 [rules] passive +20 % gold (1.4 with a
     # Treasure emblem: the turn loop should read the live value from her emblem later, not this constant);
@@ -62,20 +65,22 @@ PROFILES = {
     # Phases [user's plan 15 Oct: build Treasure + Monster, then hunt; numbers guess]: below 10 shards farm the gold
     # (farm 1.5, gold 3.0, kill 0.9, bank 1.1); from 10 shards (both emblems) hunt (farm 0.7, gold 1.0, kill 2.5,
     # bank 1.2). KILL_PER_SHARD (40_prices) still adds on top of kill.
+    # shop 2.0 below 10 shards [user plan 15 Oct, ladder 2; guess]: she buys instead of hoarding (sat on 170-276
+    # gold for 50-150 rounds with gold 3.0 out-pricing SHOP); 1.0 from 10 shards.
     1: _row(1.2, 1.6, 1.1, 0.9, 0.0, 1.0, 1.0, _TS, 0.17, 1.0, (_TS, _MS, _PS),
-            ((0, {"farm": 1.5, "gold": 3.0, "kill": 0.9, "bank": 1.1}),
-             (10, {"farm": 0.7, "gold": 1.0, "kill": 2.5, "bank": 1.2}))),
+            ((0, {"farm": 1.5, "gold": 3.0, "kill": 0.9, "bank": 1.1, "shop": 2.0}),
+             (10, {"farm": 0.7, "gold": 1.0, "kill": 2.5, "bank": 1.2, "shop": 1.0}))),
     # Stellar [guess all]: farm 1.5 spells deal ~77/turn vs 35 Str (2.2x), cut for cast-only-standing and 2 casts per
     # 8; bank 1.2 750 HP, fragile carrier; kill 1.2 235 burst at range 4 finishes carriers; hold 0.5 no stun;
     # join 1.2 area spell on groups, needs a frontline. Build: the default (Monster, Power Strength).
-    4: _row(1.5, 1.0, 1.2, 1.2, 0.5, 1.0, 1.2, _MS, 0.10, 1.0, _B_OTHER),
+    4: _row(1.5, 0.05, 1.2, 1.2, 0.5, 1.0, 1.2, _MS, 0.10, 1.0, _B_OTHER),
     # Stellar's row above stays in case the roster changes back. Not in our roster: neutral multipliers, default build
     # (Monster Strength, then Power Strength).
-    3: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Cassi & Issac
-    5: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Prism
-    7: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Willow
-    8: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Ren
-    10: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),    # Tavi
+    3: _row(1.0, 0.05, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Cassi & Issac
+    5: _row(1.0, 0.05, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Prism
+    7: _row(1.0, 0.05, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Willow
+    8: _row(1.0, 0.05, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Ren
+    10: _row(1.0, 0.05, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),    # Tavi
 }
 
 _TYPE_TO_DRAFT = (0, 1, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10)     # ChampionType -> ChampionDraft [sdk enums]

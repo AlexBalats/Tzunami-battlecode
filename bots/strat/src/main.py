@@ -815,25 +815,28 @@ _MS, _TS, _PS, _DH = (_IT.MONSTER_SHARD_OF_STRENGTH, _IT.TREASURE_SHARD_OF_STREN
 _B_OTHER = (_MS, _PS)        # [user decision 14 Oct] default build: Monster (farm speed), then Power (fights)
 
 
-NEUTRAL = _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.POWER_SHARD_OF_STRENGTH, 0.12, 1.0, _B_OTHER)   # starter's shard [guess gain]
+NEUTRAL = _row(1.0, 0.05, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.POWER_SHARD_OF_STRENGTH, 0.12, 1.0, _B_OTHER)   # starter's shard [guess gain]
 
 PROFILES = {
+    # gold 0.05 in every row but Vesper's [user plan 15 Oct, ladder 2]: all gold to Vesper. The others price a
+    # group's gold at ~0 (0.05 keeps gold-only groups above exactly 0), so the wolves / elks go to her (ladder: she
+    # held 0 gold at r50-150 while Ryth / Varg / Vendetta held 70-135).
     # Ryth [guess all]: farm 1.1 stun adds 1x Focus and hits connected monsters; bank 0.9 safest carrier (1200 HP),
     # can carry longer; kill 1.2 area stun holds the target (PRICES); hold 1.5 stun breaks channels (PRICES);
     # join 1.2 front body for pair takes and stun in fights. Item: Strength over the profile's Health shard,
     # for farm speed (+5 Str vs +1 Str per shard); Monster for +10% camp damage.
-    0: _row(1.1, 1.0, 0.9, 1.2, 1.5, 1.0, 1.2, _MS, 0.14, 1.0, (_MS, _DH, _PS)),
+    0: _row(1.1, 0.05, 0.9, 1.2, 1.5, 1.0, 1.2, _MS, 0.14, 1.0, (_MS, _DH, _PS)),
     # Vendetta [guess all]: farm 1.1 monster kills reset her reset (faster group clears); bank 1.1 800 HP and no
     # escape once the dash is spent, bank sooner; kill 1.3 dash closes, kill resets cooldowns (PRICES);
     # hold 0.5 no stun (PRICES says 0; a 10-gold lock still lets anyone break a channel).
-    2: _row(1.1, 1.0, 1.1, 1.3, 0.5, 1.0, 1.0, _PS, 0.12, 1.0, (_PS, _MS, _DH)),
+    2: _row(1.1, 0.05, 1.1, 1.3, 0.5, 1.0, 1.0, _PS, 0.12, 1.0, (_PS, _MS, _DH)),
     # Varg [guess all]: farm 1.3 splash = Strength on adjacent monsters, 2-3x on groups; kill 0.8 no mobility, no CC,
     # mediocre single target; hold 0.5 no stun; join 1.2 packs are where splash pays.
-    9: _row(1.3, 1.0, 1.0, 0.8, 0.5, 1.0, 1.2, _MS, 0.16, 1.0, (_MS, _PS, _DH)),
+    9: _row(1.3, 0.05, 1.0, 0.8, 0.5, 1.0, 1.2, _MS, 0.16, 1.0, (_MS, _PS, _DH)),
     # Marcella [guess all]: farm 1.1 2x Focus nuke on camps beyond her 45 Str; bank 0.8 stun-immune tributer, the
     # designated carrier; kill 1.1 enhanced attack stuns; hold 1.2 melee stun + immune to theirs; join 1.1 1200 HP
     # front body. Item: Strength (profile: Strength and Health), Monster for farm speed.
-    6: _row(1.1, 1.0, 0.8, 1.1, 1.2, 1.0, 1.1, _MS, 0.15, 1.0, (_MS, _DH, _PS)),
+    6: _row(1.1, 0.05, 0.8, 1.1, 1.2, 1.0, 1.1, _MS, 0.15, 1.0, (_MS, _DH, _PS)),
     # Vesper Vale [guess all but gold]: farm 1.2 ranged (range 3, hits from outside melee monsters' reach) and the
     # best basic-attack scaling (+5 Str = +45 of 405 per cycle); gold 1.2 [rules] passive +20 % gold (1.4 with a
     # Treasure emblem: the turn loop should read the live value from her emblem later, not this constant);
@@ -846,20 +849,22 @@ PROFILES = {
     # Phases [user's plan 15 Oct: build Treasure + Monster, then hunt; numbers guess]: below 10 shards farm the gold
     # (farm 1.5, gold 3.0, kill 0.9, bank 1.1); from 10 shards (both emblems) hunt (farm 0.7, gold 1.0, kill 2.5,
     # bank 1.2). KILL_PER_SHARD (40_prices) still adds on top of kill.
+    # shop 2.0 below 10 shards [user plan 15 Oct, ladder 2; guess]: she buys instead of hoarding (sat on 170-276
+    # gold for 50-150 rounds with gold 3.0 out-pricing SHOP); 1.0 from 10 shards.
     1: _row(1.2, 1.6, 1.1, 0.9, 0.0, 1.0, 1.0, _TS, 0.17, 1.0, (_TS, _MS, _PS),
-            ((0, {"farm": 1.5, "gold": 3.0, "kill": 0.9, "bank": 1.1}),
-             (10, {"farm": 0.7, "gold": 1.0, "kill": 2.5, "bank": 1.2}))),
+            ((0, {"farm": 1.5, "gold": 3.0, "kill": 0.9, "bank": 1.1, "shop": 2.0}),
+             (10, {"farm": 0.7, "gold": 1.0, "kill": 2.5, "bank": 1.2, "shop": 1.0}))),
     # Stellar [guess all]: farm 1.5 spells deal ~77/turn vs 35 Str (2.2x), cut for cast-only-standing and 2 casts per
     # 8; bank 1.2 750 HP, fragile carrier; kill 1.2 235 burst at range 4 finishes carriers; hold 0.5 no stun;
     # join 1.2 area spell on groups, needs a frontline. Build: the default (Monster, Power Strength).
-    4: _row(1.5, 1.0, 1.2, 1.2, 0.5, 1.0, 1.2, _MS, 0.10, 1.0, _B_OTHER),
+    4: _row(1.5, 0.05, 1.2, 1.2, 0.5, 1.0, 1.2, _MS, 0.10, 1.0, _B_OTHER),
     # Stellar's row above stays in case the roster changes back. Not in our roster: neutral multipliers, default build
     # (Monster Strength, then Power Strength).
-    3: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Cassi & Issac
-    5: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Prism
-    7: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Willow
-    8: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Ren
-    10: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),    # Tavi
+    3: _row(1.0, 0.05, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Cassi & Issac
+    5: _row(1.0, 0.05, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Prism
+    7: _row(1.0, 0.05, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Willow
+    8: _row(1.0, 0.05, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Ren
+    10: _row(1.0, 0.05, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),    # Tavi
 }
 
 _TYPE_TO_DRAFT = (0, 1, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10)     # ChampionType -> ChampionDraft [sdk enums]
@@ -1378,7 +1383,7 @@ WORLD = World()
 
 def opening_seed(w):
     """My entry of opening_slots (None past its end)."""
-    slots = opening_slots(w)
+    slots = opening_slots(w, 5)               # 5: the same list whatever roster I saw at boot
     return slots[w.slot] if w.slot < len(slots) else None
 
 
@@ -1396,25 +1401,38 @@ def ward_init(w):
         w.ward_pending.add(j)
 
 
-def opening_slots(w):
-    """Every champion computes the same list with no comms. Groups on our side (0) and contested (1), ranked by the
-    walk from our spawn (d_us; ties: higher value per round). Solo groups (need 1) first, one slot each; then pair groups
-    (need 2), two consecutive slots each (both bodies on the same pair). Slot i takes entry i, so pairs only get
-    slots once every champion before them has a solo group. Seeds only the first choice."""
-    solo, pair = [], []
+VESPER_ID = 1                # draft id of Vesper Vale (her slot takes a gold group first)
+
+
+def opening_slots(w, n):
+    """n DISTINCT group handles (slot i takes entry i); every champion computes the same list with no comms.
+    Groups on our side (0) and contested (1), ranked by the walk from our spawn (d_us; ties: higher value per round),
+    solo groups (need 1) first, then pair groups (need 2). [rule, 15 Oct ladder 2] Vesper's slot first takes the nearest
+    group with gold > 0 (one she can take alone if any: all gold to Vesper); no group is given to two slots (the
+    50x50 4-pick ladder map had one seedable group and three champions on it); when the list runs out, the
+    next-nearest unused reachable group of any need and side. Seeds only the first choice."""
+    solo, pair, rest = [], [], []
     for h in w.order:
         o = w.G[h]
-        if o.side > 1 or o.d_us >= 255 or o.need > 2:
+        if o.d_us >= 255:
             continue
         hp = sum(m[0] for m in o.mons)
-        cr = -(-hp // (CHAMP_STR * o.need))
+        cr = -(-hp // (CHAMP_STR * max(1, o.need)))
         key = (o.d_us, -(o.gems + g2g(1) * o.gold) / (o.d_us + cr + 1), h)
-        (solo if o.need <= 1 else pair).append(key)
+        (rest if o.side > 1 or o.need > 2 else solo if o.need <= 1 else pair).append(key)
     solo.sort()
     pair.sort()
-    slots = [k[2] for k in solo]
-    for k in pair:
-        slots += [k[2], k[2]]
+    rest.sort()
+    order = [k[2] for k in solo + pair + rest]
+    vs = w.roster.index(VESPER_ID) if VESPER_ID in w.roster else -1
+    vg = None
+    if 0 <= vs < n:
+        gold = sorted((w.G[h].side > 1, w.G[h].need > 1, w.G[h].d_us, h) for h in order if w.G[h].gold > 0)
+        vg = gold[0][3] if gold else None
+    slots, it = [], iter(h for h in order if h != vg)
+    for i in range(n):
+        slots.append(vg if i == vs and vg is not None else next(it, None))
+    assert len(set(h for h in slots if h is not None)) == sum(1 for h in slots if h is not None), "seed dup"
     return slots
 
 # ---- 40_prices.py ----
@@ -1443,10 +1461,11 @@ FUEL_FLOOR = 400_000        # after sensing: below this skip pricing, repeat the
 P_LOSE_MAX = 0.5            # [guess] FARM / BANK / KILL price 0 when the local Lanchester P(lose) exceeds this
 FARM_PLOSE = 0.99           # [tuned] off: 0.65 (2 v 1) lost corners and interlock (we must contest the centre)
 HOLD_PLOSE = 0.3            # [guess] HOLD needs a clearly safe altar
-KILL_PLOSE = 0.45           # [tuned] fight only when locally stronger (0.5 = even; 0.99 lost 9 champions in kills)
+KILL_PLOSE = 0.6            # [user plan 15 Oct, ladder 2; was 0.45 tuned] fight even and slightly worse local fights
+                            # (ladder: nobody fought back; 0.5 = even; 0.99 lost 9 champions in kills)
 DEATH_EXCL = 100            # rounds a death excludes its (option, target), and kill/hold after a kill/hold death
 DEATH_MARK = 100            # rounds the team avoids a group an ally died farming (byte 7)
-HEAL_K = 2.0                # [guess] (1.5 -> 2.0, 15 Oct ladder phase 1) HEAL: P(die) = clamp((1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, 0, 1)
+HEAL_K = 1.5                # [guess] (2.0 -> 1.5, 15 Oct ladder 2: 11 of 27 deaths healing at 316-644 HP) HEAL: P(die) = clamp((1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, 0, 1)
 MY_RATE = 0.4               # [guess] my gems per round, x 60 rounds out = what a death costs beyond the bag
 HOLD_TURNS = 2              # a new (option, target) is kept this many turns (unless done/failed, HEAL, retreat)
 WARD_VALUE = 4.0            # [guess] g/r of a ward placed at once (8 -> 4: at 8 it outranked every farm, 1-5 g/r)
@@ -1466,7 +1485,10 @@ STACK_N_FEW = 2             # [guess] regime few (small / one-choke maps): a pai
 STACK_R = 10                # FARM of groups within this of the stack's altar x STACK_FARM
 STACK_FARM = 0.2            # [guess] don't walk into the stack
 PUNISH_LEAD = 50            # ahead by more than this on score + a fresh small sighting -> punish
-STACK_HEAL = 0.6            # [guess] HEAL P(die) floor with >= 3 enemies within 8 and no ally within 5
+STACK_HEAL = 0.6            # [guess] HEAL P(die) floor with >= 3 enemies within 8, no ally within 5 and plose > HEAL_PLOSE
+HEAL_PLOSE = 0.5            # [user plan 15 Oct, ladder 2] HEAL prices 0 with an enemy within 8 while my local plose <= this
+JOIN_FIGHT_R = 10           # [user plan 15 Oct, ladder 2] allies within this of a fighting ally price JOIN on its fight
+JOIN_TTK = 3                # [guess] my hits to finish a fight target I cannot see (JOIN on a fight)
 # Posture columns: multipliers over the options (price *= POSTURE[col][key]), neutral 1.0, all [guess].
 # Selection (posture(), every champion locally, same inputs, no byte): draft regime few -> defend, pick / many /
 # unknown -> economy; a fresh sighting (<= SIGHT_FRESH rounds) of >= STACK_N enemies -> defend; a fresh one of <= 2
@@ -1963,14 +1985,18 @@ def price_all(w, s, cl, by):
     # HEAL: what a death costs (bag + 60 rounds of my farming) x P(die), over a recall (5) + the walk back out.
     # P(die) = (1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, clamped to [0, 1]; at least STACK_HEAL with >= 3
     # enemies within 8 and no ally within 5, even at full HP (HEAL is then "go home": the executor walks while an
-    # enemy is within 6 and recalls only once clear).
+    # enemy is within 6 and recalls only once clear), but only while s.plose > HEAL_PLOSE.
+    # [rule, 15 Oct ladder 2] an enemy within 8 and s.plose <= HEAL_PLOSE: HEAL 0, I can win or trade, fight instead
+    # (ladder: healthy champions ran from one enemy and took free hits). No enemy within 8: camp damage heals as before.
     ne8 = 0
     for e in s.enemies:
         if e[4] <= 8:
             ne8 += 1
     pdie = min(1.0, (1 - s.hp / s.maxhp) * (1 + ne8) * HEAL_K)
-    if ne8 >= 3 and not s.spawn and not any(a[1].chebyshev_distance(s.pos) <= 5 for a in s.allies):
+    if ne8 >= 3 and s.plose > HEAL_PLOSE and not s.spawn and not any(a[1].chebyshev_distance(s.pos) <= 5 for a in s.allies):
         pdie = max(pdie, STACK_HEAL)
+    if ne8 and s.plose <= HEAL_PLOSE:
+        pdie = 0
     if pdie > 0:
         wb = fget(w.F_home, s.pos) if w.F_home is not None else s.pos.chebyshev_distance(w.sp0)
         out.append((pdie * (s.bag + 60 * MY_RATE) / (5 + wb) * prof.get("heal", 1.0), "heal", 0))
@@ -2004,6 +2030,23 @@ def price_all(w, s, cl, by):
         gain = farm_price(w, s, h, b + 1, wk) * (b + 1) - max(0.0, lo)
         if gain > 0:
             out.append((gain / max(1, wk) * prof["join"] * pm["join"], "join", k))
+    # JOIN a fight [rule, 15 Oct ladder 2: nobody converged]: an ally within JOIN_FIGHT_R broadcasting kill (code 3) ->
+    # KILL's price with the ally and me in the Lanchester bodies, x POSTURE["defend"]["join"] whatever my posture.
+    # Target not in my vision: its spot = the ally's, bag 0, ttk JOIN_TTK. exec_join walks to the ally; KILL takes over.
+    for c, p, hp, st in s.allies:
+        k = w.ally_slot(c)
+        op, tg = by.get(k, (0, 0))
+        if op != 3 or not 2 < p.chebyshev_distance(s.pos) <= JOIN_FIGHT_R or r < w.kh_until:    # <= 2: there, KILL
+            continue
+        e = next((x for x in s.enemies if int(x[0]) & 31 == tg), None)
+        ep, eb, ttk = (e[1], e[3], -(-int(e[2]) // int(s.S))) if e else (p, 0, JOIN_TTK)
+        th = sum(x[2] * x[5] for x in s.enemies if x[1].chebyshev_distance(ep) <= 5)
+        us = s.hp * s.S + sum(a[2] * a[3] for a in s.allies if a[0] == c or a[1].chebyshev_distance(ep) <= 5)
+        pl = th / max(1.0, us + th)
+        if pl <= KILL_PLOSE:
+            v = eb + 50 * g2g(r) + DENIAL - pl * (s.bag + 60 * THEIR_RATE)
+            out.append((v / max(1, max(0, s.pos.chebyshev_distance(ep) - ME.get("range", 1)) + ttk) * kmul
+                        * POSTURE["defend"]["join"], "join", k))
     return out
 
 
@@ -2448,6 +2491,12 @@ def exec_shop(w, s, _t):
 
 def exec_join(w, s, k):
     b = s.mem[k] if k < 5 else 0
+    if (b & 7) == 3:                            # a fight (40_prices JOIN a fight): walk to the ally, then KILL
+        p = next((a[1] for a in s.allies if w.ally_slot(a[0]) == k), None)
+        if p is None or p.chebyshev_distance(s.pos) <= 2:
+            return "done"
+        w.step_near(p, 1, s)
+        return "going"
     if (b & 7) != 1 or (b >> 3) not in w.idx:
         return "failed"
     h = w.idx[b >> 3]
@@ -2777,6 +2826,8 @@ else:
                 w.seed, w.seed_until = seed, SEED_UNTIL   # choose keeps it until then unless HEAL / retreat (seeded)
                 trace("choice", f"farm {tname(w, 'farm', seed)} seed slot={w.slot}")
                 broadcast(w, s, 1)
+            if w.slot == 0 and TRACE:                     # the whole list (S = 5; S = 3 / 4 are its prefixes)
+                trace("choice", "seeds " + " ".join(tname(w, "farm", h) for h in opening_slots(w, 5)))
         except Exception as e:
             trace("err", "boot " + err_text(e))
         trace("boot", f"round1 fuel={f0 - fuel()} left={fuel()}")
