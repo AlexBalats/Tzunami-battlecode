@@ -16,7 +16,7 @@ DistanceField = cambc.DistanceField
 Team = cambc.Team
 fuel = cambc.fuel_remaining
 
-TRACE = 0                   # 0: no trace lines at all (ladder submissions)
+TRACE = 1                   # 0: no trace lines at all (ladder submissions)
 FAR = 65535                 # unreached in a DistanceField [sdk, measured]
 
 _TAG = ["?|draft"]
@@ -2105,6 +2105,8 @@ if cambc.is_draft():
 
     draft_main()
 else:
+    OSC_N = 16                                    # alternating moves between two tiles before `osc` fires
+
     def turn(w):
         fa = fuel()
         s = sense(w)
@@ -2148,6 +2150,20 @@ else:
             w.same = w.stay = 0
         if w.stay == 30:
             trace("stay", f"{s.pos.x},{s.pos.y} {w.cur[0]} {tname(w, w.cur[0], w.cur[1])} wait={int(flags[2])}")
+        # oscillation: back and forth between the same two tiles (moves that return to the previous distinct tile)
+        if exempt:
+            w.osc = 0
+        elif s.pos != w.pos:
+            w.osc = w.osc + 1 if s.pos == w.p2 else 0
+            w.p2 = w.pos
+        osc_hit = False
+        if w.osc >= OSC_N and not w.osc_fired:
+            w.osc_fired = osc_hit = True
+            ex = ",".join(f"{k[0]}:{tname(w, k[0], k[1])}" for k, v in w.excl.items() if v > r)
+            trace("osc", f"{s.pos.x},{s.pos.y}<->{w.p2.x},{w.p2.y} {w.cur[0]} {tname(w, w.cur[0], w.cur[1])} "
+                         f"wait={int(flags[2])} same={w.same} excl={ex or '-'} pair_until={w.pair_until}")
+        elif w.osc == 0:
+            w.osc_fired = False
         w.pos, w.bag_alive, w.hp_alive = s.pos, s.bag, s.hp
         w.ne_alive = len(s.enemies)
         if w.same >= 20 and w.status == "going":
@@ -2211,6 +2227,7 @@ else:
         w.ph = [0] * 3
         w.idle = 0
         w.pair_until = 0
+        w.osc, w.osc_fired, w.p2 = 0, False, None
         w.kh_until = 0
         w.score = (0, 0)
         w.act = [0] * 7                                   # mv atk cap chan wait idle dead (turns per tick)
@@ -2218,6 +2235,7 @@ else:
         errs = set()
         fu = []
         f0 = fuel()
+        trace("env", f"round={cambc.round_number()} fuel_at_start={f0} turn_budget={cambc.constants.FUEL_PER_TURN if hasattr(cambc.constants, 'FUEL_PER_TURN') else '?'}")
         try:
             me_init()                                     # 20_champs: ME facts, once (traces tag me)
             w.boot()

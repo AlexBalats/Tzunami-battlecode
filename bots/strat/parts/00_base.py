@@ -11,7 +11,7 @@ DistanceField = cambc.DistanceField
 Team = cambc.Team
 fuel = cambc.fuel_remaining
 
-TRACE = 0                   # 0: no trace lines at all (ladder submissions)
+TRACE = 1                   # 0: no trace lines at all (ladder submissions)
 FAR = 65535                 # unreached in a DistanceField [sdk, measured]
 
 _TAG = ["?|draft"]
