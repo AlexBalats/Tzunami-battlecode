@@ -52,6 +52,13 @@ class Grp:
                  "d_us", "d_them", "mi", "hp", "st", "until", "seen")
 
 
+def _uhp(u):
+    try:
+        return u.health()
+    except Exception as e:
+        return "?" + type(e).__name__
+
+
 class World:
     def boot(self):
         f0 = fuel()
@@ -238,9 +245,11 @@ class World:
     # ---- abilities ----
     def cast_init(self):
         """Slots by use: camp damage, champion damage, CC (ME['has_cc'] rule), attack reset."""
-        self.ab = []
+        self.ab, self.dash_ab = [], None
         try:
             for a in self.me.abilities():
+                if a.is_dash():
+                    self.dash_ab = a                # dash_to (ground target, 2 tiles [rules])
                 info = a.info()
                 if info is None:
                     continue
@@ -268,19 +277,63 @@ class World:
                         pass
         return False
 
-    def reset_attack(self, target):
-        """Attack-reset slots (self-cast), then a second basic attack."""
+    def reset_attack(self, target, pre=None):
+        """Attack-reset slots (self-cast), then a second basic attack. TRACE: `reset` line with the target's HP
+        before my first hit (pre), at cast and right after the second attack() (verification, 15 Oct); the next
+        turn's HP is traced by reset_check()."""
         for a, _c, _e, _cc, reset, _g in self.ab:
             if reset:
                 try:
                     if a.is_ready() and a.use(None):
-                        self.me.attack(target)
+                        h0 = _uhp(target) if TRACE else 0
+                        err = "-"
+                        try:
+                            ret = self.me.attack(target)
+                            err = f"ret={ret}"
+                        except Exception as e:
+                            err = "raise " + err_text(e)[:80]
+                        if TRACE:
+                            h1 = _uhp(target)
+                            self.rst = (target, pre, h0, cambc.round_number())
+                            trace("reset", f"tgt={int(target)} pre={pre} cast={h0} after2={h1} str={self.me.strength():.0f} "
+                                           f"{err} range={ME.get('range')}")
                         return True
                 except Exception:
                     pass
         return False
 
+    def reset_check(self):
+        """TRACE only: the target's HP one turn after a reset cast (see reset_attack)."""
+        rs = getattr(self, "rst", None)
+        if rs is None:
+            return
+        self.rst = None
+        t, pre, h0, r0 = rs
+        trace("reset", f"next tgt={int(t)} pre={pre} cast={h0} now={_uhp(t)} rounds={cambc.round_number() - r0}")
+
     # ---- movement ----
+    def dash_to(self, s, key, kind):
+        """[user plan 15 Oct] Dash (the is_dash slot, if ready) to the valid free tile with the lowest key(q) (None =
+        not a candidate); tries the best 4 (use() returns False on an unseen occupant, raises on a known bad tile).
+        On success s.pos is the landing tile; traces `dash`. True if I dashed."""
+        a = self.dash_ab
+        try:
+            if a is None or not a.is_ready():
+                return False
+            vt = a.valid_tiles() & ~(self.blk_nav | vision.champion_tiles())
+        except Exception:
+            return False
+        cand = sorted((k, q.x, q.y) for q in vt.positions() for k in (key(q),) if k is not None)
+        for _k, x, y in cand[:4]:
+            try:
+                if a.use(V(x, y)):
+                    trace("dash", f"{kind} {s.pos.x},{s.pos.y}->{x},{y}")
+                    s.pos = V(x, y)
+                    return True
+            except Exception:
+                pass
+        return False
+
     def move(self, q):
         try:
             ok = self.me.move_absolute(q)
@@ -325,7 +378,14 @@ class World:
     def step_to(self, key, s):
         if not s.can_move:
             return "blocked"
-        return self.step_field(self.goal(key), s.pos)
+        f = self.goal(key)
+        if s.near_e > 8 and self.cur[0] in ("farm", "bank", "ward", "hunt") and self.dash_ab is not None:
+            v = fget(f, s.pos)                  # TRAVERSE: 2 tiles down the field, then the normal step
+            if 2 < v < FAR and self.dash_to(s, lambda q: fget(f, q) if fget(f, q) <= v - 2 else None, "traverse"):
+                st = self.step_field(f, s.pos)
+                trace("dash", f"traverse then step={st}")
+                return st
+        return self.step_field(f, s.pos)
 
     def step_near(self, tiles, r, s):
         """Towards the tiles within r of tile(s) (a one-off compute_to, ~75k)."""

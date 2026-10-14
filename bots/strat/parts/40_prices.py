@@ -51,6 +51,14 @@ STACK_HEAL = 0.6            # [guess] HEAL P(die) floor with >= 3 enemies within
 HEAL_PLOSE = 0.5            # [user plan 15 Oct, ladder 2] HEAL prices 0 with an enemy within 8 while my local plose <= this
 JOIN_FIGHT_R = 10           # [user plan 15 Oct, ladder 2] allies within this of a fighting ally price JOIN on its fight
 JOIN_TTK = 3                # [guess] my hits to finish a fight target I cannot see (JOIN on a fight)
+LANCH_R = 8                 # [rule, 15 Oct ladder 3] Lanchester bodies: everyone within this of ME (was: within 5 of
+                            # the target; kills were approved, then 3 enemies arrived from 6-8 tiles)
+HEAL_LOW = 0.3              # [guess] below this HP fraction with an enemy within 8, HEAL P(die) >= HEAL_FLOOR
+HEAL_FLOOR = 0.8            # [guess] whatever plose says (ladder: farm 3.34 beat heal 2.96 at 10 HP, 44 bag, 2 enemies)
+HEAL_WB = 15                # [guess] HEAL divisor uses min(walk back, this): far from spawn must not zero the heal
+ENGAGED_HYST = 3.0          # [guess] farm -> another farm while a live monster of mine is within CAMP_R: needs 3x
+HUNT_BAG = 30               # [guess] expected bag of a sighted enemy (sighting hunt value)
+HUNT_MAX = 40               # rounds a sighting hunt walks before it gives up
 # Posture columns: multipliers over the options (price *= POSTURE[col][key]), neutral 1.0, all [guess].
 # Selection (posture(), every champion locally, same inputs, no byte): draft regime few -> defend, pick / many /
 # unknown -> economy; a fresh sighting (<= SIGHT_FRESH rounds) of >= STACK_N enemies -> defend; a fresh one of <= 2
@@ -78,6 +86,7 @@ OPT = ("idle", "farm", "bank", "kill", "hold", "shop", "join", "dead", "fall")
 CODE = {o: i for i, o in enumerate(OPT)}
 CODE["heal"] = 0            # broadcast as idle: the byte has no free code (7 is dead)
 CODE["ward"] = 0            # idle code with target = ward index + 1 (see broadcast)
+CODE["hunt"] = 3            # sighting hunt: broadcast as kill with target 31
 CLEAR_MEMO = {}
 
 
@@ -243,7 +252,7 @@ def danger_p(w, s):
     return 0.0
 
 
-def farm_price(w, s, h, bodies, walk):
+def farm_price(w, s, h, bodies, walk, c=None):
     o = w.G[h]
     if o.st == "resp" and o.until > s.r:
         return 0.0
@@ -267,7 +276,7 @@ def farm_price(w, s, h, bodies, walk):
     per = dmg / bodies + s.edps * min(clear + 5, 10)    # [tuned] + visible enemies hitting me (within 4)
     if per >= s.hp:
         return 0.0                                  # [deviation] certain death is not a price
-    miss = bodies - 1 - w.claims.get(h, 0)
+    miss = bodies - 1 - (w.claims.get(h, 0) if c is None else c)
     if miss > 0:
         walk += WAIT_PARTNER * miss                 # [guess] partners not committed yet
     risk = s.bag if s.hp - per < KEEP_HP * s.maxhp else s.P * s.bag   # [tuned] bag exposure (danger_p)
@@ -301,17 +310,23 @@ def need_k(w, s, h, c):
     return None
 
 
-def lanchester(s, e_pos):
-    """P(we lose) from sum(hp x str) within 5 of the target on each side [guess, PRICES S2]."""
-    us = s.hp * s.S if s.pos.chebyshev_distance(e_pos) <= 5 else 0
+def lanchester(s, e_pos=None):
+    """P(we lose) from sum(hp x str) of me + allies within LANCH_R of ME vs enemies within LANCH_R of ME [guess,
+    PRICES S2]. [rule, 15 Oct ladder 3] centred on me, not the target (e_pos is ignored, kept for callers)."""
+    us = s.hp * s.S
     for _c, p, hp, st in s.allies:
-        if p.chebyshev_distance(e_pos) <= 5:
+        if p.chebyshev_distance(s.pos) <= LANCH_R:
             us += hp * st
     th = 0
-    for _c, p, hp, _b, _d, st in s.enemies:
-        if p.chebyshev_distance(e_pos) <= 5:
+    for _c, _p, hp, _b, dd, st in s.enemies:
+        if dd <= LANCH_R:
             th += hp * st
     return th / max(1.0, us + th)
+
+
+def engaged(s, h):
+    """A live monster of group h is within CAMP_R of me (the camp is hitting me / I am attacking it)."""
+    return any(hp > 0 and p.chebyshev_distance(s.pos) <= CAMP_R for _c, hp, p, _st in s.live.get(h, ()))
 
 
 def stack_n(w):
@@ -457,6 +472,14 @@ def price_all(w, s, cl, by):
     for h in cand:
         o = w.G[h]
         c = cl.get(h, 0)
+        # [rule, 15 Oct ladder 3] one-way yield on need-1 groups: only a LOWER slot's claim zeroes it (w.lowcl), and
+        # a higher slot's claim is never a partner for me (it yields), so c = 0 (was: its claim made k = 2 with no
+        # WAIT_PARTNER, pulling the lower slot onto the higher slot's group every 2 rounds: a 30-round A,B,A,B swap
+        # on a 40x40 ladder map). Engaged on h (a live monster of h within CAMP_R): never yield it.
+        if o.need <= 1:
+            if h in w.lowcl and not (cur == ("farm", h) and engaged(s, h)):
+                continue
+            c = 0
         k = need_k(w, s, h, c)                  # bodies the live clear model needs, me + c claimants at least
         if k is None or (c == 0 and k >= 2 and r < w.pair_until):
             continue
@@ -467,8 +490,6 @@ def price_all(w, s, cl, by):
         # one then left it (collision A, open1), so the draft's need decides alone.
         # [rule, 15 Oct ladder phase 1] tie-break by roster slot: only an ally with a LOWER slot zeroes it (the lower
         # slot keeps it); a higher slot sees mine and yields, so simultaneous choices settle in one turn.
-        if o.need <= 1 and h in w.lowcl:
-            continue
         if h == dead_g or (s.plose > FARM_PLOSE and s.near_e <= 5):
             continue                            # an ally died farming it recently, or outnumbered here
         wk = w.walk_to(f"g{h}", s.pos)
@@ -476,7 +497,7 @@ def price_all(w, s, cl, by):
             wk = w.gd.get(h, FAR)
         if wk >= FAR:
             continue
-        p = farm_price(w, s, h, k, wk) * prof["farm"] * pm["farm_their_side" if o.side == 2 else "farm"]
+        p = farm_price(w, s, h, k, wk, c) * prof["farm"] * pm["farm_their_side" if o.side == 2 else "farm"]
         if sap is not None and o.anchor.chebyshev_distance(sap) <= STACK_R:
             p *= STACK_FARM                     # the stack was just seen there
         out.append((p, "farm", h))
@@ -510,6 +531,8 @@ def price_all(w, s, cl, by):
     # KILL: closable targets only
     reach = ME.get("range", 1) + 1 + (2 if ME.get("has_dash") else 0)
     kmul = prof["kill"] + KILL_PER_SHARD * w.shards     # scales with shards owned (read every 20 rounds, 90_main)
+    # [user plan 15 Oct, ladder 3; numbers guess] appetite: hurt or loaded champions bank / heal first
+    kmul *= min(1.0, s.hp / s.maxhp / 0.6) * max(0.3, 1 - s.bag / 100)
     for c, p, hp, bag, dd, st in s.enemies:
         ttk = -(-int(hp) // int(s.S))
         fin = ttk <= 2                          # finisher: dies in <= 2 of my hits
@@ -522,11 +545,13 @@ def price_all(w, s, cl, by):
             chan = stun = False
         # P8 finisher: a recall / tribute pins >= 5 turn ends and a walker gains <= 1 tile/turn [rules], so a
         # near-dead target within reach + 2 ttk + 2 is closable (ladder: a 1-HP enemy recalled 3 tiles away)
-        if not (chan or stun or dd <= reach or (fin and dd <= reach + 2 * ttk + 2)):
+        # [rule, 15 Oct ladder 3] HUNT: a phase's `hunt` tiles extend the reach (Vesper 12 from 15 shards); the
+        # walk is in rounds below and exec_kill gives up after the phase's `chase` rounds without closing
+        if not (chan or stun or dd <= reach + prof.get("hunt", 0) or (fin and dd <= reach + 2 * ttk + 2)):
             continue
         value = bag + 50 * g2g(r) + DENIAL
         rounds = max(0, dd - ME.get("range", 1)) + ttk
-        pl = lanchester(s, p)
+        pl = s.plose
         if pl > KILL_PLOSE:                     # tried 15 Oct: x min(1, hp/maxhp/0.5), x0.67 carrying > 40 [measured: worse]
             continue
         if fin:
@@ -535,6 +560,18 @@ def price_all(w, s, cl, by):
         # [deviation] (value - risk) / rounds: PRICES' value / rounds - risk subtracts gems from gems/round, so an
         # even fight never priced and farmers took hits without answering
         out.append(((value - risk) / max(1, rounds) * kmul * pm[e_side(w, p)], "kill", int(c)))
+    # HUNT a sighting [rule, 15 Oct ladder 3]: hunt phase only, nobody visible, fresh byte 5 -> walk to its altar.
+    # value = HUNT_BAG + 50 g2g + DENIAL [guess bag], rounds = walk + 5; Lanchester vs s.sc enemies at my base stats.
+    if (prof.get("hunt", 0) > 0 and not s.enemies and s.sc and s.sage <= SIGHT_FRESH and s.sa < len(w.apos)
+            and r >= w.kh_until):
+        a = s.sa
+        wk = w.walk_to(f"a{a}", s.pos)
+        if wk is None or wk >= FAR:
+            wk = s.pos.chebyshev_distance(w.apos[a])
+        us = s.hp * s.S + sum(x[2] * x[3] for x in s.allies if x[1].chebyshev_distance(s.pos) <= LANCH_R)
+        th = s.sc * ME.get("hp", s.maxhp) * ME.get("strength", s.S)
+        if th / max(1.0, us + th) <= KILL_PLOSE:
+            out.append(((HUNT_BAG + 50 * g2g(r) + DENIAL) / (wk + 5) * kmul, "hunt", a))
     # HOLD: contested altar, stun or lock gold, a fresh sighting there
     if s.sc and s.sage < SIGHT_LIVE:
         a = s.sa
@@ -559,9 +596,11 @@ def price_all(w, s, cl, by):
         pdie = max(pdie, STACK_HEAL)
     if ne8 and s.plose <= HEAL_PLOSE:
         pdie = 0
+    if ne8 and s.hp < HEAL_LOW * s.maxhp:
+        pdie = max(pdie, HEAL_FLOOR)            # [rule, 15 Oct ladder 3] low HP near an enemy: whatever plose says
     if pdie > 0:
         wb = fget(w.F_home, s.pos) if w.F_home is not None else s.pos.chebyshev_distance(w.sp0)
-        out.append((pdie * (s.bag + 60 * MY_RATE) / (5 + wb) * prof.get("heal", 1.0), "heal", 0))
+        out.append((pdie * (s.bag + 60 * MY_RATE) / (5 + min(wb, HEAL_WB)) * prof.get("heal", 1.0), "heal", 0))
     # SHOP
     item = ME.get("target") or prof["item"]      # current build target (set by buy_all), else the first entry
     try:
@@ -634,9 +673,10 @@ def seeded(w, s):
 
 def choose(w, s):
     """Argmax with a HOLD_TURNS hold, then hysteresis; returns True when the choice changed.
-    HEAL is locked only while actually recalling (90_main does not call choose during a channel); while it walks
-    away from enemies it is re-priced like any option. HEAL is never excluded (a death or timeout while healing
-    must not forbid the next heal)."""
+    [rule, 15 Oct ladder 3] the HOLD_TURNS hold applies to HEAL too (ladder: heal/kill/heal/bank/heal dither with a
+    44 bag); only retreat_now breaks it. Farm -> another farm while engaged (a live monster of my group within
+    CAMP_R) needs ENGAGED_HYST, not HYST. HEAL is never excluded (a death or timeout while healing must not forbid
+    the next heal)."""
     cur = w.cur
     cl, by = claims(w, s)
     w.claims = cl
@@ -656,8 +696,9 @@ def choose(w, s):
     if seeded(w, s) and best[1] != "heal" and not retreat_now(s):
         return False                            # the opening seed holds (only HEAL / retreat break it)
     going = curp is not None and curp > 0 and w.status == "going"
-    held = going and r - w.started < HOLD_TURNS and best[1] != "heal" and not retreat_now(s)
-    keep = held or (going and best[0] <= curp * HYST) or \
+    held = going and r - w.started < HOLD_TURNS and not retreat_now(s)
+    hy = ENGAGED_HYST if cur[0] == "farm" and best[1] == "farm" and best[2] != cur[1] and engaged(s, cur[1]) else HYST
+    keep = held or (going and best[0] <= curp * hy) or \
            (cur[0] == "fall" and best[1] == "fall" and w.status == "going")
     if keep:
         return False
@@ -678,7 +719,7 @@ def tname(w, op, tg):
     if op == "farm":
         o = w.G.get(tg)
         return f"g{tg}@{o.anchor.x},{o.anchor.y}" if o else str(tg)
-    if op in ("bank", "hold"):
+    if op in ("bank", "hold", "hunt"):
         return f"A{tg}"
     if op == "ward" and tg is not None and tg < len(w.wtiles):
         return f"W{tg}@{w.wtiles[tg].x},{w.wtiles[tg].y}"
@@ -698,7 +739,7 @@ def broadcast(w, s, code):
     if w.cur[0] == "ward" and w.cur[1] is not None:
         b = ((w.cur[1] + 1) & 31) << 3         # code 0, target = ward index + 1
     else:
-        b = code | (tbits(w, OPT[code], w.cur[1]) << 3 if 0 < code < 7 else 0)
+        b = code | ((31 if w.cur[0] == "hunt" else tbits(w, OPT[code], w.cur[1])) << 3 if 0 < code < 7 else 0)
     if b != w.sent:
         try:
             cambc.shared_memory[w.slot] = b

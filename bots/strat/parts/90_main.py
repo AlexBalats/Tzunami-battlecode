@@ -71,6 +71,8 @@ else:
         fa = fuel()
         s = sense(w)
         w.ph[0] = max(w.ph[0], fa - fuel())
+        if TRACE:
+            w.reset_check()                       # verification of the attack reset (30_world reset_attack)
         r = s.r
         flags = (w.attacked, w.capt, w.waiting)
         w.attacked = w.capt = w.waiting = w.moved = False
@@ -82,7 +84,7 @@ else:
                 w.was_alive = False
                 op, tg = w.cur
                 w.excl[w.cur] = r + DEATH_EXCL            # no re-entry where I just died
-                if op in ("kill", "hold"):
+                if op in ("kill", "hold", "hunt"):
                     w.kh_until = r + DEATH_EXCL
                 if op == "farm" and tg in w.G and w.G[tg].mi < 31:
                     try:                                  # team marker: avoid this group (byte 7: index + 1, stamp)

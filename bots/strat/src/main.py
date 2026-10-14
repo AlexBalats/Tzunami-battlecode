@@ -849,11 +849,14 @@ PROFILES = {
     # Phases [user's plan 15 Oct: build Treasure + Monster, then hunt; numbers guess]: below 10 shards farm the gold
     # (farm 1.5, gold 3.0, kill 0.9, bank 1.1); from 10 shards (both emblems) hunt (farm 0.7, gold 1.0, kill 2.5,
     # bank 1.2). KILL_PER_SHARD (40_prices) still adds on top of kill.
+    # [user plan 15 Oct, ladder 3; numbers guess] the hunt phase starts at 15 shards (three emblems, was 10): farm 0.4,
+    # gold 1.0, kill 2.5, bank 1.5 (was 1.2), shop 1.0, hunt 12 (KILL reach + 12 tiles), chase 8 (rounds exec_kill follows a
+    # target that does not get closer); she also hunts fresh sightings (40_prices). Keys hunt / chase: default 0 / 3.
     # shop 2.0 below 10 shards [user plan 15 Oct, ladder 2; guess]: she buys instead of hoarding (sat on 170-276
     # gold for 50-150 rounds with gold 3.0 out-pricing SHOP); 1.0 from 10 shards.
     1: _row(1.2, 1.6, 1.1, 0.9, 0.0, 1.0, 1.0, _TS, 0.17, 1.0, (_TS, _MS, _PS),
             ((0, {"farm": 1.5, "gold": 3.0, "kill": 0.9, "bank": 1.1, "shop": 2.0}),
-             (10, {"farm": 0.7, "gold": 1.0, "kill": 2.5, "bank": 1.2, "shop": 1.0}))),
+             (15, {"farm": 0.4, "gold": 1.0, "kill": 2.5, "bank": 1.5, "shop": 1.0, "hunt": 12, "chase": 8}))),
     # Stellar [guess all]: farm 1.5 spells deal ~77/turn vs 35 Str (2.2x), cut for cast-only-standing and 2 casts per
     # 8; bank 1.2 750 HP, fragile carrier; kill 1.2 235 burst at range 4 finishes carriers; hold 0.5 no stun;
     # join 1.2 area spell on groups, needs a frontline. Build: the default (Monster, Power Strength).
@@ -1047,6 +1050,13 @@ class Grp:
                  "d_us", "d_them", "mi", "hp", "st", "until", "seen")
 
 
+def _uhp(u):
+    try:
+        return u.health()
+    except Exception as e:
+        return "?" + type(e).__name__
+
+
 class World:
     def boot(self):
         f0 = fuel()
@@ -1233,9 +1243,11 @@ class World:
     # ---- abilities ----
     def cast_init(self):
         """Slots by use: camp damage, champion damage, CC (ME['has_cc'] rule), attack reset."""
-        self.ab = []
+        self.ab, self.dash_ab = [], None
         try:
             for a in self.me.abilities():
+                if a.is_dash():
+                    self.dash_ab = a                # dash_to (ground target, 2 tiles [rules])
                 info = a.info()
                 if info is None:
                     continue
@@ -1263,19 +1275,63 @@ class World:
                         pass
         return False
 
-    def reset_attack(self, target):
-        """Attack-reset slots (self-cast), then a second basic attack."""
+    def reset_attack(self, target, pre=None):
+        """Attack-reset slots (self-cast), then a second basic attack. TRACE: `reset` line with the target's HP
+        before my first hit (pre), at cast and right after the second attack() (verification, 15 Oct); the next
+        turn's HP is traced by reset_check()."""
         for a, _c, _e, _cc, reset, _g in self.ab:
             if reset:
                 try:
                     if a.is_ready() and a.use(None):
-                        self.me.attack(target)
+                        h0 = _uhp(target) if TRACE else 0
+                        err = "-"
+                        try:
+                            ret = self.me.attack(target)
+                            err = f"ret={ret}"
+                        except Exception as e:
+                            err = "raise " + err_text(e)[:80]
+                        if TRACE:
+                            h1 = _uhp(target)
+                            self.rst = (target, pre, h0, cambc.round_number())
+                            trace("reset", f"tgt={int(target)} pre={pre} cast={h0} after2={h1} str={self.me.strength():.0f} "
+                                           f"{err} range={ME.get('range')}")
                         return True
                 except Exception:
                     pass
         return False
 
+    def reset_check(self):
+        """TRACE only: the target's HP one turn after a reset cast (see reset_attack)."""
+        rs = getattr(self, "rst", None)
+        if rs is None:
+            return
+        self.rst = None
+        t, pre, h0, r0 = rs
+        trace("reset", f"next tgt={int(t)} pre={pre} cast={h0} now={_uhp(t)} rounds={cambc.round_number() - r0}")
+
     # ---- movement ----
+    def dash_to(self, s, key, kind):
+        """[user plan 15 Oct] Dash (the is_dash slot, if ready) to the valid free tile with the lowest key(q) (None =
+        not a candidate); tries the best 4 (use() returns False on an unseen occupant, raises on a known bad tile).
+        On success s.pos is the landing tile; traces `dash`. True if I dashed."""
+        a = self.dash_ab
+        try:
+            if a is None or not a.is_ready():
+                return False
+            vt = a.valid_tiles() & ~(self.blk_nav | vision.champion_tiles())
+        except Exception:
+            return False
+        cand = sorted((k, q.x, q.y) for q in vt.positions() for k in (key(q),) if k is not None)
+        for _k, x, y in cand[:4]:
+            try:
+                if a.use(V(x, y)):
+                    trace("dash", f"{kind} {s.pos.x},{s.pos.y}->{x},{y}")
+                    s.pos = V(x, y)
+                    return True
+            except Exception:
+                pass
+        return False
+
     def move(self, q):
         try:
             ok = self.me.move_absolute(q)
@@ -1320,7 +1376,14 @@ class World:
     def step_to(self, key, s):
         if not s.can_move:
             return "blocked"
-        return self.step_field(self.goal(key), s.pos)
+        f = self.goal(key)
+        if s.near_e > 8 and self.cur[0] in ("farm", "bank", "ward", "hunt") and self.dash_ab is not None:
+            v = fget(f, s.pos)                  # TRAVERSE: 2 tiles down the field, then the normal step
+            if 2 < v < FAR and self.dash_to(s, lambda q: fget(f, q) if fget(f, q) <= v - 2 else None, "traverse"):
+                st = self.step_field(f, s.pos)
+                trace("dash", f"traverse then step={st}")
+                return st
+        return self.step_field(f, s.pos)
 
     def step_near(self, tiles, r, s):
         """Towards the tiles within r of tile(s) (a one-off compute_to, ~75k)."""
@@ -1489,6 +1552,14 @@ STACK_HEAL = 0.6            # [guess] HEAL P(die) floor with >= 3 enemies within
 HEAL_PLOSE = 0.5            # [user plan 15 Oct, ladder 2] HEAL prices 0 with an enemy within 8 while my local plose <= this
 JOIN_FIGHT_R = 10           # [user plan 15 Oct, ladder 2] allies within this of a fighting ally price JOIN on its fight
 JOIN_TTK = 3                # [guess] my hits to finish a fight target I cannot see (JOIN on a fight)
+LANCH_R = 8                 # [rule, 15 Oct ladder 3] Lanchester bodies: everyone within this of ME (was: within 5 of
+                            # the target; kills were approved, then 3 enemies arrived from 6-8 tiles)
+HEAL_LOW = 0.3              # [guess] below this HP fraction with an enemy within 8, HEAL P(die) >= HEAL_FLOOR
+HEAL_FLOOR = 0.8            # [guess] whatever plose says (ladder: farm 3.34 beat heal 2.96 at 10 HP, 44 bag, 2 enemies)
+HEAL_WB = 15                # [guess] HEAL divisor uses min(walk back, this): far from spawn must not zero the heal
+ENGAGED_HYST = 3.0          # [guess] farm -> another farm while a live monster of mine is within CAMP_R: needs 3x
+HUNT_BAG = 30               # [guess] expected bag of a sighted enemy (sighting hunt value)
+HUNT_MAX = 40               # rounds a sighting hunt walks before it gives up
 # Posture columns: multipliers over the options (price *= POSTURE[col][key]), neutral 1.0, all [guess].
 # Selection (posture(), every champion locally, same inputs, no byte): draft regime few -> defend, pick / many /
 # unknown -> economy; a fresh sighting (<= SIGHT_FRESH rounds) of >= STACK_N enemies -> defend; a fresh one of <= 2
@@ -1516,6 +1587,7 @@ OPT = ("idle", "farm", "bank", "kill", "hold", "shop", "join", "dead", "fall")
 CODE = {o: i for i, o in enumerate(OPT)}
 CODE["heal"] = 0            # broadcast as idle: the byte has no free code (7 is dead)
 CODE["ward"] = 0            # idle code with target = ward index + 1 (see broadcast)
+CODE["hunt"] = 3            # sighting hunt: broadcast as kill with target 31
 CLEAR_MEMO = {}
 
 
@@ -1681,7 +1753,7 @@ def danger_p(w, s):
     return 0.0
 
 
-def farm_price(w, s, h, bodies, walk):
+def farm_price(w, s, h, bodies, walk, c=None):
     o = w.G[h]
     if o.st == "resp" and o.until > s.r:
         return 0.0
@@ -1705,7 +1777,7 @@ def farm_price(w, s, h, bodies, walk):
     per = dmg / bodies + s.edps * min(clear + 5, 10)    # [tuned] + visible enemies hitting me (within 4)
     if per >= s.hp:
         return 0.0                                  # [deviation] certain death is not a price
-    miss = bodies - 1 - w.claims.get(h, 0)
+    miss = bodies - 1 - (w.claims.get(h, 0) if c is None else c)
     if miss > 0:
         walk += WAIT_PARTNER * miss                 # [guess] partners not committed yet
     risk = s.bag if s.hp - per < KEEP_HP * s.maxhp else s.P * s.bag   # [tuned] bag exposure (danger_p)
@@ -1739,17 +1811,23 @@ def need_k(w, s, h, c):
     return None
 
 
-def lanchester(s, e_pos):
-    """P(we lose) from sum(hp x str) within 5 of the target on each side [guess, PRICES S2]."""
-    us = s.hp * s.S if s.pos.chebyshev_distance(e_pos) <= 5 else 0
+def lanchester(s, e_pos=None):
+    """P(we lose) from sum(hp x str) of me + allies within LANCH_R of ME vs enemies within LANCH_R of ME [guess,
+    PRICES S2]. [rule, 15 Oct ladder 3] centred on me, not the target (e_pos is ignored, kept for callers)."""
+    us = s.hp * s.S
     for _c, p, hp, st in s.allies:
-        if p.chebyshev_distance(e_pos) <= 5:
+        if p.chebyshev_distance(s.pos) <= LANCH_R:
             us += hp * st
     th = 0
-    for _c, p, hp, _b, _d, st in s.enemies:
-        if p.chebyshev_distance(e_pos) <= 5:
+    for _c, _p, hp, _b, dd, st in s.enemies:
+        if dd <= LANCH_R:
             th += hp * st
     return th / max(1.0, us + th)
+
+
+def engaged(s, h):
+    """A live monster of group h is within CAMP_R of me (the camp is hitting me / I am attacking it)."""
+    return any(hp > 0 and p.chebyshev_distance(s.pos) <= CAMP_R for _c, hp, p, _st in s.live.get(h, ()))
 
 
 def stack_n(w):
@@ -1895,6 +1973,14 @@ def price_all(w, s, cl, by):
     for h in cand:
         o = w.G[h]
         c = cl.get(h, 0)
+        # [rule, 15 Oct ladder 3] one-way yield on need-1 groups: only a LOWER slot's claim zeroes it (w.lowcl), and
+        # a higher slot's claim is never a partner for me (it yields), so c = 0 (was: its claim made k = 2 with no
+        # WAIT_PARTNER, pulling the lower slot onto the higher slot's group every 2 rounds: a 30-round A,B,A,B swap
+        # on a 40x40 ladder map). Engaged on h (a live monster of h within CAMP_R): never yield it.
+        if o.need <= 1:
+            if h in w.lowcl and not (cur == ("farm", h) and engaged(s, h)):
+                continue
+            c = 0
         k = need_k(w, s, h, c)                  # bodies the live clear model needs, me + c claimants at least
         if k is None or (c == 0 and k >= 2 and r < w.pair_until):
             continue
@@ -1905,8 +1991,6 @@ def price_all(w, s, cl, by):
         # one then left it (collision A, open1), so the draft's need decides alone.
         # [rule, 15 Oct ladder phase 1] tie-break by roster slot: only an ally with a LOWER slot zeroes it (the lower
         # slot keeps it); a higher slot sees mine and yields, so simultaneous choices settle in one turn.
-        if o.need <= 1 and h in w.lowcl:
-            continue
         if h == dead_g or (s.plose > FARM_PLOSE and s.near_e <= 5):
             continue                            # an ally died farming it recently, or outnumbered here
         wk = w.walk_to(f"g{h}", s.pos)
@@ -1914,7 +1998,7 @@ def price_all(w, s, cl, by):
             wk = w.gd.get(h, FAR)
         if wk >= FAR:
             continue
-        p = farm_price(w, s, h, k, wk) * prof["farm"] * pm["farm_their_side" if o.side == 2 else "farm"]
+        p = farm_price(w, s, h, k, wk, c) * prof["farm"] * pm["farm_their_side" if o.side == 2 else "farm"]
         if sap is not None and o.anchor.chebyshev_distance(sap) <= STACK_R:
             p *= STACK_FARM                     # the stack was just seen there
         out.append((p, "farm", h))
@@ -1948,6 +2032,8 @@ def price_all(w, s, cl, by):
     # KILL: closable targets only
     reach = ME.get("range", 1) + 1 + (2 if ME.get("has_dash") else 0)
     kmul = prof["kill"] + KILL_PER_SHARD * w.shards     # scales with shards owned (read every 20 rounds, 90_main)
+    # [user plan 15 Oct, ladder 3; numbers guess] appetite: hurt or loaded champions bank / heal first
+    kmul *= min(1.0, s.hp / s.maxhp / 0.6) * max(0.3, 1 - s.bag / 100)
     for c, p, hp, bag, dd, st in s.enemies:
         ttk = -(-int(hp) // int(s.S))
         fin = ttk <= 2                          # finisher: dies in <= 2 of my hits
@@ -1960,11 +2046,13 @@ def price_all(w, s, cl, by):
             chan = stun = False
         # P8 finisher: a recall / tribute pins >= 5 turn ends and a walker gains <= 1 tile/turn [rules], so a
         # near-dead target within reach + 2 ttk + 2 is closable (ladder: a 1-HP enemy recalled 3 tiles away)
-        if not (chan or stun or dd <= reach or (fin and dd <= reach + 2 * ttk + 2)):
+        # [rule, 15 Oct ladder 3] HUNT: a phase's `hunt` tiles extend the reach (Vesper 12 from 15 shards); the
+        # walk is in rounds below and exec_kill gives up after the phase's `chase` rounds without closing
+        if not (chan or stun or dd <= reach + prof.get("hunt", 0) or (fin and dd <= reach + 2 * ttk + 2)):
             continue
         value = bag + 50 * g2g(r) + DENIAL
         rounds = max(0, dd - ME.get("range", 1)) + ttk
-        pl = lanchester(s, p)
+        pl = s.plose
         if pl > KILL_PLOSE:                     # tried 15 Oct: x min(1, hp/maxhp/0.5), x0.67 carrying > 40 [measured: worse]
             continue
         if fin:
@@ -1973,6 +2061,18 @@ def price_all(w, s, cl, by):
         # [deviation] (value - risk) / rounds: PRICES' value / rounds - risk subtracts gems from gems/round, so an
         # even fight never priced and farmers took hits without answering
         out.append(((value - risk) / max(1, rounds) * kmul * pm[e_side(w, p)], "kill", int(c)))
+    # HUNT a sighting [rule, 15 Oct ladder 3]: hunt phase only, nobody visible, fresh byte 5 -> walk to its altar.
+    # value = HUNT_BAG + 50 g2g + DENIAL [guess bag], rounds = walk + 5; Lanchester vs s.sc enemies at my base stats.
+    if (prof.get("hunt", 0) > 0 and not s.enemies and s.sc and s.sage <= SIGHT_FRESH and s.sa < len(w.apos)
+            and r >= w.kh_until):
+        a = s.sa
+        wk = w.walk_to(f"a{a}", s.pos)
+        if wk is None or wk >= FAR:
+            wk = s.pos.chebyshev_distance(w.apos[a])
+        us = s.hp * s.S + sum(x[2] * x[3] for x in s.allies if x[1].chebyshev_distance(s.pos) <= LANCH_R)
+        th = s.sc * ME.get("hp", s.maxhp) * ME.get("strength", s.S)
+        if th / max(1.0, us + th) <= KILL_PLOSE:
+            out.append(((HUNT_BAG + 50 * g2g(r) + DENIAL) / (wk + 5) * kmul, "hunt", a))
     # HOLD: contested altar, stun or lock gold, a fresh sighting there
     if s.sc and s.sage < SIGHT_LIVE:
         a = s.sa
@@ -1997,9 +2097,11 @@ def price_all(w, s, cl, by):
         pdie = max(pdie, STACK_HEAL)
     if ne8 and s.plose <= HEAL_PLOSE:
         pdie = 0
+    if ne8 and s.hp < HEAL_LOW * s.maxhp:
+        pdie = max(pdie, HEAL_FLOOR)            # [rule, 15 Oct ladder 3] low HP near an enemy: whatever plose says
     if pdie > 0:
         wb = fget(w.F_home, s.pos) if w.F_home is not None else s.pos.chebyshev_distance(w.sp0)
-        out.append((pdie * (s.bag + 60 * MY_RATE) / (5 + wb) * prof.get("heal", 1.0), "heal", 0))
+        out.append((pdie * (s.bag + 60 * MY_RATE) / (5 + min(wb, HEAL_WB)) * prof.get("heal", 1.0), "heal", 0))
     # SHOP
     item = ME.get("target") or prof["item"]      # current build target (set by buy_all), else the first entry
     try:
@@ -2072,9 +2174,10 @@ def seeded(w, s):
 
 def choose(w, s):
     """Argmax with a HOLD_TURNS hold, then hysteresis; returns True when the choice changed.
-    HEAL is locked only while actually recalling (90_main does not call choose during a channel); while it walks
-    away from enemies it is re-priced like any option. HEAL is never excluded (a death or timeout while healing
-    must not forbid the next heal)."""
+    [rule, 15 Oct ladder 3] the HOLD_TURNS hold applies to HEAL too (ladder: heal/kill/heal/bank/heal dither with a
+    44 bag); only retreat_now breaks it. Farm -> another farm while engaged (a live monster of my group within
+    CAMP_R) needs ENGAGED_HYST, not HYST. HEAL is never excluded (a death or timeout while healing must not forbid
+    the next heal)."""
     cur = w.cur
     cl, by = claims(w, s)
     w.claims = cl
@@ -2094,8 +2197,9 @@ def choose(w, s):
     if seeded(w, s) and best[1] != "heal" and not retreat_now(s):
         return False                            # the opening seed holds (only HEAL / retreat break it)
     going = curp is not None and curp > 0 and w.status == "going"
-    held = going and r - w.started < HOLD_TURNS and best[1] != "heal" and not retreat_now(s)
-    keep = held or (going and best[0] <= curp * HYST) or \
+    held = going and r - w.started < HOLD_TURNS and not retreat_now(s)
+    hy = ENGAGED_HYST if cur[0] == "farm" and best[1] == "farm" and best[2] != cur[1] and engaged(s, cur[1]) else HYST
+    keep = held or (going and best[0] <= curp * hy) or \
            (cur[0] == "fall" and best[1] == "fall" and w.status == "going")
     if keep:
         return False
@@ -2116,7 +2220,7 @@ def tname(w, op, tg):
     if op == "farm":
         o = w.G.get(tg)
         return f"g{tg}@{o.anchor.x},{o.anchor.y}" if o else str(tg)
-    if op in ("bank", "hold"):
+    if op in ("bank", "hold", "hunt"):
         return f"A{tg}"
     if op == "ward" and tg is not None and tg < len(w.wtiles):
         return f"W{tg}@{w.wtiles[tg].x},{w.wtiles[tg].y}"
@@ -2136,7 +2240,7 @@ def broadcast(w, s, code):
     if w.cur[0] == "ward" and w.cur[1] is not None:
         b = ((w.cur[1] + 1) & 31) << 3         # code 0, target = ward index + 1
     else:
-        b = code | (tbits(w, OPT[code], w.cur[1]) << 3 if 0 < code < 7 else 0)
+        b = code | ((31 if w.cur[0] == "hunt" else tbits(w, OPT[code], w.cur[1])) << 3 if 0 < code < 7 else 0)
     if b != w.sent:
         try:
             cambc.shared_memory[w.slot] = b
@@ -2207,7 +2311,9 @@ def _set_cur(self, new, r, s):
     elif op == "join" and tg is not None:
         walk = 20
     elif op == "kill":
-        walk = 6
+        walk = 6 + ME["prof"].get("hunt", 0)
+    elif op == "hunt":
+        walk = HUNT_MAX
     elif op == "fall":
         walk = 15
     elif op == "heal":
@@ -2260,6 +2366,7 @@ def safe_recall(w, s):
             trace("exec", "cancel_recall " + err_text(e))
             return "going"
     if ne:
+        dash_escape(w, s, ne)
         if w.step_flee(s, ne) == "blocked":
             w.step_to("home", s)
         return "going"
@@ -2272,6 +2379,14 @@ def safe_recall(w, s):
     except Exception:
         w.step_to("home", s)
     return "going"
+
+
+def dash_escape(w, s, ne):
+    """ESCAPE [user plan 15 Oct]: an enemy within 2 -> dash to the tile farthest from the nearest enemy (capped 7),
+    ties down the home field."""
+    if s.near_e <= 2 and w.dash_ab is not None:
+        hf = w.home_field()
+        w.dash_to(s, lambda q: (-min(7, min(q.chebyshev_distance(p) for p in ne)), fget(hf, q)), "escape")
 
 
 def partners_near(w, s, h):
@@ -2324,7 +2439,7 @@ def exec_farm(w, s, h):
             try:
                 w.me.attack(c)
                 w.attacked = True
-                w.reset_attack(c)
+                w.reset_attack(c, tgt[0][0])
             except Exception:
                 pass
             if s.st & 0x800:                     # CAN_CAST
@@ -2411,7 +2526,7 @@ def exec_kill(w, s, hd):
         if s.can_attack:
             try:
                 w.me.attack(c)
-                w.reset_attack(c)
+                w.reset_attack(c, hp)
             except Exception:
                 pass
         if s.st & 0x800:
@@ -2420,14 +2535,36 @@ def exec_kill(w, s, hd):
     if dd >= w.kd:
         w.kn += 1
         ttk = -(-int(hp) // int(s.S))
-        if w.kn >= (2 * ttk + 2 if ttk <= 2 else 3):   # a finisher chase gets 2 ttk + 2 rounds (pinned / 1 tile/turn)
+        # a finisher chase gets 2 ttk + 2 rounds (pinned / 1 tile/turn); else the phase's `chase` (default 3)
+        if w.kn >= (2 * ttk + 2 if ttk <= 2 else ME["prof"].get("chase", 3)):
             return "failed"
     else:
         w.kn = 0
     w.kd = dd
+    # CLOSE [user plan 15 Oct]: 1-2 tiles beyond range -> dash into range (farthest such tile), then try the attack
+    if rng < dd <= rng + 2 and w.dash_to(s, lambda q: -q.chebyshev_distance(p) if q.chebyshev_distance(p) <= rng else None, "close"):
+        res = "no-attack"
+        try:
+            w.me.attack(c)
+            w.attacked, res = True, f"attacked hp {hp:.0f}->{_uhp(c)}"
+        except Exception as ex:
+            res = "raise " + err_text(ex)[:60]
+        trace("dash", f"close then {res}")
+        return "going"
     if s.st & 0x800:
         w.cast(c, False)                        # dashes and ranged spells close the gap
     w.step_near(p, rng, s)
+    return "going"
+
+
+def exec_hunt(w, s, a):
+    """Walk toward the sighting's altar a; done once an enemy is visible (KILL prices it); failed (excluded EXCL
+    rounds) on arrival with nobody there or after HUNT_MAX rounds."""
+    if s.enemies:
+        return "done"
+    if s.r - w.started >= HUNT_MAX or s.pos.chebyshev_distance(w.apos[a]) <= 2:
+        return "failed"
+    w.step_to(f"a{a}", s)
     return "going"
 
 
@@ -2533,6 +2670,7 @@ def exec_fall(w, s, _t):
     if near and not s.spawn:
         if retreat_now(s):
             if s.near_e <= 3:                   # retreat: out of their reach first, recall once clear
+                dash_escape(w, s, [e[1] for e in near])
                 w.step_away(s, [e[1] for e in near])
                 return "going"
             return safe_recall(w, s)
@@ -2591,7 +2729,7 @@ def exec_ward(w, s, j):
 
 
 EXEC = {"farm": exec_farm, "bank": exec_bank, "kill": exec_kill, "hold": exec_hold, "shop": exec_shop,
-        "join": exec_join, "fall": exec_fall, "heal": exec_heal, "ward": exec_ward}
+        "join": exec_join, "fall": exec_fall, "heal": exec_heal, "ward": exec_ward, "hunt": exec_hunt}
 
 # ---- 90_main.py ----
 """Entry. Draft: pick on every draft turn (Varg, Vesper Vale, Ryth, Vendetta, Marcella), run the model stages under
@@ -2667,6 +2805,8 @@ else:
         fa = fuel()
         s = sense(w)
         w.ph[0] = max(w.ph[0], fa - fuel())
+        if TRACE:
+            w.reset_check()                       # verification of the attack reset (30_world reset_attack)
         r = s.r
         flags = (w.attacked, w.capt, w.waiting)
         w.attacked = w.capt = w.waiting = w.moved = False
@@ -2678,7 +2818,7 @@ else:
                 w.was_alive = False
                 op, tg = w.cur
                 w.excl[w.cur] = r + DEATH_EXCL            # no re-entry where I just died
-                if op in ("kill", "hold"):
+                if op in ("kill", "hold", "hunt"):
                     w.kh_until = r + DEATH_EXCL
                 if op == "farm" and tg in w.G and w.G[tg].mi < 31:
                     try:                                  # team marker: avoid this group (byte 7: index + 1, stamp)

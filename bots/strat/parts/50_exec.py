@@ -27,7 +27,9 @@ def _set_cur(self, new, r, s):
     elif op == "join" and tg is not None:
         walk = 20
     elif op == "kill":
-        walk = 6
+        walk = 6 + ME["prof"].get("hunt", 0)
+    elif op == "hunt":
+        walk = HUNT_MAX
     elif op == "fall":
         walk = 15
     elif op == "heal":
@@ -80,6 +82,7 @@ def safe_recall(w, s):
             trace("exec", "cancel_recall " + err_text(e))
             return "going"
     if ne:
+        dash_escape(w, s, ne)
         if w.step_flee(s, ne) == "blocked":
             w.step_to("home", s)
         return "going"
@@ -92,6 +95,14 @@ def safe_recall(w, s):
     except Exception:
         w.step_to("home", s)
     return "going"
+
+
+def dash_escape(w, s, ne):
+    """ESCAPE [user plan 15 Oct]: an enemy within 2 -> dash to the tile farthest from the nearest enemy (capped 7),
+    ties down the home field."""
+    if s.near_e <= 2 and w.dash_ab is not None:
+        hf = w.home_field()
+        w.dash_to(s, lambda q: (-min(7, min(q.chebyshev_distance(p) for p in ne)), fget(hf, q)), "escape")
 
 
 def partners_near(w, s, h):
@@ -144,7 +155,7 @@ def exec_farm(w, s, h):
             try:
                 w.me.attack(c)
                 w.attacked = True
-                w.reset_attack(c)
+                w.reset_attack(c, tgt[0][0])
             except Exception:
                 pass
             if s.st & 0x800:                     # CAN_CAST
@@ -231,7 +242,7 @@ def exec_kill(w, s, hd):
         if s.can_attack:
             try:
                 w.me.attack(c)
-                w.reset_attack(c)
+                w.reset_attack(c, hp)
             except Exception:
                 pass
         if s.st & 0x800:
@@ -240,14 +251,36 @@ def exec_kill(w, s, hd):
     if dd >= w.kd:
         w.kn += 1
         ttk = -(-int(hp) // int(s.S))
-        if w.kn >= (2 * ttk + 2 if ttk <= 2 else 3):   # a finisher chase gets 2 ttk + 2 rounds (pinned / 1 tile/turn)
+        # a finisher chase gets 2 ttk + 2 rounds (pinned / 1 tile/turn); else the phase's `chase` (default 3)
+        if w.kn >= (2 * ttk + 2 if ttk <= 2 else ME["prof"].get("chase", 3)):
             return "failed"
     else:
         w.kn = 0
     w.kd = dd
+    # CLOSE [user plan 15 Oct]: 1-2 tiles beyond range -> dash into range (farthest such tile), then try the attack
+    if rng < dd <= rng + 2 and w.dash_to(s, lambda q: -q.chebyshev_distance(p) if q.chebyshev_distance(p) <= rng else None, "close"):
+        res = "no-attack"
+        try:
+            w.me.attack(c)
+            w.attacked, res = True, f"attacked hp {hp:.0f}->{_uhp(c)}"
+        except Exception as ex:
+            res = "raise " + err_text(ex)[:60]
+        trace("dash", f"close then {res}")
+        return "going"
     if s.st & 0x800:
         w.cast(c, False)                        # dashes and ranged spells close the gap
     w.step_near(p, rng, s)
+    return "going"
+
+
+def exec_hunt(w, s, a):
+    """Walk toward the sighting's altar a; done once an enemy is visible (KILL prices it); failed (excluded EXCL
+    rounds) on arrival with nobody there or after HUNT_MAX rounds."""
+    if s.enemies:
+        return "done"
+    if s.r - w.started >= HUNT_MAX or s.pos.chebyshev_distance(w.apos[a]) <= 2:
+        return "failed"
+    w.step_to(f"a{a}", s)
     return "going"
 
 
@@ -353,6 +386,7 @@ def exec_fall(w, s, _t):
     if near and not s.spawn:
         if retreat_now(s):
             if s.near_e <= 3:                   # retreat: out of their reach first, recall once clear
+                dash_escape(w, s, [e[1] for e in near])
                 w.step_away(s, [e[1] for e in near])
                 return "going"
             return safe_recall(w, s)
@@ -411,4 +445,4 @@ def exec_ward(w, s, j):
 
 
 EXEC = {"farm": exec_farm, "bank": exec_bank, "kill": exec_kill, "hold": exec_hold, "shop": exec_shop,
-        "join": exec_join, "fall": exec_fall, "heal": exec_heal, "ward": exec_ward}
+        "join": exec_join, "fall": exec_fall, "heal": exec_heal, "ward": exec_ward, "hunt": exec_hunt}

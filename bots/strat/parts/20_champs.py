@@ -65,11 +65,14 @@ PROFILES = {
     # Phases [user's plan 15 Oct: build Treasure + Monster, then hunt; numbers guess]: below 10 shards farm the gold
     # (farm 1.5, gold 3.0, kill 0.9, bank 1.1); from 10 shards (both emblems) hunt (farm 0.7, gold 1.0, kill 2.5,
     # bank 1.2). KILL_PER_SHARD (40_prices) still adds on top of kill.
+    # [user plan 15 Oct, ladder 3; numbers guess] the hunt phase starts at 15 shards (three emblems, was 10): farm 0.4,
+    # gold 1.0, kill 2.5, bank 1.5 (was 1.2), shop 1.0, hunt 12 (KILL reach + 12 tiles), chase 8 (rounds exec_kill follows a
+    # target that does not get closer); she also hunts fresh sightings (40_prices). Keys hunt / chase: default 0 / 3.
     # shop 2.0 below 10 shards [user plan 15 Oct, ladder 2; guess]: she buys instead of hoarding (sat on 170-276
     # gold for 50-150 rounds with gold 3.0 out-pricing SHOP); 1.0 from 10 shards.
     1: _row(1.2, 1.6, 1.1, 0.9, 0.0, 1.0, 1.0, _TS, 0.17, 1.0, (_TS, _MS, _PS),
             ((0, {"farm": 1.5, "gold": 3.0, "kill": 0.9, "bank": 1.1, "shop": 2.0}),
-             (10, {"farm": 0.7, "gold": 1.0, "kill": 2.5, "bank": 1.2, "shop": 1.0}))),
+             (15, {"farm": 0.4, "gold": 1.0, "kill": 2.5, "bank": 1.5, "shop": 1.0, "hunt": 12, "chase": 8}))),
     # Stellar [guess all]: farm 1.5 spells deal ~77/turn vs 35 Str (2.2x), cut for cast-only-standing and 2 casts per
     # 8; bank 1.2 750 HP, fragile carrier; kill 1.2 235 burst at range 4 finishes carriers; hold 0.5 no stun;
     # join 1.2 area spell on groups, needs a frontline. Build: the default (Monster, Power Strength).

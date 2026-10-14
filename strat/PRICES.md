@@ -76,7 +76,22 @@ price  = value / rounds − risk
   `rounds = ∞` (user rule: never a hunt). The chase question goes to `SCENARIOS.md` (S1).
 - Being killed costs us the same value: that is why RETREAT is not an option here but a risk term in every
   price; when every price goes negative, the champion recalls or walks home (the executor's fallback).
-- `P(we lose)` from Lanchester power `Σ HP × S` of the bodies within 5 of e on each side **[guess]**; S2.
+- `P(we lose)` from Lanchester power `Σ HP × S` of me + allies within 8 of ME vs enemies within 8 of ME **[guess]**
+  (`LANCH_R` 8; was within 5 of e: ladder 3, kills approved then 3 enemies arrived from 6-8 tiles); S2.
+- **HUNT** [user plan 15 Oct, ladder 3; numbers guess]: profile keys `hunt` (tiles, default 0) and `chase` (rounds,
+  default 3). A target is also closable when `dd <= reach + hunt` (rounds = walk beyond range + ttk, as above), and
+  `exec_kill` gives up after `chase` rounds without getting closer. Only Vesper's 15-shard phase sets them (12 / 8),
+  so "never a hunt" still holds for everyone else.
+- **Sighting hunt** (hunt > 0 only): no enemy visible and a fresh sighting (byte 5, age <= 8 rounds) -> option `hunt`
+  to the sighting's altar: value `30 + 50 × G2G + denial` (30 = guessed bag), rounds = walk + 5, × the KILL
+  multiplier; gated by Lanchester against the sighted count at my base stats. Broadcast as kill, target 31. The
+  executor walks to the altar; done when an enemy is visible (KILL takes over), failed on arrival or after 40 rounds.
+- **Appetite** [user plan 15 Oct, ladder 3; guess], every champion: the KILL multiplier (KILL, JOIN a fight, hunt)
+  × `min(1, (hp/maxhp) / 0.6) × max(0.3, 1 − bag/100)`: hurt or loaded champions bank / heal first.
+- **Dash** (micro, every champion with an `is_dash()` slot, when ready; `World.dash_to`): CLOSE in `exec_kill` when
+  the target is 1-2 tiles beyond range (land in range, then attack: works [measured 15 Oct, 139 of 157 dashes hit]);
+  ESCAPE in `safe_recall` / the fallback retreat with an enemy within 2; TRAVERSE in farm / bank / ward / hunt walks
+  with no enemy within 8 (2 tiles down the goal field, then the normal step: works [measured]).
 
 ### 4. HOLD(a): stand at altar a to break or deter enemy tributes
 
@@ -115,8 +130,8 @@ price  = value / rounds
 
 | Multiplier on | Why | Example |
 | --- | --- | --- |
-| `FARM` gold term | all gold to Vesper [user plan 15 Oct, ladder 2]: she converts gold fastest (Treasure emblem +20 % gold, the shard plan) | Vesper ×3.0 below 10 shards, ×1.0 after (phases, below); **every other row ×0.05** (was 1.0; 0.05 keeps gold-only groups above exactly 0) |
-| `SHOP` | Vesper buys instead of hoarding in her build phase [user plan 15 Oct, ladder 2; guess] | Vesper ×2.0 below 10 shards, ×1.0 after; others ×1.0 |
+| `FARM` gold term | all gold to Vesper [user plan 15 Oct, ladder 2]: she converts gold fastest (Treasure emblem +20 % gold, the shard plan) | Vesper ×3.0 below 15 shards, ×1.0 after (phases, below); **every other row ×0.05** (was 1.0; 0.05 keeps gold-only groups above exactly 0) |
+| `SHOP` | Vesper buys instead of hoarding in her build phase [user plan 15 Oct, ladder 2; guess] | Vesper ×2.0 below 15 shards, ×1.0 after; others ×1.0 |
 | `KILL` | kit that closes (dash, stun) or snowballs | Vendetta ×1.3, Ryth ×1.2 on channelling targets |
 | `HOLD` | kit with a stun / lock carrier | Ryth ×1.5, others ×0 |
 | `BANK` risk | map mode: contested altars raise risk | contested map: risk ×2 |
@@ -143,7 +158,7 @@ from the champion profiles. Strength-only clear maths misses spells, splash and 
 | Vendetta | Power Str, Monster Str, Durability Health | +45 of 630 (7 %) | 0.12 | profile: Strength + Monster emblem |
 | Varg | Monster Str, Power Str, Durability Health | +45 of 450 (10 %), splash scales too | 0.16 | profile: Strength + Monster emblem |
 | Marcella | Monster Str, Durability Health, Power Str | +45 of 505 (9 %) | 0.15 | profile: Strength (+Health); Monster for camps |
-| Vesper Vale | Treasure Str, Monster Str, Power Str | +45 of 405 (11 %) | 0.17 | [user decision 14 Oct] Treasure first: the gold snowball (+20 % passive becomes +40 % with the emblem), then Monster for farm speed, Power for fights. Her gold bonus is the `gold` multiplier, not item_gain. **Phases** [user's plan 15 Oct, numbers guess]: base row farm 1.2, gold 1.6, bank 1.1, kill 0.9; below 10 shards farm 1.5, gold 3.0, kill 0.9, bank 1.1, shop 2.0 (build Treasure + Monster); from 10 shards farm 0.7, gold 1.0, kill 2.5, bank 1.2, shop 1.0 (hunt). Opening seed: her slot takes the nearest gold group first (`opening_slots`). Re-applied every 20 rounds with the shard read; `KILL_PER_SHARD` 0.15 still adds on top |
+| Vesper Vale | Treasure Str, Monster Str, Power Str | +45 of 405 (11 %) | 0.17 | [user decision 14 Oct] Treasure first: the gold snowball (+20 % passive becomes +40 % with the emblem), then Monster for farm speed, Power for fights. Her gold bonus is the `gold` multiplier, not item_gain. **Phases** [user's plan 15 Oct, numbers guess]: base row farm 1.2, gold 1.6, bank 1.1, kill 0.9; below 15 shards farm 1.5, gold 3.0, kill 0.9, bank 1.1, shop 2.0 (build Treasure + Monster + Power); from 15 shards (three emblems; was 10, ladder 3) farm 0.4, gold 1.0, kill 2.5, bank 1.5, shop 1.0, **hunt 12, chase 8** (see KILL: HUNT). Opening seed: her slot takes the nearest gold group first (`opening_slots`). Re-applied every 20 rounds with the shard read; `KILL_PER_SHARD` 0.15 still adds on top |
 | Stellar | Monster Str, Power Str (default) | +28 of 620 (4.5 %) | 0.10 | default build (not in our roster) |
 | others (neutral rows) | Monster Str, Power Str | ~10 % | 0.12 | default build, placeholder |
 

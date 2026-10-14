@@ -365,3 +365,79 @@ tie-break lets Varg (lower slot) take Vesper's seeded g0 at r27 after his own cl
 nothing until r96). Candidate rule (not done): a gold group Vesper claims is hers whatever the slot, and the others'
 seeds skip gold groups. Corners A: 8 deaths in the centre stack fights (KILL 0.6 / no-heal vs 3-5 enemies); HEAL
 flips on/off as plose crosses 0.5 (122 heal choices).
+
+## 15 Oct (latest+4): ladder 3 (heal hold, HEAL floor, Lanchester on me, one-way claims, Vesper hunt, dash)
+
+Why: newest 5 ladder games (`runs/ladder/*-logs.zip`, 4 W; Vesper died 7 times): (a) 40x40 r225-253 Vesper (slot 1)
+and Ryth (slot 2) swapped two wolf groups every 2 rounds (29 A,B,A,B swaps in that game) and she died to camp damage
+twice; (b) heal/kill/heal/bank dither with a 44 bag (HEAL was exempt from the choice hold); (c) farm 3.34 beat heal
+2.96 at 10 HP with 2 enemies (heal shrank with distance from spawn); (d) kills approved, then 3 enemies arrived
+(Lanchester counted bodies within 5 of the target); (e) Vesper chose kill 0-8 times a game at 200-300 Strength
+(walking targets priced 0). Build: `python -I tools/assemble.py --bot strat` (3,003 lines). User-approved list.
+
+Root cause of (a), read from the code and the log (not lag, slots were consistent): the yield WAS one-way (`w.lowcl`,
+lower slot only), but a higher slot's claim on a need-1 group counted as a partner for the lower slot (`c` = 1 ->
+`need_k` k = 2 with no `WAIT_PARTNER`), so at low HP Vesper priced Ryth's group above her own, took it, Ryth yielded
+to her and took her old one, and so on.
+
+1. **choose** (40_prices): the HOLD_TURNS hold applies to HEAL too; only `retreat_now` breaks it. The opening seed
+   still lets HEAL break it.
+2. **HEAL floor** (40_prices `price_all`): hp < `HEAL_LOW` 0.3 x maxhp with an enemy within 8 -> P(die) >= `HEAL_FLOOR`
+   0.8 whatever plose says; the divisor is `5 + min(walk back, HEAL_WB 15)` [guesses].
+3. **Lanchester** (40_prices `lanchester`): me + allies within `LANCH_R` 8 of ME vs enemies within 8 of ME; the KILL
+   gate uses `s.plose` (same number). JOIN-a-fight keeps its own target-centred count (within 5 of the target).
+4. **Engaged hysteresis** (40_prices `engaged`, `choose`): farm -> another farm while a live monster of my group is
+   within `CAMP_R` 3 needs `ENGAGED_HYST` 3.0x (else HYST 1.2).
+5. **One-way claims** (40_prices `price_all` FARM): on a need-1 group `c` = 0 (a higher slot's claim is never a
+   partner; a lower slot's still zeroes it via `w.lowcl`), `farm_price(..., c)` uses it for `WAIT_PARTNER`; engaged on
+   g (my current farm, live monster within 3) -> never yield g.
+6. **HUNT** (20_champs Vesper phases, 40_prices KILL, 50_exec `exec_kill`): keys `hunt` (tiles, default 0) and `chase`
+   (rounds, default 3); closable also when `dd <= reach + hunt`; `exec_kill` fails after `chase` rounds not closing.
+   Vesper: phase threshold 10 -> 15 shards; from 15: farm 0.4, gold 1.0, kill 2.5, bank 1.5, shop 1.0, hunt 12,
+   chase 8. Below 15 unchanged.
+7. **Sighting hunt** (40_prices, 50_exec `exec_hunt`, `CODE["hunt"]` = 3, target 31): hunt phase only, no enemy
+   visible, byte 5 fresh (<= 8 rounds): value `HUNT_BAG` 30 + 50 g2g + DENIAL over walk + 5 to the sighting's altar,
+   x kmul, gated by Lanchester vs `s.sc` enemies at my base stats. Executor: done once an enemy is visible, failed
+   (EXCL 20) on arrival with nobody there or after `HUNT_MAX` 40 rounds. A death on hunt sets `kh_until` like kill.
+8. **Appetite** (user addition A): kmul x `min(1, hp/maxhp/0.6) x max(0.3, 1 - bag/100)` for every champion.
+9. **Dash** (user addition C; 30_world `dash_to`, `step_to`; 50_exec `dash_escape`, `exec_kill`): every champion with
+   an `is_dash()` slot (Vesper, Vendetta here). CLOSE, ESCAPE, TRAVERSE as in PRICES.md. Trace tag `dash`.
+10. **Attack-reset verification** (coordinator; TRACE only, no behaviour change): 30_world `reset_attack(target, pre)`
+    traces `reset` (HP before my first hit, at the cast, right after the second `attack()`, its return), and
+    `reset_check()` (90_main) the HP next turn.
+
+Light test [measured, cambc 2.1.5]. Bench `hunt2` vs tzunami444 (final code; `hunt1` = items 1-7 only), expanse vs
+starter (`runs/strat_hunt2_expanse`), collision vs starter (`runs/strat_dash_collision`, `runs/strat_reset_collision`).
+0 err everywhere. Counts from the traces (scan: A,B,A,B farm targets within 8 rounds per champion; heal then another
+choice within 2 rounds):
+
+| game | result gold1b -> hunt1 -> hunt2 | swaps | heal dither | Vesper phase flip (10 -> 15 shards) | Vesper kill choices before / after flip | Vesper deaths | fuel med |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| collision A | +334 / +16 / **+816** | 0 / 0 / 0 | 1 / 4 / 0 | r224 -> r204 | 0/38 -> 1/48 | 0 -> 1 | 1.00M |
+| collision B | +318 / +614 / **+554** | 0 / 0 / 0 | 20 / 11 / 15 | r264 -> r364 | 3/44 -> 6/37 | 0 -> 0 | 0.94M |
+| corners A | +104 / +344 / **+408** | 0 / 1 / 1 | 103 / 1 / 13 | r104 -> r144 | 0/30 -> 0/51 | 0 -> 0 | 1.00M |
+| corners B | +182 / -178 / **+98** | 0 / 0 / 3 | 5 / 13 / 1 | r104 -> r284 | 0/38 -> 2/44 | 0 -> 0 | 1.04M |
+| expanse | W 1006-508 / W 1020-556 / **W 1042-626** (r551) | 0 | 0 | r164 -> r284 | 0/0 -> 0/0 | 0 | 0.80M |
+| ladder 00b01c87 (before) | W | 29 | 44 | r507 | 0/1 | 3 | |
+
+Deaths in the 4 bench games: gold1b 12, hunt1 8, hunt2 3. Heal dither after the fix is mostly heal ending (spawn
+reached / heal price gone: `cur=None`); one switch 1 round after a still-priced heal (collision A r249, retreat_now).
+Remaining swaps (4 in hunt2): not the claim cycle; Marcella / Ryth with `cur=None` (the current option vanished:
+lower-slot claim or the group cleared) and corners B Ryth g0/g2 r418-423 at 7.5-10.6 (current target prices lower
+than the alternative each time: probably pair-group claims, not investigated). Sighting hunts chosen 6-12 times per
+bench game (none on expanse); one chosen at bag 132 (hunt value ignores my bag; the appetite term now cuts it x0.3).
+Fuel: per-game tick median 0.94-1.11M, max 2.29M (corners B).
+
+Dash [measured, hunt2 + collision]: CLOSE 157 dashes, the attack after the dash hit 139 (14 killed the target, 3
+no HP change, 1 raise: target gone) -> **attack after a dash works the same turn, also for ranged Vesper**. TRAVERSE
+~250, the step after it moved in all but 1 -> **move after a dash works**. ESCAPE 6 (enemy within 2 is rare).
+
+Attack reset [measured, `runs/strat_reset_collision`]: 95 casts (Vesper 35, Varg 24, Ryth 36: all three have an
+`is_attack_reset()` slot); 83 showed a 2x drop (pre - after = 2 x Strength, cast - after = 1 x), 6 more where the
+second hit killed the target (HP read raises after), 6 casts where the FIRST hit already killed it (the second
+`attack()` raised "Target must be a visible enemy or neutral camp": a wasted cooldown). `attack()` returns None on
+success and raises on failure. **The second attack lands.** Possible fix (not done): skip the reset when the
+target's HP <= my Strength.
+
+Guesses to measure: HEAL_LOW 0.3, HEAL_FLOOR 0.8, HEAL_WB 15, ENGAGED_HYST 3.0, LANCH_R 8, HUNT_BAG 30, hunt 12, chase 8,
+the 15-shard threshold, Vesper's hunt-phase row, the appetite shape (0.6, 100, 0.3).
