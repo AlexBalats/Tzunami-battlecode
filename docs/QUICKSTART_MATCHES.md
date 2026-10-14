@@ -49,6 +49,22 @@ python3 -I tools/arena.py my-bot starter-python --maps lanes,packs --drafts
 - 18 games take ~30 s on a 10-core laptop with the default `--jobs` (each match uses ~3 cores). A mirror match (same bot both sides) plays each map once: 16 s [measured, 13 Oct]. `CAMBC=/path/to/cambc` runs another engine version.
 - Bar for keeping a change (`CLAUDE.md` rule 8): judge it on all maps from both sides, worst map included, not on the average.
 
+## Bench: tweak and compare against several opponents
+
+`tools/bench.py` plays one bot against a list of opponents on every map, both sides, in parallel, and diffs the result against an earlier run.
+
+```bash
+python -I tools/bench.py BOT [--vs OPP1,OPP2,...] [--maps m1,m2,...] [--jobs N] [--label NAME] [--baseline RUN_DIR_OR_LABEL] [--fresh]
+python -I tools/bench.py tzunami444 --label before            # vs starter-python and tzu, all maps
+python -I tools/bench.py tzunami444 --label after --baseline before
+```
+
+- Defaults: `--vs starter-python,tzu`, every map in `maps/`, `--jobs` = CPU count - 1 (that oversubscribes: a match uses ~3 cores; 18 games took 35 s at 15 jobs, ~5 s per game at 2 jobs). An opponent that doesn't exist or doesn't build is reported and skipped. `--jobs 1` runs serially for debugging.
+- Cached per game in `runs/bench/cache/` (cambc version + both bots' source hashes + map file + side); cached games aren't replayed, and their row points at the original replay bundle. Output in `runs/bench/<label or time>/`: `results.csv` (one row per game), `summary.md`, and `<opp>/<map>-<A|B>/` with the replay, stats JSON and CLI log.
+- Summary columns, per opponent: **wins/games**; **maps won both sides**; mean **gems/round** tributed for us and them; total **deaths** (ours); **errs** (our trace's `err` lines plus raw `Traceback` lines); **crashes** (our bot faults); **worst map** by mean gem margin over both sides.
+- `results.csv` also has kills, gold earned, end round, opponent crashes, and from our stdout trace (`P|round|team|champ|tag|text`, if the bot prints one): `death` and `stuck` line counts and median/max `fuel=` on `tick` lines (blank if absent).
+- `--baseline` (a label under `runs/bench/` or a run folder) adds a per map and side table: our gems before -> after, margin before -> after, and a verdict line: better/worse/same counts and the worst regression.
+
 ## Batch runs
 
 `matches.txt` (gitignored folder `matches/` is a good home). One match per line: `botA_dir botB_dir map out_replay`, with paths relative to the file:

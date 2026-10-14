@@ -101,7 +101,7 @@ def play(cambc, job):
     """Run one match with --statistics and return the raw record (or an error record)."""
     os.makedirs(job["dir"], exist_ok=True)
     stats_path = os.path.join(job["dir"], "stats.json")
-    cmd = [cambc, "run", job["blue"], job["red"], "--map", job["map_path"], "-o", job["dir"], "--statistics", stats_path]
+    cmd = [cambc, "run", "bots/" + job["blue"], "bots/" + job["red"], "--map", job["map_path"], "-o", job["dir"], "--statistics", stats_path]
     try:
         proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=job["timeout"])
         log = proc.stdout + proc.stderr
@@ -170,7 +170,7 @@ def main():
 
     # Build each bot once up front, so parallel matches don't race to rebuild it.
     for bot in dict.fromkeys((a, b)):
-        built = subprocess.run([cambc, "build", bot], cwd=ROOT, capture_output=True, text=True)
+        built = subprocess.run([cambc, "build", "bots/" + bot], cwd=ROOT, capture_output=True, text=True)
         if built.returncode:
             sys.exit("build failed for %s:\n%s%s" % (bot, built.stdout, built.stderr))
 
