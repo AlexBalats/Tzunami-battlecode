@@ -115,7 +115,7 @@ price  = value / rounds
 
 | Multiplier on | Why | Example |
 | --- | --- | --- |
-| `FARM` gold term | a champion that converts gold faster (lock buyer, Treasure emblem +20 % gold) | Vesper ×1.2 on gold |
+| `FARM` gold term | a champion that converts gold faster (lock buyer, Treasure emblem +20 % gold) | Vesper ×3.0 on gold below 10 shards, ×1.0 after (phases, below) |
 | `KILL` | kit that closes (dash, stun) or snowballs | Vendetta ×1.3, Ryth ×1.2 on channelling targets |
 | `HOLD` | kit with a stun / lock carrier | Ryth ×1.5, others ×0 |
 | `BANK` risk | map mode: contested altars raise risk | contested map: risk ×2 |
@@ -142,7 +142,7 @@ from the champion profiles. Strength-only clear maths misses spells, splash and 
 | Vendetta | Power Str, Monster Str, Durability Health | +45 of 630 (7 %) | 0.12 | profile: Strength + Monster emblem |
 | Varg | Monster Str, Power Str, Durability Health | +45 of 450 (10 %), splash scales too | 0.16 | profile: Strength + Monster emblem |
 | Marcella | Monster Str, Durability Health, Power Str | +45 of 505 (9 %) | 0.15 | profile: Strength (+Health); Monster for camps |
-| Vesper Vale | Treasure Str, Monster Str, Power Str | +45 of 405 (11 %) | 0.17 | [user decision 14 Oct] Treasure first: the gold snowball (+20 % passive becomes +40 % with the emblem), then Monster for farm speed, Power for fights. Her gold bonus is the `gold` multiplier, not item_gain |
+| Vesper Vale | Treasure Str, Monster Str, Power Str | +45 of 405 (11 %) | 0.17 | [user decision 14 Oct] Treasure first: the gold snowball (+20 % passive becomes +40 % with the emblem), then Monster for farm speed, Power for fights. Her gold bonus is the `gold` multiplier, not item_gain. **Phases** [user's plan 15 Oct, numbers guess]: base row farm 1.2, gold 1.6, bank 1.1, kill 0.9; below 10 shards farm 1.5, gold 3.0, kill 0.9, bank 1.1 (build Treasure + Monster); from 10 shards farm 0.7, gold 1.0, kill 2.5, bank 1.2 (hunt). Re-applied every 20 rounds with the shard read; `KILL_PER_SHARD` 0.15 still adds on top |
 | Stellar | Monster Str, Power Str (default) | +28 of 620 (4.5 %) | 0.10 | default build (not in our roster) |
 | others (neutral rows) | Monster Str, Power Str | ~10 % | 0.12 | default build, placeholder |
 

@@ -800,13 +800,14 @@ _IT = cambc.ItemType
 _KEYS = ("farm", "gold", "bank", "kill", "hold", "shop", "join", "heal")
 
 
-def _row(farm, gold, bank, kill, hold, shop, join, item, gain, heal=1.0, build=None):
+def _row(farm, gold, bank, kill, hold, shop, join, item, gain, heal=1.0, build=None, phases=None):
     """build: ordered shard types; the shop buys the first whose emblem is not complete (build_target()).
-    `item` stays the first entry so older readers keep working."""
+    `item` stays the first entry so older readers keep working. phases: optional ((shards_threshold, overrides), ...)
+    ascending; the last entry whose threshold <= shards owned overrides the row's keys (apply_phase())."""
     if build is None:
         build = (item,)
     return {"farm": farm, "gold": gold, "bank": bank, "kill": kill, "hold": hold, "shop": shop, "join": join,
-            "item": build[0], "item_gain": gain, "heal": heal, "build": tuple(build)}
+            "item": build[0], "item_gain": gain, "heal": heal, "build": tuple(build), "phases": phases}
 
 
 _MS, _TS, _PS, _DH = (_IT.MONSTER_SHARD_OF_STRENGTH, _IT.TREASURE_SHARD_OF_STRENGTH, _IT.POWER_SHARD_OF_STRENGTH,
@@ -842,7 +843,12 @@ PROFILES = {
     # Strength (farm speed), then Power Strength (fights).
     # gold 1.6 [aggressive guess, user's plan 15 Oct late]: her gold plan (shards -> kills) was not happening on the
     # ladder (fewer shards than the others, no fights); was 1.2, the bare +20 % passive.
-    1: _row(1.2, 1.6, 1.1, 0.9, 0.0, 1.0, 1.0, _TS, 0.17, 1.0, (_TS, _MS, _PS)),
+    # Phases [user's plan 15 Oct: build Treasure + Monster, then hunt; numbers guess]: below 10 shards farm the gold
+    # (farm 1.5, gold 3.0, kill 0.9, bank 1.1); from 10 shards (both emblems) hunt (farm 0.7, gold 1.0, kill 2.5,
+    # bank 1.2). KILL_PER_SHARD (40_prices) still adds on top of kill.
+    1: _row(1.2, 1.6, 1.1, 0.9, 0.0, 1.0, 1.0, _TS, 0.17, 1.0, (_TS, _MS, _PS),
+            ((0, {"farm": 1.5, "gold": 3.0, "kill": 0.9, "bank": 1.1}),
+             (10, {"farm": 0.7, "gold": 1.0, "kill": 2.5, "bank": 1.2}))),
     # Stellar [guess all]: farm 1.5 spells deal ~77/turn vs 35 Str (2.2x), cut for cast-only-standing and 2 casts per
     # 8; bank 1.2 750 HP, fragile carrier; kill 1.2 235 burst at range 4 finishes carriers; hold 0.5 no stun;
     # join 1.2 area spell on groups, needs a frontline. Build: the default (Monster, Power Strength).
@@ -913,6 +919,29 @@ def build_target(c, build):
     return build[-1], n
 
 
+def apply_phase(w):
+    """ME["prof"] = base row (ME["base"]) + the overrides of the phase for w.shards; traces `phase` on change.
+    Rows without phases keep the base row."""
+    base = ME.get("base")
+    if base is None:
+        return
+    ph = base.get("phases")
+    if not ph:
+        ME["prof"] = base
+        return
+    i = 0
+    for j, (th, _ov) in enumerate(ph):
+        if w.shards >= th:
+            i = j
+    if i == w.phase:
+        return
+    p = dict(base)
+    p.update(ph[i][1])
+    ME["prof"] = p
+    w.phase = i
+    trace("phase", f"{i} shards={w.shards} " + " ".join(f"{k}={v}" for k, v in ph[i][1].items()))
+
+
 def me_init():
     """Fill ME once (round 1). Traces fuel (tag me) and one facts line."""
     f0 = fuel()
@@ -941,13 +970,14 @@ def me_init():
             if r is not None and not dash and not a.is_shield() and (spell_range is None or r > spell_range):
                 spell_range = r
         ME.update(flags)
-        ME.update({"id": d, "type": t, "prof": PROFILES.get(d, NEUTRAL), "strength": c.strength(),
+        ME["base"] = PROFILES.get(d, NEUTRAL)
+        ME.update({"id": d, "type": t, "prof": ME["base"], "strength": c.strength(),
                    "hp": c.max_health(), "range": c.attack_range(), "focus": c.focus(),
                    "spell_range": spell_range, "passive": int(c.passive())})
     except Exception as e:
         trace("me", err_text(e))
         if "prof" not in ME:
-            ME["prof"] = NEUTRAL
+            ME["prof"] = ME["base"] = NEUTRAL
     trace("me", f"fuel={f0 - fuel()}")
     if TRACE and "id" in ME:
         p = ME["prof"]
@@ -1416,11 +1446,12 @@ HOLD_PLOSE = 0.3            # [guess] HOLD needs a clearly safe altar
 KILL_PLOSE = 0.45           # [tuned] fight only when locally stronger (0.5 = even; 0.99 lost 9 champions in kills)
 DEATH_EXCL = 100            # rounds a death excludes its (option, target), and kill/hold after a kill/hold death
 DEATH_MARK = 100            # rounds the team avoids a group an ally died farming (byte 7)
-HEAL_K = 1.5                # [guess] HEAL: P(die) = clamp((1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, 0, 1)
+HEAL_K = 2.0                # [guess] (1.5 -> 2.0, 15 Oct ladder phase 1) HEAL: P(die) = clamp((1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, 0, 1)
 MY_RATE = 0.4               # [guess] my gems per round, x 60 rounds out = what a death costs beyond the bag
 HOLD_TURNS = 2              # a new (option, target) is kept this many turns (unless done/failed, HEAL, retreat)
-WARD_VALUE = 8.0            # [guess] g/r of a ward placed at once: dominates the first trip (farm opens at ~1-3 g/r)
-WARD_WALK = 30              # [guess] WARD price = WARD_VALUE x WARD_WALK / (WARD_WALK + walk): 8 here, 3.4 at 40 tiles
+WARD_VALUE = 4.0            # [guess] g/r of a ward placed at once (8 -> 4: at 8 it outranked every farm, 1-5 g/r)
+WARD_FROM = 10              # [guess] no ward option before this round (round 3: every idle champion chose a ward)
+WARD_WALK = 30              # [guess] WARD price = WARD_VALUE x WARD_WALK / (WARD_WALK + walk): 4 here, 1.7 at 40 tiles
 WARD_TRIES = 3              # choices of one ward tile per champion before I give it up (timeouts / stuck re-choose it)
 WARD_DETOUR = 5             # [guess] WARD prices only when walk(me->ward) + walk(ward->goal) - walk(me->goal) <= this
 BANK_NEAR = 8               # [guess] walk to the altar at or below which BANK gets the tempo bonus
@@ -1431,6 +1462,7 @@ SIGHT_FRESH = 8             # rounds a sighting drives posture (defend / punish)
 SIGHT_OVER = 12             # a weaker sighting overwrites a stronger one older than this
 SIGHT_R = 8                 # enemies within this of each other count as seen together
 STACK_N = 3                 # a fresh sighting of >= this many enemies is "the stack"
+STACK_N_FEW = 2             # [guess] regime few (small / one-choke maps): a pair already counts as the stack
 STACK_R = 10                # FARM of groups within this of the stack's altar x STACK_FARM
 STACK_FARM = 0.2            # [guess] don't walk into the stack
 PUNISH_LEAD = 50            # ahead by more than this on score + a fresh small sighting -> punish
@@ -1453,7 +1485,8 @@ POSTURE = {
     # defend [guess all]: farm_their_side 0.3 their half is where the stack lives; bank_risk 1.5 cash the bag before
     # it is caught; kill_our_side 1.3 intruders on our half are near help; kill_their_side 0.5 no dives into them;
     # hold 1.3 deny tributes at contested altars; join 1.3 move in pairs.
-    "defend": _col(farm_their_side=0.3, bank_risk=1.5, kill_our_side=1.3, kill_their_side=0.5, hold=1.3, join=1.3),
+    # join 2.0 [guess, 15 Oct ladder phase 1; was 1.3]: on few maps move in pairs.
+    "defend": _col(farm_their_side=0.3, bank_risk=1.5, kill_our_side=1.3, kill_their_side=0.5, hold=1.3, join=2.0),
     # punish [guess all]: a small group seen while we lead: fight it, mostly on our half; bank a bit sooner.
     "punish": _col(kill_our_side=1.4, kill_their_side=1.1, bank_risk=1.2),
 }
@@ -1494,7 +1527,7 @@ def sense(w):
     sb = s.mem[5]                               # sighting: count, region altar, age in rounds (4-round stamp)
     s.sc, s.sa = sb >> 5, s.mem[6]
     s.sage = (((r // 4) - (sb & 31)) & 31) * 4 if s.sc else 999
-    s.stack = s.sc >= STACK_N and s.sage <= SIGHT_FRESH and s.sa < len(w.apos)
+    s.stack = s.sc >= stack_n(w) and s.sage <= SIGHT_FRESH and s.sa < len(w.apos)
     s.enemies, s.allies, s.live, s.near_e = [], [], {}, 99
     if not s.alive:
         s.pos, s.hp, s.maxhp, s.bag, s.S, s.vis, s.spawn = w.pos, 0, 1, 0, 1, None, False
@@ -1697,12 +1730,18 @@ def lanchester(s, e_pos):
     return th / max(1.0, us + th)
 
 
+def stack_n(w):
+    """STACK_N, or STACK_N_FEW on a regime-few map (draft) [guess]."""
+    d = w.d
+    return STACK_N_FEW if d and d.get("regime") == 0 else STACK_N
+
+
 def posture(w, s):
     """Posture column (see POSTURE); traces `posture` when mine changes."""
     d = w.d
     col = "defend" if d and d.get("regime") == 0 else "economy"
     if s.sc and s.sage <= SIGHT_FRESH:
-        if s.sc >= STACK_N:
+        if s.sc >= stack_n(w):
             col = "defend"
         elif w.score[0] - w.score[1] > PUNISH_LEAD:
             col = "punish"
@@ -1742,7 +1781,7 @@ def ward_goal(w, by):
     """(goal field or None, goal tile) of my current executor; (None, None) = no goal (idle / fall: wards are free);
     False = no ward now (kill, or a goal I cannot place)."""
     op, tg = w.cur
-    if op in ("idle", "fall", "dead", "ward"):
+    if op in ("idle", "fall", "dead", "ward") and cambc.round_number() >= WARD_FROM:
         return None, None                       # ward: only the tile I am walking to prices (ward_prices)
     if op == "farm" and tg in w.G:
         return f"g{tg}", w.G[tg].anchor
@@ -1754,7 +1793,7 @@ def ward_goal(w, by):
         return f"a{tg}", w.apos[tg]
     if op in ("shop", "heal"):
         return "home", w.sp0
-    return False
+    return False                                # incl. idle / fall before WARD_FROM: never free then
 
 
 def ward_prices(w, s, by, pm, out):
@@ -1807,7 +1846,9 @@ def price_all(w, s, cl, by):
     out = []
     # WARD: on the way, not first. A pending draft ward tile prices only when its detour from my current goal is
     # <= WARD_DETOUR, or when I am idle / falling back (or already walking to it); 0 once my ward is placed
-    if not w.ward_done and w.ward_pending:
+    # [rule, 15 Oct ladder] price 0 while carrying gems (a 72-gem bag walked into 2 enemies for a ward) and none
+    # before WARD_FROM (round 3: every idle champion's first choice was a ward)
+    if not w.ward_done and w.ward_pending and s.bag == 0 and r >= WARD_FROM:
         ward_prices(w, s, by, pm, out)
     # FARM over the ~6 nearest groups by F_me (+ the current target, + cleared groups seen)
     cand = list(w.near6)
@@ -1840,7 +1881,9 @@ def price_all(w, s, cl, by):
         # on ALL groups (fix7/fix8) lost rows A and raised elkring deaths 5 -> 17-19 (elks under-bodied). Tried with
         # "and my live model could solo it": the weaker champion joined the stronger one's group and the stronger
         # one then left it (collision A, open1), so the draft's need decides alone.
-        if c >= 1 and o.need <= 1:
+        # [rule, 15 Oct ladder phase 1] tie-break by roster slot: only an ally with a LOWER slot zeroes it (the lower
+        # slot keeps it); a higher slot sees mine and yields, so simultaneous choices settle in one turn.
+        if o.need <= 1 and h in w.lowcl:
             continue
         if h == dead_g or (s.plose > FARM_PLOSE and s.near_e <= 5):
             continue                            # an ally died farming it recently, or outnumbered here
@@ -1964,6 +2007,26 @@ def price_all(w, s, cl, by):
     return out
 
 
+SEED_UNTIL = 40             # [rule, 15 Oct ladder phase 1] the opening seed holds to this round (was round 1 + 2)
+
+
+def seeded(w, s):
+    """True while the opening seed holds: until SEED_UNTIL, while I still execute it (going), and the seeded group is
+    not cleared / respawning (seen taken on arrival: exec_farm returns done) and no reward came in yet (bag or gold
+    above what I held when it was set: a capture; a fast respawn otherwise kept me re-farming it). Clears w.seed and traces once on end."""
+    sd = w.seed
+    if sd is None:
+        return False
+    o = w.G.get(sd)
+    if s.r <= w.seed_until and w.cur == ("farm", sd) and w.status == "going" and o is not None \
+            and not (o.st == "resp" and o.until > s.r) and s.bag <= w.lastbag and s.gold <= w.lastgold:
+        return True
+    w.seed = None
+    trace("choice", f"seed end {tname(w, 'farm', sd)} cur={w.cur[0]} status={w.status} st={o.st if o else '-'} "
+                    f"bag={s.bag} gold={s.gold}")
+    return False
+
+
 def choose(w, s):
     """Argmax with a HOLD_TURNS hold, then hysteresis; returns True when the choice changed.
     HEAL is locked only while actually recalling (90_main does not call choose during a channel); while it walks
@@ -1972,6 +2035,7 @@ def choose(w, s):
     cur = w.cur
     cl, by = claims(w, s)
     w.claims = cl
+    w.lowcl = {w.idx[tg] for k, (op, tg) in by.items() if k < w.slot and op == 1 and tg in w.idx}
     ps = price_all(w, s, cl, by)
     r = s.r
     ps = [t for t in ps if t[1] == "heal" or w.excl.get((t[1], t[2]), -1) <= r]
@@ -1984,6 +2048,8 @@ def choose(w, s):
     best = ps[0] if ps else (0.0, "fall", None)
     if best[0] <= 0:
         best = (0.0, "fall", None)
+    if seeded(w, s) and best[1] != "heal" and not retreat_now(s):
+        return False                            # the opening seed holds (only HEAL / retreat break it)
     going = curp is not None and curp > 0 and w.status == "going"
     held = going and r - w.started < HOLD_TURNS and best[1] != "heal" and not retreat_now(s)
     keep = held or (going and best[0] <= curp * HYST) or \
@@ -1997,7 +2063,7 @@ def choose(w, s):
     if TRACE:
         t2 = ps[1] if len(ps) > 1 else (0.0, "-", None)
         trace("choice", f"{new[0]} {tname(w, new[0], new[1])} {best[0]:.2f} | {t2[1]} {tname(w, t2[1], t2[2])} "
-                        f"{t2[0]:.2f} cur={curp if curp is None else round(curp, 2)}")
+                        f"{t2[0]:.2f} cur={curp if curp is None else round(curp, 2)} bag={s.bag}")
     return True
 
 
@@ -2580,6 +2646,7 @@ else:
             fs = fuel()
             w.shards = shards_owned(w.me)
             fs -= fuel()
+            apply_phase(w)                          # 20_champs: ME["prof"] = base row + the current phase's overrides
             if w.shards_fuel is None or w.shards_fuel < 2:
                 if w.shards_fuel is None:           # the first read also builds the weight table
                     trace("shards", f"n={w.shards} fuel={fs} (first read: item_count + weight table)")
@@ -2633,7 +2700,7 @@ else:
             w.excl[w.cur] = r + EXCL
             w.status = "failed"
         for _k in range(2):
-            if not (s.recalling or s.submitting) and fuel() > FUEL_FLOOR and r > w.seed_until:
+            if not (s.recalling or s.submitting) and fuel() > FUEL_FLOOR:
                 fb = fuel()
                 choose(w, s)
                 w.ph[1] = max(w.ph[1], fb - fuel())
@@ -2676,6 +2743,8 @@ else:
         w = WORLD
         w.cur, w.status, w.excl, w.sent, w.started, w.deadline = ("idle", None), "done", {}, -1, 0, 0
         w.claims, w.was_alive, w.same, w.stay, w.seed_until = {}, True, 0, 0, 0
+        w.seed, w.lowcl = None, set()                     # opening seed (40_prices seeded), lower-slot solo claims
+        w.phase = None                                    # 20_champs phase index last applied
         w.attacked = w.capt = w.waiting = False
         w.bag_alive, w.hp_alive, w.ne_alive, w.kd, w.kn, w.arrived = 0, 0, 0, 99, 0, None
         w.lastbag = w.lastgold = 0
@@ -2697,6 +2766,7 @@ else:
         trace("env", f"round={cambc.round_number()} fuel_at_start={f0} turn_budget={cambc.constants.FUEL_PER_TURN if hasattr(cambc.constants, 'FUEL_PER_TURN') else '?'}")
         try:
             me_init()                                     # 20_champs: ME facts, once (traces tag me)
+            apply_phase(w)
             w.boot()
             w.pos = w.fme_root
             seed = opening_seed(w)
@@ -2704,7 +2774,7 @@ else:
             if seed is not None:
                 s = sense(w)
                 w.set_cur(("farm", seed), s.r, s)
-                w.seed_until = s.r + 2                    # everyone writes the seed before anyone re-prices
+                w.seed, w.seed_until = seed, SEED_UNTIL   # choose keeps it until then unless HEAL / retreat (seeded)
                 trace("choice", f"farm {tname(w, 'farm', seed)} seed slot={w.slot}")
                 broadcast(w, s, 1)
         except Exception as e:

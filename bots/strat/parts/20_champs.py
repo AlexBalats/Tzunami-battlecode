@@ -16,13 +16,14 @@ _IT = cambc.ItemType
 _KEYS = ("farm", "gold", "bank", "kill", "hold", "shop", "join", "heal")
 
 
-def _row(farm, gold, bank, kill, hold, shop, join, item, gain, heal=1.0, build=None):
+def _row(farm, gold, bank, kill, hold, shop, join, item, gain, heal=1.0, build=None, phases=None):
     """build: ordered shard types; the shop buys the first whose emblem is not complete (build_target()).
-    `item` stays the first entry so older readers keep working."""
+    `item` stays the first entry so older readers keep working. phases: optional ((shards_threshold, overrides), ...)
+    ascending; the last entry whose threshold <= shards owned overrides the row's keys (apply_phase())."""
     if build is None:
         build = (item,)
     return {"farm": farm, "gold": gold, "bank": bank, "kill": kill, "hold": hold, "shop": shop, "join": join,
-            "item": build[0], "item_gain": gain, "heal": heal, "build": tuple(build)}
+            "item": build[0], "item_gain": gain, "heal": heal, "build": tuple(build), "phases": phases}
 
 
 _MS, _TS, _PS, _DH = (_IT.MONSTER_SHARD_OF_STRENGTH, _IT.TREASURE_SHARD_OF_STRENGTH, _IT.POWER_SHARD_OF_STRENGTH,
@@ -58,7 +59,12 @@ PROFILES = {
     # Strength (farm speed), then Power Strength (fights).
     # gold 1.6 [aggressive guess, user's plan 15 Oct late]: her gold plan (shards -> kills) was not happening on the
     # ladder (fewer shards than the others, no fights); was 1.2, the bare +20 % passive.
-    1: _row(1.2, 1.6, 1.1, 0.9, 0.0, 1.0, 1.0, _TS, 0.17, 1.0, (_TS, _MS, _PS)),
+    # Phases [user's plan 15 Oct: build Treasure + Monster, then hunt; numbers guess]: below 10 shards farm the gold
+    # (farm 1.5, gold 3.0, kill 0.9, bank 1.1); from 10 shards (both emblems) hunt (farm 0.7, gold 1.0, kill 2.5,
+    # bank 1.2). KILL_PER_SHARD (40_prices) still adds on top of kill.
+    1: _row(1.2, 1.6, 1.1, 0.9, 0.0, 1.0, 1.0, _TS, 0.17, 1.0, (_TS, _MS, _PS),
+            ((0, {"farm": 1.5, "gold": 3.0, "kill": 0.9, "bank": 1.1}),
+             (10, {"farm": 0.7, "gold": 1.0, "kill": 2.5, "bank": 1.2}))),
     # Stellar [guess all]: farm 1.5 spells deal ~77/turn vs 35 Str (2.2x), cut for cast-only-standing and 2 casts per
     # 8; bank 1.2 750 HP, fragile carrier; kill 1.2 235 burst at range 4 finishes carriers; hold 0.5 no stun;
     # join 1.2 area spell on groups, needs a frontline. Build: the default (Monster, Power Strength).
@@ -129,6 +135,29 @@ def build_target(c, build):
     return build[-1], n
 
 
+def apply_phase(w):
+    """ME["prof"] = base row (ME["base"]) + the overrides of the phase for w.shards; traces `phase` on change.
+    Rows without phases keep the base row."""
+    base = ME.get("base")
+    if base is None:
+        return
+    ph = base.get("phases")
+    if not ph:
+        ME["prof"] = base
+        return
+    i = 0
+    for j, (th, _ov) in enumerate(ph):
+        if w.shards >= th:
+            i = j
+    if i == w.phase:
+        return
+    p = dict(base)
+    p.update(ph[i][1])
+    ME["prof"] = p
+    w.phase = i
+    trace("phase", f"{i} shards={w.shards} " + " ".join(f"{k}={v}" for k, v in ph[i][1].items()))
+
+
 def me_init():
     """Fill ME once (round 1). Traces fuel (tag me) and one facts line."""
     f0 = fuel()
@@ -157,13 +186,14 @@ def me_init():
             if r is not None and not dash and not a.is_shield() and (spell_range is None or r > spell_range):
                 spell_range = r
         ME.update(flags)
-        ME.update({"id": d, "type": t, "prof": PROFILES.get(d, NEUTRAL), "strength": c.strength(),
+        ME["base"] = PROFILES.get(d, NEUTRAL)
+        ME.update({"id": d, "type": t, "prof": ME["base"], "strength": c.strength(),
                    "hp": c.max_health(), "range": c.attack_range(), "focus": c.focus(),
                    "spell_range": spell_range, "passive": int(c.passive())})
     except Exception as e:
         trace("me", err_text(e))
         if "prof" not in ME:
-            ME["prof"] = NEUTRAL
+            ME["prof"] = ME["base"] = NEUTRAL
     trace("me", f"fuel={f0 - fuel()}")
     if TRACE and "id" in ME:
         p = ME["prof"]

@@ -274,3 +274,47 @@ rarely on anyone's way (expanse 1 of 3).
 
 - 14 Oct: shard builds (`build` in `PROFILES`, `build_target()` in 20_champs, `buy_all` in 50_exec): buy the first family whose emblem is not complete, 5 at a time; Vesper Treasure > Monster > Power Str [user decision], others in PRICES.md; `shop` trace line per buy.
 - Checked collision + corners vs starter (W both, 0 err): emblems complete in order (collision Vesper 5 Treasure, 5 Monster by r146); corners Vesper had 2 shards at r300 (she earned ~no gold, a farming issue, not the build).
+
+## 15 Oct (latest+2): ladder phase 1 (ward gate, held opening seed, slot tie-break, Vesper phases, few-map numbers)
+
+Why: ladder logs (`runs/ladder/*-logs.zip`): (a) 40x40, Ryth with 72 gems chose WARD (6.9 > farm 5.6, heal 4.4) and
+died at r64 walking into 2 enemies; (b) 30x30, round 3: every champion's first choice was a ward (free when idle),
+then 4 of 5 re-priced onto the same nearest group (seed held 2 rounds, simultaneous choices blind to each other),
+first tribute r100; (c) Vesper reaches 9-17 shards by r300 but rarely fights. Build: `python -I tools/assemble.py
+--bot strat` (2,812 lines). Numbers and one-line rules only.
+
+1. **WARD** (40_prices): no ward option while `s.bag > 0` [rule] or before `WARD_FROM` 10 [guess]; idle / fall makes
+   wards free only from round 10 (`ward_goal`); `WARD_VALUE` 8 -> 4 [guess] (price 4 at the tile, 1.7 at 40 tiles).
+2. **Opening** (40_prices `SEED_UNTIL`, `seeded()`, `choose`; 90_main): the round-1 seed holds to round 40 (was
+   round 1 + 2). `choose` now runs from round 2 but keeps the seed unless the best option is HEAL or `retreat_now`.
+   The seed ends early when its executor is no longer going (done / failed: cleared, taken, WAIT_CAP), the group is
+   seen respawning, or a reward came in (bag or gold above the value at seeding). Trace `choice seed end ...`.
+   **[rule] Solo-claim tie-break**: on a need-1 group (draft need) only an ally with a LOWER roster slot broadcasting
+   farm on it zeroes my price (the lower slot keeps it); higher slots yield (`w.lowcl` in `choose`). Was: any ally.
+3. **Vesper phases** (20_champs `_row(..., phases=)`, `apply_phase()`, `ME["base"]`; 90_main): `phases` = ((shards
+   threshold, overrides), ...); `ME["prof"]` = base row + the last phase whose threshold <= `w.shards`, applied at
+   boot and after every 20-round shard read; trace `phase` on change. Vesper: < 10 shards farm 1.5, gold 3.0, kill
+   0.9, bank 1.1; >= 10 farm 0.7, gold 1.0, kill 2.5, bank 1.2 [user's plan; numbers guess]. `KILL_PER_SHARD` 0.15
+   stays on top. Other rows: no phases.
+4. **Few maps** (40_prices, all [guess]): `stack_n(w)` = `STACK_N_FEW` 2 when the draft regime is few (a pair is the
+   stack: posture defend, STACK_FARM, bank away), else 3; `POSTURE["defend"]["join"]` 1.3 -> 2.0; `HEAL_K` 1.5 -> 2.0
+   everywhere.
+5. Trace: `choice` lines end with `bag=`.
+
+Light test [measured, cambc 2.1.5]: bench `phase1b` vs tzunami444 (collision + corners, both sides) and expanse vs
+starter (`runs/strat_phase_expanse2`). 0 err, 0 deaths in all 5. No ward chosen with bag > 0 or before round 10
+(wards chosen at r45-126 on collision / corners, none on expanse). Rounds 2-5: every champion on a different group
+(the seeds). Vesper's phase flips once: r163 (12 shards) collision A, r263 (17) collision B, r384 (14) corners A,
+r284 (11) corners B, r164 (11) expanse. Fuel per turn median 0.84-0.96M per game (per-tick medians <= 1.05M), max 1.7M.
+
+| game | r50 open3 | r50 now | r100 open3 | r100 now | result open3 | result now |
+| --- | --- | --- | --- | --- | --- | --- |
+| collision A | 0 | 0 | 66 | 44 | W +674 | W +816 |
+| collision B | 0 | 0 | 66 | 66 | L -132 | W +532 |
+| corners A | 48 | 48 | 192 | 96 | W +198 | W +348 |
+| corners B | 48 | 48 | 192 | 144 | W +540 | L -456 |
+| expanse | 0 | 0 | 92 | 92 | W 1020-626 | W 1020-604 |
+
+Open: r100 is lower on corners (seeds held to r40, first banks later); Vesper with gold 3.0 out-prices SHOP and sits on
+170-276 gold for 50-150 rounds before buying (collision A, corners B), which delays her phase flip; expanse places
+no wards now (bag > 0 blocks the trips that passed them).

@@ -99,6 +99,7 @@ else:
             fs = fuel()
             w.shards = shards_owned(w.me)
             fs -= fuel()
+            apply_phase(w)                          # 20_champs: ME["prof"] = base row + the current phase's overrides
             if w.shards_fuel is None or w.shards_fuel < 2:
                 if w.shards_fuel is None:           # the first read also builds the weight table
                     trace("shards", f"n={w.shards} fuel={fs} (first read: item_count + weight table)")
@@ -152,7 +153,7 @@ else:
             w.excl[w.cur] = r + EXCL
             w.status = "failed"
         for _k in range(2):
-            if not (s.recalling or s.submitting) and fuel() > FUEL_FLOOR and r > w.seed_until:
+            if not (s.recalling or s.submitting) and fuel() > FUEL_FLOOR:
                 fb = fuel()
                 choose(w, s)
                 w.ph[1] = max(w.ph[1], fb - fuel())
@@ -195,6 +196,8 @@ else:
         w = WORLD
         w.cur, w.status, w.excl, w.sent, w.started, w.deadline = ("idle", None), "done", {}, -1, 0, 0
         w.claims, w.was_alive, w.same, w.stay, w.seed_until = {}, True, 0, 0, 0
+        w.seed, w.lowcl = None, set()                     # opening seed (40_prices seeded), lower-slot solo claims
+        w.phase = None                                    # 20_champs phase index last applied
         w.attacked = w.capt = w.waiting = False
         w.bag_alive, w.hp_alive, w.ne_alive, w.kd, w.kn, w.arrived = 0, 0, 0, 99, 0, None
         w.lastbag = w.lastgold = 0
@@ -216,6 +219,7 @@ else:
         trace("env", f"round={cambc.round_number()} fuel_at_start={f0} turn_budget={cambc.constants.FUEL_PER_TURN if hasattr(cambc.constants, 'FUEL_PER_TURN') else '?'}")
         try:
             me_init()                                     # 20_champs: ME facts, once (traces tag me)
+            apply_phase(w)
             w.boot()
             w.pos = w.fme_root
             seed = opening_seed(w)
@@ -223,7 +227,7 @@ else:
             if seed is not None:
                 s = sense(w)
                 w.set_cur(("farm", seed), s.r, s)
-                w.seed_until = s.r + 2                    # everyone writes the seed before anyone re-prices
+                w.seed, w.seed_until = seed, SEED_UNTIL   # choose keeps it until then unless HEAL / retreat (seeded)
                 trace("choice", f"farm {tname(w, 'farm', seed)} seed slot={w.slot}")
                 broadcast(w, s, 1)
         except Exception as e:
