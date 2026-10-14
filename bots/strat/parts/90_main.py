@@ -94,6 +94,21 @@ else:
                 buy_all(w, s)                     # dead champions may shop [rules]
             broadcast(w, s, 7)
             return
+        if r - w.shards_r >= 20:
+            w.shards_r = r
+            fs = fuel()
+            w.shards = shards_owned(w.me)
+            fs -= fuel()
+            if w.shards_fuel is None or w.shards_fuel < 2:
+                if w.shards_fuel is None:           # the first read also builds the weight table
+                    trace("shards", f"n={w.shards} fuel={fs} (first read: item_count + weight table)")
+                    w.shards_fuel = 0
+                else:
+                    f1 = fuel()
+                    n = w.me.item_count()
+                    f1 -= fuel()
+                    trace("shards", f"n={w.shards} fuel={fs} (read) item_count_alone={f1} len={len(n)}")
+                    w.shards_fuel += 1
         if not w.was_alive:
             w.was_alive = True
             w.status = "done"
@@ -153,7 +168,7 @@ else:
                 break
             trace("exec", f"{op} {tname(w, op, tg)} {st}")
             if st == "failed":
-                w.excl[w.cur] = r + EXCL
+                w.excl[w.cur] = max(w.excl.get(w.cur, 0), r + EXCL)    # keeps a longer exclusion (failed partner)
             w.status = st
             if fuel() < 900_000:
                 break
@@ -190,7 +205,9 @@ else:
         w.kh_until = 0
         w.score = (0, 0)
         w.post = None                                     # posture column last traced
-        w.ward_j, w.ward_tile, w.ward_done, w.ward_tries, w.ward_fails = None, None, False, 0, 0
+        w.ward_done, w.ward_fails = False, {}
+        w.wtiles, w.ward_pending, w.ward_tries = [], set(), {}
+        w.shards, w.shards_r, w.shards_fuel = 0, -99, None                     # shards owned (emblems count their shards), read every 20
         w.act = [0] * 7                                   # mv atk cap chan wait idle dead (turns per tick)
         w.moved = False
         errs = set()
@@ -202,14 +219,8 @@ else:
             w.boot()
             w.pos = w.fme_root
             seed = opening_seed(w)
-            ward_assign(w)                                # ward rush: my draft ward tile first, if I have one
-            if w.ward_tile is not None:
-                s = sense(w)
-                w.set_cur(("ward", w.ward_j), s.r, s)
-                w.seed_until = s.r + 2
-                trace("choice", f"ward {tname(w, 'ward', w.ward_j)} seed slot={w.slot} then={seed}")
-                broadcast(w, s, 0)
-            elif seed is not None:
+            ward_init(w)                                  # pending ward tiles, placed on the way (no round-1 rush)
+            if seed is not None:
                 s = sense(w)
                 w.set_cur(("farm", seed), s.r, s)
                 w.seed_until = s.r + 2                    # everyone writes the seed before anyone re-prices
@@ -238,7 +249,8 @@ else:
                     trace("tick", f"{w.cur[0]} hp={me.health() if alive else 0:.0f} bag={me.gem_count() if alive else 0} "
                                   f"gold={me.gold_count()} fuel={used} fmax={max(fu)} fmed={sorted(fu)[len(fu) // 2]} "
                                   f"pos={w.pos.x},{w.pos.y} act={'/'.join(map(str, w.act))} ph={w.ph} "
-                                  f"score={w.score[0]}-{w.score[1]}")
+                                  f"score={w.score[0]}-{w.score[1]} shards={w.shards} "
+                                  f"str={me.strength() if alive else 0:.0f}")
                 except Exception as e:
                     trace("err", "tick " + err_text(e))
                 fu = []

@@ -31,7 +31,11 @@ MY_RATE = 0.4               # [guess] my gems per round, x 60 rounds out = what 
 HOLD_TURNS = 2              # a new (option, target) is kept this many turns (unless done/failed, HEAL, retreat)
 WARD_VALUE = 8.0            # [guess] g/r of a ward placed at once: dominates the first trip (farm opens at ~1-3 g/r)
 WARD_WALK = 30              # [guess] WARD price = WARD_VALUE x WARD_WALK / (WARD_WALK + walk): 8 here, 3.4 at 40 tiles
-WARD_TRIES = 3              # choices of the ward option before it is given up (timeouts / stuck re-choose it)
+WARD_TRIES = 3              # choices of one ward tile per champion before I give it up (timeouts / stuck re-choose it)
+WARD_DETOUR = 5             # [guess] WARD prices only when walk(me->ward) + walk(ward->goal) - walk(me->goal) <= this
+BANK_NEAR = 8               # [guess] walk to the altar at or below which BANK gets the tempo bonus
+BANK_NEAR_BONUS = 1.0       # [guess] BANK x (1 + this) when the altar is near: a 22-gem bag next to an altar banks now
+KILL_PER_SHARD = 0.15       # [guess] KILL multiplier = prof kill + this x shards owned (emblems count their shards)
 SIGHT_LIVE = 32             # rounds a sighting stays in byte 5 (readers clear it after; the stamp wraps at 128)
 SIGHT_FRESH = 8             # rounds a sighting drives posture (defend / punish) and the stack terms
 SIGHT_OVER = 12             # a weaker sighting overwrites a stronger one older than this
@@ -327,18 +331,94 @@ def e_side(w, p):
     return "kill_their_side" if w.aside[a] == 2 else "kill_our_side"
 
 
+def ward_seen(w, s):
+    """Drop pending ward tiles that already have an ally ward within 2 (seen when the tile is within vision 8)."""
+    near = [j for j in w.ward_pending if w.wtiles[j].chebyshev_distance(s.pos) <= 8]
+    if not near:
+        return
+    try:
+        wt = vision.ward_tiles(Team.ALLY)
+    except Exception:
+        return
+    if wt.is_empty():
+        return
+    for j in near:
+        if not (wt & disk(w.wtiles[j], 2)).is_empty():
+            w.ward_pending.discard(j)
+            trace("ward", f"seen W{j}@{w.wtiles[j].x},{w.wtiles[j].y} placed by an ally")
+
+
+def ward_goal(w, by):
+    """(goal field or None, goal tile) of my current executor; (None, None) = no goal (idle / fall: wards are free);
+    False = no ward now (kill, or a goal I cannot place)."""
+    op, tg = w.cur
+    if op in ("idle", "fall", "dead", "ward"):
+        return None, None                       # ward: only the tile I am walking to prices (ward_prices)
+    if op == "farm" and tg in w.G:
+        return f"g{tg}", w.G[tg].anchor
+    if op == "join" and tg in by:
+        bo, bt = by[tg]
+        h = w.idx.get(bt) if bo == 1 else None
+        return (f"g{h}", w.G[h].anchor) if h in w.G else False
+    if op in ("bank", "hold") and tg is not None and tg < len(w.apos):
+        return f"a{tg}", w.apos[tg]
+    if op in ("shop", "heal"):
+        return "home", w.sp0
+    return False
+
+
+def ward_prices(w, s, by, pm, out):
+    """WARD price per pending tile j: WARD_VALUE x WARD_WALK / (WARD_WALK + walk to it) [guess], only on the way:
+    detour = walk(me->ward) + walk(ward->goal) - walk(me->goal) <= WARD_DETOUR (walks from the cached goal fields
+    and F_me, Chebyshev where none is cached). Skips tiles an ally is walking to (code 0, target j + 1)."""
+    ward_seen(w, s)
+    g = ward_goal(w, by)
+    if g is False:
+        return
+    gkey, gt = g
+    going = {tg - 1 for op, tg in by.values() if op == 0 and 1 <= tg <= 3}
+    gf = w.nav.get(gkey) if gkey else None
+    if gkey == "home" and gf is None:
+        gf = w.F_home
+    dmg = None
+    if gt is not None:
+        dmg = fget(gf, s.pos) if gf is not None else FAR
+        if dmg >= FAR:
+            dmg = s.pos.chebyshev_distance(gt)
+    for j in w.ward_pending:
+        if j in going or w.ward_tries.get(j, 0) >= WARD_TRIES or (w.cur[0] == "ward" and w.cur[1] != j):
+            continue
+        t = w.wtiles[j]
+        cw = max(0, s.pos.chebyshev_distance(t) - 2)       # placement reach 2 [rules]
+        if w.cur != ("ward", j) and gt is not None:
+            # Chebyshev prefilter (a lower bound on the detour), then exact walks from the goal fields: the ward
+            # field "w<j>" is built here on first need (~280k at 80x80, LRU-cached with the other goal fields).
+            # A Chebyshev-only estimate sent Varg 13 rounds round a wall on collision (open1).
+            if cw + max(0, t.chebyshev_distance(gt) - 2) - dmg > WARD_DETOUR:
+                continue
+        wk = fget(w.goal(f"w{j}"), s.pos)
+        if wk >= FAR:                           # standing on a blocked tile (camp spawn): the F_me bound
+            wk = max(cw, fget(w.F_me, t) - 2 - w.fme_root.chebyshev_distance(s.pos))
+            if wk >= FAR - 4:
+                continue
+        if w.cur != ("ward", j) and gt is not None:
+            dwg = fget(gf, t) if gf is not None else FAR
+            if dwg >= FAR:
+                dwg = t.chebyshev_distance(gt)
+            if wk + dwg - dmg > WARD_DETOUR:
+                continue
+        out.append((WARD_VALUE * WARD_WALK / (WARD_WALK + wk) * pm["ward"], "ward", j))
+
+
 def price_all(w, s, cl, by):
     """[(price, option, target)] for every option this turn (multipliers: champion row x posture column)."""
     prof, r = ME["prof"], s.r
     pm = posture(w, s)
     out = []
-    # WARD: my assigned draft ward tile (ward_assign), the first thing on the map; 0 once placed or given up
-    if w.ward_tile is not None and not w.ward_done and w.ward_tries < WARD_TRIES:
-        wk = w.walk_to(f"w{w.ward_j}", s.pos)
-        if wk is None:
-            wk = max(0, s.pos.chebyshev_distance(w.ward_tile) - 2)
-        if wk < FAR:
-            out.append((WARD_VALUE * WARD_WALK / (WARD_WALK + wk) * pm["ward"], "ward", w.ward_j))
+    # WARD: on the way, not first. A pending draft ward tile prices only when its detour from my current goal is
+    # <= WARD_DETOUR, or when I am idle / falling back (or already walking to it); 0 once my ward is placed
+    if not w.ward_done and w.ward_pending:
+        ward_prices(w, s, by, pm, out)
     # FARM over the ~6 nearest groups by F_me (+ the current target, + cleared groups seen)
     cand = list(w.near6)
     cur = w.cur
@@ -365,9 +445,13 @@ def price_all(w, s, cl, by):
         k = need_k(w, s, h, c)                  # bodies the live clear model needs, me + c claimants at least
         if k is None or (c == 0 and k >= 2 and r < w.pair_until):
             continue
-        # [deviation] spec: "claimants >= bodies needed prices 0 for me". Measured 15 Oct (bench fix7/fix8 vs fix6):
-        # that gate, even for solo groups only, lost rows A and raised elkring deaths 5 -> 17-19 (elks taken by too
-        # few bodies). Extra bodies instead price value / bodies, which already makes crowding unattractive.
+        # One claimant per SOLO group: an ally broadcasts farm on a group the draft says needs 1 body -> 0 for me
+        # (user's plan, 15 Oct late). Groups needing >= 2 keep the per-body split (value / bodies). History: the gate
+        # on ALL groups (fix7/fix8) lost rows A and raised elkring deaths 5 -> 17-19 (elks under-bodied). Tried with
+        # "and my live model could solo it": the weaker champion joined the stronger one's group and the stronger
+        # one then left it (collision A, open1), so the draft's need decides alone.
+        if c >= 1 and o.need <= 1:
+            continue
         if h == dead_g or (s.plose > FARM_PLOSE and s.near_e <= 5):
             continue                            # an ally died farming it recently, or outnumbered here
         wk = w.walk_to(f"g{h}", s.pos)
@@ -402,9 +486,13 @@ def price_all(w, s, cl, by):
             P = s.P
             # [deviation] the risk of holding the bag is ADDED to BANK (PRICES: "at bag >= 20 with an enemy
             # within 8, risk dominates and BANK wins"); subtracting it would stop every bank near an enemy.
-            out.append((s.bag * (1 + P) / (wk + max(1, -(-s.bag // 10))) * prof["bank"] * pm["bank_risk"], "bank", a))
+            # BANK_NEAR_BONUS [guess]: tempo, a bag next to an altar banks now (ladder: 22 gems carried 40 rounds)
+            near = 1 + BANK_NEAR_BONUS if wk <= BANK_NEAR else 1
+            out.append((s.bag * (1 + P) * near / (wk + max(1, -(-s.bag // 10))) * prof["bank"] * pm["bank_risk"],
+                        "bank", a))
     # KILL: closable targets only
     reach = ME.get("range", 1) + 1 + (2 if ME.get("has_dash") else 0)
+    kmul = prof["kill"] + KILL_PER_SHARD * w.shards     # scales with shards owned (read every 20 rounds, 90_main)
     for c, p, hp, bag, dd, st in s.enemies:
         ttk = -(-int(hp) // int(s.S))
         fin = ttk <= 2                          # finisher: dies in <= 2 of my hits
@@ -429,7 +517,7 @@ def price_all(w, s, cl, by):
         risk = pl * (s.bag + 60 * THEIR_RATE)
         # [deviation] (value - risk) / rounds: PRICES' value / rounds - risk subtracts gems from gems/round, so an
         # even fight never priced and farmers took hits without answering
-        out.append(((value - risk) / max(1, rounds) * prof["kill"] * pm[e_side(w, p)], "kill", int(c)))
+        out.append(((value - risk) / max(1, rounds) * kmul * pm[e_side(w, p)], "kill", int(c)))
     # HOLD: contested altar, stun or lock gold, a fresh sighting there
     if s.sc and s.sage < SIGHT_LIVE:
         a = s.sa
@@ -531,8 +619,8 @@ def tname(w, op, tg):
         return f"g{tg}@{o.anchor.x},{o.anchor.y}" if o else str(tg)
     if op in ("bank", "hold"):
         return f"A{tg}"
-    if op == "ward" and w.ward_tile is not None:
-        return f"W{tg}@{w.ward_tile.x},{w.ward_tile.y}"
+    if op == "ward" and tg is not None and tg < len(w.wtiles):
+        return f"W{tg}@{w.wtiles[tg].x},{w.wtiles[tg].y}"
     return str(tg)
 
 

@@ -830,7 +830,9 @@ PROFILES = {
     # bank 1.1 dash 2 makes her hard to catch, a good gem runner; kill 0.9 dash closes and the reset adds a hit,
     # but no stun to hold a target; hold 0.0 no stun (later: the altar-lock buyer); join 1.0.
     # Item: Strength first; Treasure (150) pays back only after ~750 gold of base income (profile), a mid-game buy.
-    1: _row(1.2, 1.2, 1.1, 0.9, 0.0, 1.0, 1.0, _IT.MONSTER_SHARD_OF_STRENGTH, 0.17, 1.0),
+    # gold 1.6 [aggressive guess, user's plan 15 Oct late]: her gold plan (shards -> kills) was not happening on the
+    # ladder (fewer shards than the others, no fights); was 1.2, the bare +20 % passive.
+    1: _row(1.2, 1.6, 1.1, 0.9, 0.0, 1.0, 1.0, _IT.MONSTER_SHARD_OF_STRENGTH, 0.17, 1.0),
     # Stellar [guess all]: farm 1.5 spells deal ~77/turn vs 35 Str (2.2x), cut for cast-only-standing and 2 casts per
     # 8; bank 1.2 750 HP, fragile carrier; kill 1.2 235 burst at range 4 finishes carriers; hold 0.5 no stun;
     # join 1.2 area spell on groups, needs a frontline. Item: Focus (profile; +34/cycle vs +28 for Strength).
@@ -847,6 +849,34 @@ PROFILES = {
 _TYPE_TO_DRAFT = (0, 1, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10)     # ChampionType -> ChampionDraft [sdk enums]
 
 ME = {}
+_SHARD_W = []               # item_count() index -> shards it stands for (shard 1, emblem its combine_count, else 0)
+
+
+def shards_owned(c):
+    """Shards bought so far: sum of item_count() weighted by _SHARD_W (built on first use from ItemType.result() /
+    combine_count() [sdk]: an item that combines is a shard; the item it combines into counts that many)."""
+    try:
+        n = c.item_count()
+    except Exception:
+        return 0
+    if len(_SHARD_W) != len(n):
+        _SHARD_W[:] = [0] * len(n)
+        for i in range(len(n)):
+            try:
+                it = cambc.ItemType(i)
+                res = it.result()
+                if res is not None:
+                    _SHARD_W[i] = 1
+                    j = int(res)
+                    if 0 <= j < len(n):
+                        _SHARD_W[j] = max(_SHARD_W[j], it.combine_count())
+            except Exception:
+                pass
+    t = 0
+    for i, k in enumerate(n):
+        if k:
+            t += k * _SHARD_W[i]
+    return t
 
 
 def me_init():
@@ -1081,7 +1111,7 @@ class World:
         elif k == "a":
             roots = disk(self.apos[int(key[1:])], 1) & ~blk
         elif k == "w":                          # ward j: any free tile within 2 of its tile (placement reach 2 [rules])
-            roots = disk(self.ward_tile, 2) & ~blk
+            roots = disk(self.wtiles[int(key[1:])], 2) & ~blk
         else:
             roots = self.sp & ~blk
         f = DistanceField()
@@ -1288,50 +1318,39 @@ def opening_seed(w):
     return slots[w.slot] if w.slot < len(slots) else None
 
 
-def ward_assign(w):
-    """Round 1, no comms: the draft's ward tiles (d['wards'], up to 3, in draft order) go one per champion; ward j
-    goes to the free roster slot whose opening group (opening_slots) is nearest to it by Chebyshev distance (a slot
-    without one: our spawn), ties to the lower slot. Every champion computes the same table from the same inputs.
-    Sets w.ward_j / w.ward_tile for me (None when I have no ward to place)."""
-    w.ward_j, w.ward_tile = None, None
+def ward_init(w):
+    """Wards on the way (15 Oct, late): the draft's ward tiles (d['wards'], up to 3) are a team list of pending tiles
+    for the whole game. No round-1 assignment and no rush: any champion whose own ward is still unplaced (one per
+    champion, permanent [rules]) places a pending one when it is on its way (WARD price, 40_prices). w.wtiles[j] is
+    tile j; w.ward_pending the indices not yet seen placed (an ally ward seen within 2 of the tile, or mine)."""
+    w.wtiles, w.ward_pending, w.ward_tries = [], set(), {}
     d = w.d
     if not d or not d.get("wards"):
         return
-    slots = opening_slots(w)
-    T = max(1, len(w.roster))
-    free = list(range(T))
     for j, (x, y) in enumerate(d["wards"][:3]):
-        if not free:
-            break
-        t = V(x, y)
-        best = None
-        for k in free:
-            a = w.G[slots[k]].anchor if k < len(slots) else w.sp0
-            dk = a.chebyshev_distance(t)
-            if best is None or dk < best[0]:
-                best = (dk, k)
-        free.remove(best[1])
-        if best[1] == w.slot:
-            w.ward_j, w.ward_tile = j, t
-            return
+        w.wtiles.append(V(x, y))
+        w.ward_pending.add(j)
 
 
 def opening_slots(w):
-    """Every champion computes the same list with no comms: groups on our side (0) and contested (1), ranked by
-    value / (d_us + clear_rounds) with a generic champion (CHAMP_STR) and gold at G2G(1); a 1-body group fills
-    one slot, a 2-body group two; slot i takes entry i. Seeds only the first choice."""
-    rank = []
+    """Every champion computes the same list with no comms. Groups on our side (0) and contested (1), ranked by the
+    walk from our spawn (d_us; ties: higher value per round). Solo groups (need 1) first, one slot each; then pair groups
+    (need 2), two consecutive slots each (both bodies on the same pair). Slot i takes entry i, so pairs only get
+    slots once every champion before them has a solo group. Seeds only the first choice."""
+    solo, pair = [], []
     for h in w.order:
         o = w.G[h]
         if o.side > 1 or o.d_us >= 255 or o.need > 2:
             continue
         hp = sum(m[0] for m in o.mons)
         cr = -(-hp // (CHAMP_STR * o.need))
-        rank.append(((o.gems + g2g(1) * o.gold) / (o.d_us + cr + 1), -h, h, o.need))
-    rank.sort(reverse=True)
-    slots = []
-    for _v, _n, h, need in rank:
-        slots += [h] * need
+        key = (o.d_us, -(o.gems + g2g(1) * o.gold) / (o.d_us + cr + 1), h)
+        (solo if o.need <= 1 else pair).append(key)
+    solo.sort()
+    pair.sort()
+    slots = [k[2] for k in solo]
+    for k in pair:
+        slots += [k[2], k[2]]
     return slots
 
 # ---- 40_prices.py ----
@@ -1368,7 +1387,11 @@ MY_RATE = 0.4               # [guess] my gems per round, x 60 rounds out = what 
 HOLD_TURNS = 2              # a new (option, target) is kept this many turns (unless done/failed, HEAL, retreat)
 WARD_VALUE = 8.0            # [guess] g/r of a ward placed at once: dominates the first trip (farm opens at ~1-3 g/r)
 WARD_WALK = 30              # [guess] WARD price = WARD_VALUE x WARD_WALK / (WARD_WALK + walk): 8 here, 3.4 at 40 tiles
-WARD_TRIES = 3              # choices of the ward option before it is given up (timeouts / stuck re-choose it)
+WARD_TRIES = 3              # choices of one ward tile per champion before I give it up (timeouts / stuck re-choose it)
+WARD_DETOUR = 5             # [guess] WARD prices only when walk(me->ward) + walk(ward->goal) - walk(me->goal) <= this
+BANK_NEAR = 8               # [guess] walk to the altar at or below which BANK gets the tempo bonus
+BANK_NEAR_BONUS = 1.0       # [guess] BANK x (1 + this) when the altar is near: a 22-gem bag next to an altar banks now
+KILL_PER_SHARD = 0.15       # [guess] KILL multiplier = prof kill + this x shards owned (emblems count their shards)
 SIGHT_LIVE = 32             # rounds a sighting stays in byte 5 (readers clear it after; the stamp wraps at 128)
 SIGHT_FRESH = 8             # rounds a sighting drives posture (defend / punish) and the stack terms
 SIGHT_OVER = 12             # a weaker sighting overwrites a stronger one older than this
@@ -1664,18 +1687,94 @@ def e_side(w, p):
     return "kill_their_side" if w.aside[a] == 2 else "kill_our_side"
 
 
+def ward_seen(w, s):
+    """Drop pending ward tiles that already have an ally ward within 2 (seen when the tile is within vision 8)."""
+    near = [j for j in w.ward_pending if w.wtiles[j].chebyshev_distance(s.pos) <= 8]
+    if not near:
+        return
+    try:
+        wt = vision.ward_tiles(Team.ALLY)
+    except Exception:
+        return
+    if wt.is_empty():
+        return
+    for j in near:
+        if not (wt & disk(w.wtiles[j], 2)).is_empty():
+            w.ward_pending.discard(j)
+            trace("ward", f"seen W{j}@{w.wtiles[j].x},{w.wtiles[j].y} placed by an ally")
+
+
+def ward_goal(w, by):
+    """(goal field or None, goal tile) of my current executor; (None, None) = no goal (idle / fall: wards are free);
+    False = no ward now (kill, or a goal I cannot place)."""
+    op, tg = w.cur
+    if op in ("idle", "fall", "dead", "ward"):
+        return None, None                       # ward: only the tile I am walking to prices (ward_prices)
+    if op == "farm" and tg in w.G:
+        return f"g{tg}", w.G[tg].anchor
+    if op == "join" and tg in by:
+        bo, bt = by[tg]
+        h = w.idx.get(bt) if bo == 1 else None
+        return (f"g{h}", w.G[h].anchor) if h in w.G else False
+    if op in ("bank", "hold") and tg is not None and tg < len(w.apos):
+        return f"a{tg}", w.apos[tg]
+    if op in ("shop", "heal"):
+        return "home", w.sp0
+    return False
+
+
+def ward_prices(w, s, by, pm, out):
+    """WARD price per pending tile j: WARD_VALUE x WARD_WALK / (WARD_WALK + walk to it) [guess], only on the way:
+    detour = walk(me->ward) + walk(ward->goal) - walk(me->goal) <= WARD_DETOUR (walks from the cached goal fields
+    and F_me, Chebyshev where none is cached). Skips tiles an ally is walking to (code 0, target j + 1)."""
+    ward_seen(w, s)
+    g = ward_goal(w, by)
+    if g is False:
+        return
+    gkey, gt = g
+    going = {tg - 1 for op, tg in by.values() if op == 0 and 1 <= tg <= 3}
+    gf = w.nav.get(gkey) if gkey else None
+    if gkey == "home" and gf is None:
+        gf = w.F_home
+    dmg = None
+    if gt is not None:
+        dmg = fget(gf, s.pos) if gf is not None else FAR
+        if dmg >= FAR:
+            dmg = s.pos.chebyshev_distance(gt)
+    for j in w.ward_pending:
+        if j in going or w.ward_tries.get(j, 0) >= WARD_TRIES or (w.cur[0] == "ward" and w.cur[1] != j):
+            continue
+        t = w.wtiles[j]
+        cw = max(0, s.pos.chebyshev_distance(t) - 2)       # placement reach 2 [rules]
+        if w.cur != ("ward", j) and gt is not None:
+            # Chebyshev prefilter (a lower bound on the detour), then exact walks from the goal fields: the ward
+            # field "w<j>" is built here on first need (~280k at 80x80, LRU-cached with the other goal fields).
+            # A Chebyshev-only estimate sent Varg 13 rounds round a wall on collision (open1).
+            if cw + max(0, t.chebyshev_distance(gt) - 2) - dmg > WARD_DETOUR:
+                continue
+        wk = fget(w.goal(f"w{j}"), s.pos)
+        if wk >= FAR:                           # standing on a blocked tile (camp spawn): the F_me bound
+            wk = max(cw, fget(w.F_me, t) - 2 - w.fme_root.chebyshev_distance(s.pos))
+            if wk >= FAR - 4:
+                continue
+        if w.cur != ("ward", j) and gt is not None:
+            dwg = fget(gf, t) if gf is not None else FAR
+            if dwg >= FAR:
+                dwg = t.chebyshev_distance(gt)
+            if wk + dwg - dmg > WARD_DETOUR:
+                continue
+        out.append((WARD_VALUE * WARD_WALK / (WARD_WALK + wk) * pm["ward"], "ward", j))
+
+
 def price_all(w, s, cl, by):
     """[(price, option, target)] for every option this turn (multipliers: champion row x posture column)."""
     prof, r = ME["prof"], s.r
     pm = posture(w, s)
     out = []
-    # WARD: my assigned draft ward tile (ward_assign), the first thing on the map; 0 once placed or given up
-    if w.ward_tile is not None and not w.ward_done and w.ward_tries < WARD_TRIES:
-        wk = w.walk_to(f"w{w.ward_j}", s.pos)
-        if wk is None:
-            wk = max(0, s.pos.chebyshev_distance(w.ward_tile) - 2)
-        if wk < FAR:
-            out.append((WARD_VALUE * WARD_WALK / (WARD_WALK + wk) * pm["ward"], "ward", w.ward_j))
+    # WARD: on the way, not first. A pending draft ward tile prices only when its detour from my current goal is
+    # <= WARD_DETOUR, or when I am idle / falling back (or already walking to it); 0 once my ward is placed
+    if not w.ward_done and w.ward_pending:
+        ward_prices(w, s, by, pm, out)
     # FARM over the ~6 nearest groups by F_me (+ the current target, + cleared groups seen)
     cand = list(w.near6)
     cur = w.cur
@@ -1702,9 +1801,13 @@ def price_all(w, s, cl, by):
         k = need_k(w, s, h, c)                  # bodies the live clear model needs, me + c claimants at least
         if k is None or (c == 0 and k >= 2 and r < w.pair_until):
             continue
-        # [deviation] spec: "claimants >= bodies needed prices 0 for me". Measured 15 Oct (bench fix7/fix8 vs fix6):
-        # that gate, even for solo groups only, lost rows A and raised elkring deaths 5 -> 17-19 (elks taken by too
-        # few bodies). Extra bodies instead price value / bodies, which already makes crowding unattractive.
+        # One claimant per SOLO group: an ally broadcasts farm on a group the draft says needs 1 body -> 0 for me
+        # (user's plan, 15 Oct late). Groups needing >= 2 keep the per-body split (value / bodies). History: the gate
+        # on ALL groups (fix7/fix8) lost rows A and raised elkring deaths 5 -> 17-19 (elks under-bodied). Tried with
+        # "and my live model could solo it": the weaker champion joined the stronger one's group and the stronger
+        # one then left it (collision A, open1), so the draft's need decides alone.
+        if c >= 1 and o.need <= 1:
+            continue
         if h == dead_g or (s.plose > FARM_PLOSE and s.near_e <= 5):
             continue                            # an ally died farming it recently, or outnumbered here
         wk = w.walk_to(f"g{h}", s.pos)
@@ -1739,9 +1842,13 @@ def price_all(w, s, cl, by):
             P = s.P
             # [deviation] the risk of holding the bag is ADDED to BANK (PRICES: "at bag >= 20 with an enemy
             # within 8, risk dominates and BANK wins"); subtracting it would stop every bank near an enemy.
-            out.append((s.bag * (1 + P) / (wk + max(1, -(-s.bag // 10))) * prof["bank"] * pm["bank_risk"], "bank", a))
+            # BANK_NEAR_BONUS [guess]: tempo, a bag next to an altar banks now (ladder: 22 gems carried 40 rounds)
+            near = 1 + BANK_NEAR_BONUS if wk <= BANK_NEAR else 1
+            out.append((s.bag * (1 + P) * near / (wk + max(1, -(-s.bag // 10))) * prof["bank"] * pm["bank_risk"],
+                        "bank", a))
     # KILL: closable targets only
     reach = ME.get("range", 1) + 1 + (2 if ME.get("has_dash") else 0)
+    kmul = prof["kill"] + KILL_PER_SHARD * w.shards     # scales with shards owned (read every 20 rounds, 90_main)
     for c, p, hp, bag, dd, st in s.enemies:
         ttk = -(-int(hp) // int(s.S))
         fin = ttk <= 2                          # finisher: dies in <= 2 of my hits
@@ -1766,7 +1873,7 @@ def price_all(w, s, cl, by):
         risk = pl * (s.bag + 60 * THEIR_RATE)
         # [deviation] (value - risk) / rounds: PRICES' value / rounds - risk subtracts gems from gems/round, so an
         # even fight never priced and farmers took hits without answering
-        out.append(((value - risk) / max(1, rounds) * prof["kill"] * pm[e_side(w, p)], "kill", int(c)))
+        out.append(((value - risk) / max(1, rounds) * kmul * pm[e_side(w, p)], "kill", int(c)))
     # HOLD: contested altar, stun or lock gold, a fresh sighting there
     if s.sc and s.sage < SIGHT_LIVE:
         a = s.sa
@@ -1868,8 +1975,8 @@ def tname(w, op, tg):
         return f"g{tg}@{o.anchor.x},{o.anchor.y}" if o else str(tg)
     if op in ("bank", "hold"):
         return f"A{tg}"
-    if op == "ward" and w.ward_tile is not None:
-        return f"W{tg}@{w.ward_tile.x},{w.ward_tile.y}"
+    if op == "ward" and tg is not None and tg < len(w.wtiles):
+        return f"W{tg}@{w.wtiles[tg].x},{w.wtiles[tg].y}"
     return str(tg)
 
 
@@ -1939,7 +2046,7 @@ Timeout = walk estimate + 10 rounds, plus the option's own work (clear + capture
 def _set_cur(self, new, r, s):
     op, tg = new
     self.cur, self.started, self.status = new, r, "going"
-    self.kd, self.kn, self.arrived = 99, 0, None
+    self.kd, self.kn, self.arrived, self.waited = 99, 0, None, 0
     self.lastbag, self.lastgold = s.bag, s.gold
     walk, work = 0, 0
     if op == "farm" and tg in self.G:
@@ -1962,11 +2069,12 @@ def _set_cur(self, new, r, s):
         walk = 15
     elif op == "heal":
         walk, work = 10, 7                      # step out of reach, 5-turn recall, the heal turn on spawn
-    elif op == "ward" and self.ward_tile is not None:
-        self.ward_tries += 1                    # WARD_TRIES choices at most (no stall)
-        walk = fget(self.F_me, self.ward_tile)
+    elif op == "ward" and tg is not None and tg < len(self.wtiles):
+        self.ward_tries[tg] = self.ward_tries.get(tg, 0) + 1    # WARD_TRIES choices per tile at most (no stall)
+        t = self.wtiles[tg]
+        walk = fget(self.F_me, t)
         if walk >= FAR:
-            walk = 2 * s.pos.chebyshev_distance(self.ward_tile)
+            walk = 2 * s.pos.chebyshev_distance(t)
         work = 3
     self.deadline = r + min(walk, 150) + 10 + work
 
@@ -1974,6 +2082,8 @@ def _set_cur(self, new, r, s):
 World.set_cur = _set_cur
 
 
+WAIT_CAP = 10               # [guess] rounds of pair waiting before the take fails ("failed partner")
+WAIT_EXCL = 30              # [guess] rounds that (farm, group) is excluded after a failed partner wait
 RETREAT_HP = 0.6            # [guess] fallback retreats from enemies within 4 below this HP fraction
 
 
@@ -2054,6 +2164,15 @@ def exec_farm(w, s, h):
             near = min(p.chebyshev_distance(s.pos) for _c, _hp, p, _st in lv)
             if near > 4:
                 w.step_to(f"g{h}", s)
+            else:
+                w.waited += 1                   # counts rounds waiting at the group, not walking to it
+                if w.waited >= WAIT_CAP:
+                    # no partner in WAIT_CAP rounds: give the pair up for WAIT_EXCL rounds and no un-partnered pair
+                    # takes for as long (40_prices pair_until), so the next choice is the best solo group
+                    w.excl[("farm", h)] = s.r + WAIT_EXCL
+                    w.pair_until = max(w.pair_until, s.r + WAIT_EXCL)
+                    trace("exec", f"farm {tname(w, 'farm', h)} failed partner waited={w.waited}")
+                    return "failed"
             w.waiting = True
             return "going"
         if tgt and s.can_attack:
@@ -2275,15 +2394,15 @@ WARD_FAILS = 2              # place_ward failures (False / raise / no placement 
 
 
 def exec_ward(w, s, j):
-    """Walk to within 2 of my draft ward tile (goal field "w<j>"), place the ward on the placement tile nearest it,
-    done. Unreachable or WARD_FAILS failed placements: done without a ward (traced `ward skip`)."""
-    t = w.ward_tile
-    if w.ward_done or t is None or j != w.ward_j:
+    """Walk to within 2 of pending draft ward tile j (goal field "w<j>"), place my ward on the placement tile nearest
+    it, done. Unreachable or WARD_FAILS failed placements: tile j dropped from my pending list (traced `ward skip`)."""
+    if w.ward_done or j is None or j not in w.ward_pending:
         return "done"
+    t = w.wtiles[j]
     key = f"w{j}"
     v = fget(w.goal(key), s.pos)
-    if v >= FAR:
-        w.ward_done = True
+    if v >= FAR and fget(w.F_me, t) >= FAR:     # FAR on my own tile alone = standing on a camp spawn tile
+        w.ward_pending.discard(j)
         trace("ward", f"skip W{j}@{t.x},{t.y} unreachable")
         return "done"
     if v > 0:
@@ -2304,11 +2423,12 @@ def exec_ward(w, s, j):
             trace("ward", f"err W{j} {q.x},{q.y} {err_text(e)}")
         if ok:
             w.ward_done = True
+            w.ward_pending.discard(j)
             trace("ward", f"place {q.x},{q.y} W{j}@{t.x},{t.y} slot={w.slot} start={w.started}")
             return "done"
-    w.ward_fails += 1
-    if w.ward_fails >= WARD_FAILS:
-        w.ward_done = True
+    w.ward_fails[j] = w.ward_fails.get(j, 0) + 1
+    if w.ward_fails[j] >= WARD_FAILS:
+        w.ward_pending.discard(j)
         trace("ward", f"skip W{j}@{t.x},{t.y} failed tiles={len(ps)}")
         return "done"
     return "going"
@@ -2414,6 +2534,21 @@ else:
                 buy_all(w, s)                     # dead champions may shop [rules]
             broadcast(w, s, 7)
             return
+        if r - w.shards_r >= 20:
+            w.shards_r = r
+            fs = fuel()
+            w.shards = shards_owned(w.me)
+            fs -= fuel()
+            if w.shards_fuel is None or w.shards_fuel < 2:
+                if w.shards_fuel is None:           # the first read also builds the weight table
+                    trace("shards", f"n={w.shards} fuel={fs} (first read: item_count + weight table)")
+                    w.shards_fuel = 0
+                else:
+                    f1 = fuel()
+                    n = w.me.item_count()
+                    f1 -= fuel()
+                    trace("shards", f"n={w.shards} fuel={fs} (read) item_count_alone={f1} len={len(n)}")
+                    w.shards_fuel += 1
         if not w.was_alive:
             w.was_alive = True
             w.status = "done"
@@ -2473,7 +2608,7 @@ else:
                 break
             trace("exec", f"{op} {tname(w, op, tg)} {st}")
             if st == "failed":
-                w.excl[w.cur] = r + EXCL
+                w.excl[w.cur] = max(w.excl.get(w.cur, 0), r + EXCL)    # keeps a longer exclusion (failed partner)
             w.status = st
             if fuel() < 900_000:
                 break
@@ -2510,7 +2645,9 @@ else:
         w.kh_until = 0
         w.score = (0, 0)
         w.post = None                                     # posture column last traced
-        w.ward_j, w.ward_tile, w.ward_done, w.ward_tries, w.ward_fails = None, None, False, 0, 0
+        w.ward_done, w.ward_fails = False, {}
+        w.wtiles, w.ward_pending, w.ward_tries = [], set(), {}
+        w.shards, w.shards_r, w.shards_fuel = 0, -99, None                     # shards owned (emblems count their shards), read every 20
         w.act = [0] * 7                                   # mv atk cap chan wait idle dead (turns per tick)
         w.moved = False
         errs = set()
@@ -2522,14 +2659,8 @@ else:
             w.boot()
             w.pos = w.fme_root
             seed = opening_seed(w)
-            ward_assign(w)                                # ward rush: my draft ward tile first, if I have one
-            if w.ward_tile is not None:
-                s = sense(w)
-                w.set_cur(("ward", w.ward_j), s.r, s)
-                w.seed_until = s.r + 2
-                trace("choice", f"ward {tname(w, 'ward', w.ward_j)} seed slot={w.slot} then={seed}")
-                broadcast(w, s, 0)
-            elif seed is not None:
+            ward_init(w)                                  # pending ward tiles, placed on the way (no round-1 rush)
+            if seed is not None:
                 s = sense(w)
                 w.set_cur(("farm", seed), s.r, s)
                 w.seed_until = s.r + 2                    # everyone writes the seed before anyone re-prices
@@ -2558,7 +2689,8 @@ else:
                     trace("tick", f"{w.cur[0]} hp={me.health() if alive else 0:.0f} bag={me.gem_count() if alive else 0} "
                                   f"gold={me.gold_count()} fuel={used} fmax={max(fu)} fmed={sorted(fu)[len(fu) // 2]} "
                                   f"pos={w.pos.x},{w.pos.y} act={'/'.join(map(str, w.act))} ph={w.ph} "
-                                  f"score={w.score[0]}-{w.score[1]}")
+                                  f"score={w.score[0]}-{w.score[1]} shards={w.shards} "
+                                  f"str={me.strength() if alive else 0:.0f}")
                 except Exception as e:
                     trace("err", "tick " + err_text(e))
                 fu = []

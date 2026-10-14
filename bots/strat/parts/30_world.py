@@ -185,7 +185,7 @@ class World:
         elif k == "a":
             roots = disk(self.apos[int(key[1:])], 1) & ~blk
         elif k == "w":                          # ward j: any free tile within 2 of its tile (placement reach 2 [rules])
-            roots = disk(self.ward_tile, 2) & ~blk
+            roots = disk(self.wtiles[int(key[1:])], 2) & ~blk
         else:
             roots = self.sp & ~blk
         f = DistanceField()
@@ -392,48 +392,37 @@ def opening_seed(w):
     return slots[w.slot] if w.slot < len(slots) else None
 
 
-def ward_assign(w):
-    """Round 1, no comms: the draft's ward tiles (d['wards'], up to 3, in draft order) go one per champion; ward j
-    goes to the free roster slot whose opening group (opening_slots) is nearest to it by Chebyshev distance (a slot
-    without one: our spawn), ties to the lower slot. Every champion computes the same table from the same inputs.
-    Sets w.ward_j / w.ward_tile for me (None when I have no ward to place)."""
-    w.ward_j, w.ward_tile = None, None
+def ward_init(w):
+    """Wards on the way (15 Oct, late): the draft's ward tiles (d['wards'], up to 3) are a team list of pending tiles
+    for the whole game. No round-1 assignment and no rush: any champion whose own ward is still unplaced (one per
+    champion, permanent [rules]) places a pending one when it is on its way (WARD price, 40_prices). w.wtiles[j] is
+    tile j; w.ward_pending the indices not yet seen placed (an ally ward seen within 2 of the tile, or mine)."""
+    w.wtiles, w.ward_pending, w.ward_tries = [], set(), {}
     d = w.d
     if not d or not d.get("wards"):
         return
-    slots = opening_slots(w)
-    T = max(1, len(w.roster))
-    free = list(range(T))
     for j, (x, y) in enumerate(d["wards"][:3]):
-        if not free:
-            break
-        t = V(x, y)
-        best = None
-        for k in free:
-            a = w.G[slots[k]].anchor if k < len(slots) else w.sp0
-            dk = a.chebyshev_distance(t)
-            if best is None or dk < best[0]:
-                best = (dk, k)
-        free.remove(best[1])
-        if best[1] == w.slot:
-            w.ward_j, w.ward_tile = j, t
-            return
+        w.wtiles.append(V(x, y))
+        w.ward_pending.add(j)
 
 
 def opening_slots(w):
-    """Every champion computes the same list with no comms: groups on our side (0) and contested (1), ranked by
-    value / (d_us + clear_rounds) with a generic champion (CHAMP_STR) and gold at G2G(1); a 1-body group fills
-    one slot, a 2-body group two; slot i takes entry i. Seeds only the first choice."""
-    rank = []
+    """Every champion computes the same list with no comms. Groups on our side (0) and contested (1), ranked by the
+    walk from our spawn (d_us; ties: higher value per round). Solo groups (need 1) first, one slot each; then pair groups
+    (need 2), two consecutive slots each (both bodies on the same pair). Slot i takes entry i, so pairs only get
+    slots once every champion before them has a solo group. Seeds only the first choice."""
+    solo, pair = [], []
     for h in w.order:
         o = w.G[h]
         if o.side > 1 or o.d_us >= 255 or o.need > 2:
             continue
         hp = sum(m[0] for m in o.mons)
         cr = -(-hp // (CHAMP_STR * o.need))
-        rank.append(((o.gems + g2g(1) * o.gold) / (o.d_us + cr + 1), -h, h, o.need))
-    rank.sort(reverse=True)
-    slots = []
-    for _v, _n, h, need in rank:
-        slots += [h] * need
+        key = (o.d_us, -(o.gems + g2g(1) * o.gold) / (o.d_us + cr + 1), h)
+        (solo if o.need <= 1 else pair).append(key)
+    solo.sort()
+    pair.sort()
+    slots = [k[2] for k in solo]
+    for k in pair:
+        slots += [k[2], k[2]]
     return slots

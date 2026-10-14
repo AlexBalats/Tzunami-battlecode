@@ -46,7 +46,9 @@ PROFILES = {
     # bank 1.1 dash 2 makes her hard to catch, a good gem runner; kill 0.9 dash closes and the reset adds a hit,
     # but no stun to hold a target; hold 0.0 no stun (later: the altar-lock buyer); join 1.0.
     # Item: Strength first; Treasure (150) pays back only after ~750 gold of base income (profile), a mid-game buy.
-    1: _row(1.2, 1.2, 1.1, 0.9, 0.0, 1.0, 1.0, _IT.MONSTER_SHARD_OF_STRENGTH, 0.17, 1.0),
+    # gold 1.6 [aggressive guess, user's plan 15 Oct late]: her gold plan (shards -> kills) was not happening on the
+    # ladder (fewer shards than the others, no fights); was 1.2, the bare +20 % passive.
+    1: _row(1.2, 1.6, 1.1, 0.9, 0.0, 1.0, 1.0, _IT.MONSTER_SHARD_OF_STRENGTH, 0.17, 1.0),
     # Stellar [guess all]: farm 1.5 spells deal ~77/turn vs 35 Str (2.2x), cut for cast-only-standing and 2 casts per
     # 8; bank 1.2 750 HP, fragile carrier; kill 1.2 235 burst at range 4 finishes carriers; hold 0.5 no stun;
     # join 1.2 area spell on groups, needs a frontline. Item: Focus (profile; +34/cycle vs +28 for Strength).
@@ -63,6 +65,34 @@ PROFILES = {
 _TYPE_TO_DRAFT = (0, 1, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10)     # ChampionType -> ChampionDraft [sdk enums]
 
 ME = {}
+_SHARD_W = []               # item_count() index -> shards it stands for (shard 1, emblem its combine_count, else 0)
+
+
+def shards_owned(c):
+    """Shards bought so far: sum of item_count() weighted by _SHARD_W (built on first use from ItemType.result() /
+    combine_count() [sdk]: an item that combines is a shard; the item it combines into counts that many)."""
+    try:
+        n = c.item_count()
+    except Exception:
+        return 0
+    if len(_SHARD_W) != len(n):
+        _SHARD_W[:] = [0] * len(n)
+        for i in range(len(n)):
+            try:
+                it = cambc.ItemType(i)
+                res = it.result()
+                if res is not None:
+                    _SHARD_W[i] = 1
+                    j = int(res)
+                    if 0 <= j < len(n):
+                        _SHARD_W[j] = max(_SHARD_W[j], it.combine_count())
+            except Exception:
+                pass
+    t = 0
+    for i, k in enumerate(n):
+        if k:
+            t += k * _SHARD_W[i]
+    return t
 
 
 def me_init():

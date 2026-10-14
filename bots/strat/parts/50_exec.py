@@ -9,7 +9,7 @@ Timeout = walk estimate + 10 rounds, plus the option's own work (clear + capture
 def _set_cur(self, new, r, s):
     op, tg = new
     self.cur, self.started, self.status = new, r, "going"
-    self.kd, self.kn, self.arrived = 99, 0, None
+    self.kd, self.kn, self.arrived, self.waited = 99, 0, None, 0
     self.lastbag, self.lastgold = s.bag, s.gold
     walk, work = 0, 0
     if op == "farm" and tg in self.G:
@@ -32,11 +32,12 @@ def _set_cur(self, new, r, s):
         walk = 15
     elif op == "heal":
         walk, work = 10, 7                      # step out of reach, 5-turn recall, the heal turn on spawn
-    elif op == "ward" and self.ward_tile is not None:
-        self.ward_tries += 1                    # WARD_TRIES choices at most (no stall)
-        walk = fget(self.F_me, self.ward_tile)
+    elif op == "ward" and tg is not None and tg < len(self.wtiles):
+        self.ward_tries[tg] = self.ward_tries.get(tg, 0) + 1    # WARD_TRIES choices per tile at most (no stall)
+        t = self.wtiles[tg]
+        walk = fget(self.F_me, t)
         if walk >= FAR:
-            walk = 2 * s.pos.chebyshev_distance(self.ward_tile)
+            walk = 2 * s.pos.chebyshev_distance(t)
         work = 3
     self.deadline = r + min(walk, 150) + 10 + work
 
@@ -44,6 +45,8 @@ def _set_cur(self, new, r, s):
 World.set_cur = _set_cur
 
 
+WAIT_CAP = 10               # [guess] rounds of pair waiting before the take fails ("failed partner")
+WAIT_EXCL = 30              # [guess] rounds that (farm, group) is excluded after a failed partner wait
 RETREAT_HP = 0.6            # [guess] fallback retreats from enemies within 4 below this HP fraction
 
 
@@ -124,6 +127,15 @@ def exec_farm(w, s, h):
             near = min(p.chebyshev_distance(s.pos) for _c, _hp, p, _st in lv)
             if near > 4:
                 w.step_to(f"g{h}", s)
+            else:
+                w.waited += 1                   # counts rounds waiting at the group, not walking to it
+                if w.waited >= WAIT_CAP:
+                    # no partner in WAIT_CAP rounds: give the pair up for WAIT_EXCL rounds and no un-partnered pair
+                    # takes for as long (40_prices pair_until), so the next choice is the best solo group
+                    w.excl[("farm", h)] = s.r + WAIT_EXCL
+                    w.pair_until = max(w.pair_until, s.r + WAIT_EXCL)
+                    trace("exec", f"farm {tname(w, 'farm', h)} failed partner waited={w.waited}")
+                    return "failed"
             w.waiting = True
             return "going"
         if tgt and s.can_attack:
@@ -345,15 +357,15 @@ WARD_FAILS = 2              # place_ward failures (False / raise / no placement 
 
 
 def exec_ward(w, s, j):
-    """Walk to within 2 of my draft ward tile (goal field "w<j>"), place the ward on the placement tile nearest it,
-    done. Unreachable or WARD_FAILS failed placements: done without a ward (traced `ward skip`)."""
-    t = w.ward_tile
-    if w.ward_done or t is None or j != w.ward_j:
+    """Walk to within 2 of pending draft ward tile j (goal field "w<j>"), place my ward on the placement tile nearest
+    it, done. Unreachable or WARD_FAILS failed placements: tile j dropped from my pending list (traced `ward skip`)."""
+    if w.ward_done or j is None or j not in w.ward_pending:
         return "done"
+    t = w.wtiles[j]
     key = f"w{j}"
     v = fget(w.goal(key), s.pos)
-    if v >= FAR:
-        w.ward_done = True
+    if v >= FAR and fget(w.F_me, t) >= FAR:     # FAR on my own tile alone = standing on a camp spawn tile
+        w.ward_pending.discard(j)
         trace("ward", f"skip W{j}@{t.x},{t.y} unreachable")
         return "done"
     if v > 0:
@@ -374,11 +386,12 @@ def exec_ward(w, s, j):
             trace("ward", f"err W{j} {q.x},{q.y} {err_text(e)}")
         if ok:
             w.ward_done = True
+            w.ward_pending.discard(j)
             trace("ward", f"place {q.x},{q.y} W{j}@{t.x},{t.y} slot={w.slot} start={w.started}")
             return "done"
-    w.ward_fails += 1
-    if w.ward_fails >= WARD_FAILS:
-        w.ward_done = True
+    w.ward_fails[j] = w.ward_fails.get(j, 0) + 1
+    if w.ward_fails[j] >= WARD_FAILS:
+        w.ward_pending.discard(j)
         trace("ward", f"skip W{j}@{t.x},{t.y} failed tiles={len(ps)}")
         return "done"
     return "going"

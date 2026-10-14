@@ -224,3 +224,50 @@ seen on collision (few: defend <-> punish) and corners (economy <-> defend on 3-
 Open: posture flips every ~10-20 rounds on collision (2-enemy sightings age out at 12 rounds on a 4-round stamp);
 `safe_recall` also cancels for a live camp within 3 even when it is asleep; HEAL now re-prices while walking home and
 can flip to farm and back.
+
+## 15 Oct (latest+1): opening tempo (wards on the way, solo openings, pair wait cap, bank tempo, Vesper scaling)
+
+Why: 15 ladder logs (`runs/ladder/*-logs.zip`): opponents bank 66 by round 50 and 100-240 by round 100; our first
+tribute lands at 90-150 (ward rush 47-125 champion-rounds per game, two champions waiting 9-15 turns on the same far
+pair group, a 22-gem bag carried 40 rounds). Build: `python -I tools/assemble.py --bot strat` (2,701 lines).
+
+1. **Wards on the way** (30_world `ward_init`, goal key `w<j>` per tile; 40_prices `ward_seen`, `ward_goal`,
+   `ward_prices`; 50_exec `exec_ward`; 90_main). Round-1 ward seeding and `ward_assign` removed. The draft's ward
+   tiles are a team list pending all game; a champion whose own ward is unplaced prices tile j only when
+   walk(me->ward) + walk(ward->goal) - walk(me->goal) <= `WARD_DETOUR` 5 [guess] (goal = my executor's field: farm /
+   join group, bank / hold altar, home for shop / heal; Chebyshev prefilter, then exact walks from the goal field and
+   the `w<j>` field), or with no goal (idle / fall). Kill: no ward. Tiles an ally walks to (code 0, target j + 1) are
+   skipped; a tile with an ally ward seen within 2 is dropped (`ward seen` trace). `WARD_TRIES` 3 per tile, fails per
+   tile. `exec_ward` no longer calls a tile unreachable while I stand on a camp spawn tile (the `w<j>` field is FAR
+   there; checks F_me).
+2. **Opening targets** (30_world `opening_slots`): side 0/1 groups ranked by d_us; solo groups (need 1) one slot each
+   first, then pair groups two consecutive slots each. 40_prices FARM: an ally's farm broadcast on a need-1 group
+   (draft need) prices it 0 for me; need >= 2 keeps the per-body split. (Tried "and my live model can solo it": the
+   weaker Vesper joined Varg's group and Varg left; dropped.)
+3. **Pair wait cap** (50_exec `exec_farm`): `WAIT_CAP` 10 rounds waiting at the group -> `failed partner` trace,
+   (farm, group) excluded `WAIT_EXCL` 30 rounds and `pair_until` +30 (no un-partnered pair takes), so the next choice
+   is a solo group. 90_main keeps the longer exclusion on failure (`max`).
+4. **Bank tempo** (40_prices BANK): x (1 + `BANK_NEAR_BONUS` 1.0) when the walk to the altar <= `BANK_NEAR` 8 [guess].
+5. **Vesper / kill scaling** (20_champs): Vesper `gold` 1.2 -> 1.6 [aggressive guess, user's plan];
+   `shards_owned()` = item_count() weighted (shard 1, emblem its combine_count) read every 20 rounds into `w.shards`;
+   KILL multiplier = prof kill + `KILL_PER_SHARD` 0.15 x shards [guess]. Fuel [measured]: `item_count()` alone ~7.4k
+   (42 entries), a full read ~35-40k, the first read ~600k (the 42-item weight table, once, round 4).
+6. **Trace**: `tick` gains `shards=` and `str=` (live strength).
+
+Light test [measured, cambc 2.1.5], bench `open3` vs tzunami444 + expanse vs starter (`runs/strat_open3_expanse`).
+Score at the round-50 / round-100 ticks, previous build (`wards1`, `runs/strat_wards_expanse`) -> this one:
+
+| game | r50 before | r50 after | r100 before | r100 after | result after |
+| --- | --- | --- | --- | --- | --- |
+| collision A | 22 | 0 | 66 | 66 | W +674 (was +548) |
+| collision B | 0 | 0 | 66 | 66 | L -132 (was +258) |
+| corners A | 0 | 48 | 214 | 192 | W +198 (was +484) |
+| corners B | 0 | 48 | 70 | 192 | W +540 (was -280) |
+| expanse | 0 | 0 | 22 | 92 | W 1020-626 |
+
+Wards placed (rounds): collision A 13, 60, 73; collision B 57, 175 (W0 counted covered by the ward at 20,24);
+corners A 19, 23 (W0 never); corners B 22, 25, 73; expanse 121 only (2 of 3 never: nothing passes them).
+`failed partner` 0-6 per game. 0 err lines; fuel per turn median 0.78-0.91M, max 2.4M (round-1 / field builds).
+Shards at round 300: Vesper 9-12 (others 6-12). Not done: PRICES.md still says Vesper gold 1.2.
+Open: collision r50 is lower (bags carried to a far centre altar, then a shop trip); far ward tiles on big maps are
+rarely on anyone's way (expanse 1 of 3).
