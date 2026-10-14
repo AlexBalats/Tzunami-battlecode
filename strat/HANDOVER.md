@@ -539,3 +539,60 @@ W +276, corners B L -194; kill choices 30/40/44/18, kills 2/3/1/0, 0 err, fuel m
 145, roam 0.45) chose patrol hunt A6 6 times (r243-592) plus sighting hunt A7 once; each time she switched to farm
 g29 (62,45) ~15 tiles out, never arrived (no visit recorded), 0 kills from it. Open: a patrol never completes while a
 farm near the target beats it on arrival distance (no hysteresis exception), so HUNT_REVISIT never fires.
+
+## 15 Oct: how we tweak (the method, read this before changing anything)
+
+Rule from the user: **numbers first, code only for something fundamentally missing.** Every change is classified
+before it is made, the user gets the list ("numbers: ... / rules: ...") and says go, one agent does it, a light
+local check (2 maps, 4 games vs tzunami444, 1 vs the starter), zip + commit, the user uploads, and the ladder
+logs (`runs/ladder/*-logs.zip`, trace tags `choice exec death tick posture ward shop phase dash reset hunt`)
+decide the next change. Full benches (36 games) are not worth their time; single games flip on tiny changes.
+
+Commits of this cycle, oldest first (each message says what was a number and what was a rule):
+`5933565` first loop · `a994f36` trace on · `6a96722` HEAL + finisher · `831c17a` wards/sighting/posture ·
+`aa21513` opening tempo · `482f381` shard builds · `cbb5370` Vesper phases · `ff930a3` gold to Vesper ·
+`dac2d7e` hunt phase + dash · `7c31b20` death cost + farm-race numbers + patrol.
+
+### What was a number (constants/multipliers in 20_champs PROFILES/phases, 40_prices constants/POSTURE/RACE)
+- Gold value G2G 1.5 -> 0.5 (bags of 200 died in channels). Others' `gold` 1.0 -> 0.05, Vesper 1.2 -> 1.6 -> 3.0.
+- Vesper phases (20_champs): < 15 shards farm 1.5 / gold 3.0 / kill 0.9 / shop 2.0 / bank 1.1; >= 15 (three
+  emblems) farm 0.4 / gold 1.0 / kill 2.5 / bank 1.5 / shop 1.0 / hunt 12 tiles / chase 8 rounds. Her build:
+  Treasure Str, Monster Str, Power Str (user decision).
+- Kill multiplier += 0.15 per shard owned (everyone); appetite x min(1, hp/max/0.6) x max(0.3, 1 - bag/100).
+- KILL_PLOSE 0.45 -> 0.6; Lanchester radius 5-of-target -> 8-of-me; HEAL_K 1.5 -> 2.0 -> 1.5; heal floor
+  P(die) >= 0.8 below 30% HP with an enemy within 8; HEAL 0 when plose <= 0.5 and an enemy within 8.
+- Death cost = min(300, 60 x best raw farm-or-fight price) + bag, used by HEAL and as every fight's risk.
+- Ward: value 8 -> 4, 0 with any bag, none before round 10, detour <= 5 tiles only.
+- Opening: seed holds 40 rounds (was 2); pair wait fails after 10 rounds; WAIT_PARTNER 15 (30 on race maps).
+- Bank: x2 when the altar is within 8; on race maps rounds = 2 x walk + channel.
+- Posture columns (economy/defend/punish) and RACE rows by regime: many/pick-rich -> walk weight 2.0, farm
+  hysteresis 2.0, WAIT_PARTNER 30; few -> 1.0 / 1.2 / 15, defend join 2.0, a pair counts as a stack (STACK_N 2).
+- Choice hold 2 turns (4 lost games), heal included; 3.0x hysteresis while a camp is hitting me.
+
+### What had to be code (something the price list could not express)
+- The HEAL option itself (recall priced by the death it avoids) and, after the ladder, "never recall with an
+  enemy within 6: flee first" (the rules: damage breaks a recall).
+- Finisher kills (ttk <= 2 chaseable within reach + 2 x ttk + 2, ignores the kill bans); the failed-kill
+  exclusion bug (the finisher branch cleared the exclusion the same turn): fixed with `w.kfail`.
+- One-way claim yield on solo groups (both sides yielded -> two champions ping-ponged between two camps and
+  died to camp damage); a champion attacking a camp never yields it; an ally's claim no longer counts as a partner.
+- Wards placed from the draft's ward tiles; sighting byte with count + region; fight convergence (allies within
+  10 of a broadcast kill price JOIN on it); the hunt option (toward a sighting, or in Vesper's phase 2 a patrol
+  to enemy altars weighted by clamp(S/100 - 1, 0, 2), halved after a 3+ stack sighting).
+- Dash micro (escape / close / traverse) and the attack reset: both verified to land in-engine (dash then
+  attack same turn works; reset double-hit 89/95).
+
+### Verified facts worth keeping
+- Ladder environment == home (1.12M fuel on round 1, draft model finishes turn 1 on every map seen, incl.
+  4-pick maps and 71x71). Opponents on the ladder farm 2.0-2.8 gems/round; the starter does 0.7.
+- The losses come in two modes: a pure farm race (few deaths, we walk 55-59% of turns, targets > 12 tiles
+  away in 40-75% of choices) and a 4-5 stack hunting us (27-36% of champion-turns dead). Numbers for one do
+  not help the other; the sighting byte is the only signal that tells them apart in play.
+
+### Open after the last upload (7c31b20)
+- Vesper's patrol never completes: a nearby farm pulls her off ~15 tiles short; it needs the farm's switch
+  protection or "done within 15 tiles".
+- Farm->farm switches before a hit did not drop on race maps (likely switches after the group vanished).
+- The reset is cast on targets the first hit already killed (6/95): skip when target HP <= my strength.
+- The stack mode still kills us; convergence exists but nobody arrives in time. Untested idea: in defend
+  posture on few maps, farm in pairs by default (join 2.0 is not enough).
