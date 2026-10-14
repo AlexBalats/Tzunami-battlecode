@@ -125,22 +125,26 @@ Modes come from the draft-time map model (altar classification, groups per body,
 from the score (`global_submitted_gems()` [sdk]) during play. They are a handful of numbers in the 1,024-byte
 draft memory and one byte of shared state, not code paths.
 
-### Per-champion first item and its gain (`bots/strat/parts/20_champs.py`, `PROFILES`)
+### Per-champion shard build and its gain (`bots/strat/parts/20_champs.py`, `PROFILES`)
+
+`build` is an ordered list of shard types; the shop buys the first whose emblem is not complete (fewer than 5 of
+that shard and no emblem item), so 5 of one family, then the next. After the last emblem it keeps buying the last
+entry (stats stack). `item` = the first entry. The SHOP price uses the current target's cost (30 for every shard).
 
 `item_gain` = gems per round gained per 100 gold spent on the first item **[guess]**:
 `f × (100 / 30) × (share of the cycle's damage one shard adds) + Monster emblem amortised (10 % × 100/150 × f)`,
 with `f = 0.4` g/r per body (between 0.3 measured alive [A12] and the 0.5 used for G2G). Cycle damage per 8 turns
 from the champion profiles. Strength-only clear maths misses spells, splash and resets; the `farm` multiplier carries that.
 
-| Champion | Item | Shard adds per cycle | item_gain | Why this item |
+| Champion | Build (in order) | Shard adds per cycle | item_gain | Why this build |
 | --- | --- | --- | --- | --- |
-| Ryth | Monster shard of Strength | +45 of 550 (8 %) | 0.14 | farm speed: +5 Str beats Health's +1 Str (profile's Health is for tanking) |
-| Vendetta | Monster shard of Strength | +45 of 630 (7 %) | 0.12 | profile: Strength + Monster emblem |
-| Varg | Monster shard of Strength | +45 of 450 (10 %), splash scales too | 0.16 | profile: Strength + Monster emblem |
-| Marcella | Monster shard of Strength | +45 of 505 (9 %) | 0.15 | profile: Strength (+Health); Monster for camps |
-| Vesper Vale | Monster shard of Strength | +45 of 405 (11 %) | 0.17 | Focus is useless to her; Treasure (150) pays back only after ~750 gold of base income, a mid-game buy. Her +20 % gold is the `gold` multiplier (1.2), not item_gain |
-| Stellar | Monster shard of Focus | +34 of 620 (5.5 %) | 0.10 | profile: Focus beats Strength (+34 vs +28) |
-| others (neutral rows) | profile's item, else the starter's Power shard of Strength | ~10 % | 0.12 | placeholder |
+| Ryth | Monster Str, Durability Health, Power Str | +45 of 550 (8 %) | 0.14 | farm speed: +5 Str beats Health's +1 Str (profile's Health is for tanking) |
+| Vendetta | Power Str, Monster Str, Durability Health | +45 of 630 (7 %) | 0.12 | profile: Strength + Monster emblem |
+| Varg | Monster Str, Power Str, Durability Health | +45 of 450 (10 %), splash scales too | 0.16 | profile: Strength + Monster emblem |
+| Marcella | Monster Str, Durability Health, Power Str | +45 of 505 (9 %) | 0.15 | profile: Strength (+Health); Monster for camps |
+| Vesper Vale | Treasure Str, Monster Str, Power Str | +45 of 405 (11 %) | 0.17 | [user decision 14 Oct] Treasure first: the gold snowball (+20 % passive becomes +40 % with the emblem), then Monster for farm speed, Power for fights. Her gold bonus is the `gold` multiplier, not item_gain |
+| Stellar | Monster Str, Power Str (default) | +28 of 620 (4.5 %) | 0.10 | default build (not in our roster) |
+| others (neutral rows) | Monster Str, Power Str | ~10 % | 0.12 | default build, placeholder |
 
 Sanity check against G2G: 0.13 g/r per 100 gold over 1,000 rounds is ~1.3 gems per gold, close to G2G's 1.5 early.
 

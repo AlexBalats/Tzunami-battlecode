@@ -284,14 +284,21 @@ def exec_hold(w, s, a):
 
 
 def buy_all(w, s):
-    item = ME["prof"]["item"]
+    """Buy shards along the profile's build: each buy goes to the first entry whose emblem is not complete
+    (build_target, re-read after every buy so a finished emblem moves on to the next family). Trace per buy."""
+    build = ME["prof"].get("build") or (ME["prof"]["item"],)
     n = 0
     try:
-        while n < 10 and w.me.can_buy(item):
+        while n < 10:
+            item, _c = build_target(w.me, build)
+            ME["target"] = item
+            if not w.me.can_buy(item):
+                break
             w.me.buy(item)
             n += 1
-    except Exception:
-        pass
+            trace("shop", f"buy {item.name} gold={w.me.gold_count()}")
+    except Exception as e:
+        trace("err", "shop " + err_text(e))
     return n
 
 

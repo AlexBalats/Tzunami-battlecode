@@ -542,7 +542,7 @@ def price_all(w, s, cl, by):
         wb = fget(w.F_home, s.pos) if w.F_home is not None else s.pos.chebyshev_distance(w.sp0)
         out.append((pdie * (s.bag + 60 * MY_RATE) / (5 + wb) * prof.get("heal", 1.0), "heal", 0))
     # SHOP
-    item = prof["item"]
+    item = ME.get("target") or prof["item"]      # current build target (set by buy_all), else the first entry
     try:
         cost = item.cost()
     except Exception:

@@ -1,5 +1,5 @@
 """Champion data (no decisions). PROFILES: per-champion multipliers over the six prices (strat/PRICES.md, "Roles and
-modes are multipliers"), the first item to buy for farm speed, and that item's gain. ME: this champion's SDK facts,
+modes are multipliers"), the ordered shard build (`build`; `item` = its first entry) and the gain. ME: this champion's SDK facts,
 filled once by me_init() on round 1.
 
 Keys are int(ChampionDraft) [sdk]: RYTH 0, VESPER_VALE 1, VENDETTA 2, CASSI_AND_ISSAC 3, STELLAR 4, PRISM 5,
@@ -16,50 +16,60 @@ _IT = cambc.ItemType
 _KEYS = ("farm", "gold", "bank", "kill", "hold", "shop", "join", "heal")
 
 
-def _row(farm, gold, bank, kill, hold, shop, join, item, gain, heal=1.0):
+def _row(farm, gold, bank, kill, hold, shop, join, item, gain, heal=1.0, build=None):
+    """build: ordered shard types; the shop buys the first whose emblem is not complete (build_target()).
+    `item` stays the first entry so older readers keep working."""
+    if build is None:
+        build = (item,)
     return {"farm": farm, "gold": gold, "bank": bank, "kill": kill, "hold": hold, "shop": shop, "join": join,
-            "item": item, "item_gain": gain, "heal": heal}
+            "item": build[0], "item_gain": gain, "heal": heal, "build": tuple(build)}
 
 
-NEUTRAL = _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.POWER_SHARD_OF_STRENGTH, 0.12, 1.0)   # starter's shard [guess gain]
+_MS, _TS, _PS, _DH = (_IT.MONSTER_SHARD_OF_STRENGTH, _IT.TREASURE_SHARD_OF_STRENGTH, _IT.POWER_SHARD_OF_STRENGTH,
+                      _IT.DURABILITY_SHARD_OF_HEALTH)
+_B_OTHER = (_MS, _PS)        # [user decision 14 Oct] default build: Monster (farm speed), then Power (fights)
+
+
+NEUTRAL = _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.POWER_SHARD_OF_STRENGTH, 0.12, 1.0, _B_OTHER)   # starter's shard [guess gain]
 
 PROFILES = {
     # Ryth [guess all]: farm 1.1 stun adds 1x Focus and hits connected monsters; bank 0.9 safest carrier (1200 HP),
     # can carry longer; kill 1.2 area stun holds the target (PRICES); hold 1.5 stun breaks channels (PRICES);
     # join 1.2 front body for pair takes and stun in fights. Item: Strength over the profile's Health shard,
     # for farm speed (+5 Str vs +1 Str per shard); Monster for +10% camp damage.
-    0: _row(1.1, 1.0, 0.9, 1.2, 1.5, 1.0, 1.2, _IT.MONSTER_SHARD_OF_STRENGTH, 0.14, 1.0),
+    0: _row(1.1, 1.0, 0.9, 1.2, 1.5, 1.0, 1.2, _MS, 0.14, 1.0, (_MS, _DH, _PS)),
     # Vendetta [guess all]: farm 1.1 monster kills reset her reset (faster group clears); bank 1.1 800 HP and no
     # escape once the dash is spent, bank sooner; kill 1.3 dash closes, kill resets cooldowns (PRICES);
     # hold 0.5 no stun (PRICES says 0; a 10-gold lock still lets anyone break a channel).
-    2: _row(1.1, 1.0, 1.1, 1.3, 0.5, 1.0, 1.0, _IT.MONSTER_SHARD_OF_STRENGTH, 0.12, 1.0),
+    2: _row(1.1, 1.0, 1.1, 1.3, 0.5, 1.0, 1.0, _PS, 0.12, 1.0, (_PS, _MS, _DH)),
     # Varg [guess all]: farm 1.3 splash = Strength on adjacent monsters, 2-3x on groups; kill 0.8 no mobility, no CC,
     # mediocre single target; hold 0.5 no stun; join 1.2 packs are where splash pays.
-    9: _row(1.3, 1.0, 1.0, 0.8, 0.5, 1.0, 1.2, _IT.MONSTER_SHARD_OF_STRENGTH, 0.16, 1.0),
+    9: _row(1.3, 1.0, 1.0, 0.8, 0.5, 1.0, 1.2, _MS, 0.16, 1.0, (_MS, _PS, _DH)),
     # Marcella [guess all]: farm 1.1 2x Focus nuke on camps beyond her 45 Str; bank 0.8 stun-immune tributer, the
     # designated carrier; kill 1.1 enhanced attack stuns; hold 1.2 melee stun + immune to theirs; join 1.1 1200 HP
     # front body. Item: Strength (profile: Strength and Health), Monster for farm speed.
-    6: _row(1.1, 1.0, 0.8, 1.1, 1.2, 1.0, 1.1, _IT.MONSTER_SHARD_OF_STRENGTH, 0.15, 1.0),
+    6: _row(1.1, 1.0, 0.8, 1.1, 1.2, 1.0, 1.1, _MS, 0.15, 1.0, (_MS, _DH, _PS)),
     # Vesper Vale [guess all but gold]: farm 1.2 ranged (range 3, hits from outside melee monsters' reach) and the
     # best basic-attack scaling (+5 Str = +45 of 405 per cycle); gold 1.2 [rules] passive +20 % gold (1.4 with a
     # Treasure emblem: the turn loop should read the live value from her emblem later, not this constant);
     # bank 1.1 dash 2 makes her hard to catch, a good gem runner; kill 0.9 dash closes and the reset adds a hit,
     # but no stun to hold a target; hold 0.0 no stun (later: the altar-lock buyer); join 1.0.
-    # Item: Strength first; Treasure (150) pays back only after ~750 gold of base income (profile), a mid-game buy.
+    # Build [user decision 14 Oct]: Treasure Strength first (gold snowball, her +20 % becomes +40 %), then Monster
+    # Strength (farm speed), then Power Strength (fights).
     # gold 1.6 [aggressive guess, user's plan 15 Oct late]: her gold plan (shards -> kills) was not happening on the
     # ladder (fewer shards than the others, no fights); was 1.2, the bare +20 % passive.
-    1: _row(1.2, 1.6, 1.1, 0.9, 0.0, 1.0, 1.0, _IT.MONSTER_SHARD_OF_STRENGTH, 0.17, 1.0),
+    1: _row(1.2, 1.6, 1.1, 0.9, 0.0, 1.0, 1.0, _TS, 0.17, 1.0, (_TS, _MS, _PS)),
     # Stellar [guess all]: farm 1.5 spells deal ~77/turn vs 35 Str (2.2x), cut for cast-only-standing and 2 casts per
     # 8; bank 1.2 750 HP, fragile carrier; kill 1.2 235 burst at range 4 finishes carriers; hold 0.5 no stun;
-    # join 1.2 area spell on groups, needs a frontline. Item: Focus (profile; +34/cycle vs +28 for Strength).
-    4: _row(1.5, 1.0, 1.2, 1.2, 0.5, 1.0, 1.2, _IT.MONSTER_SHARD_OF_FOCUS, 0.10, 1.0),
-    # Stellar's row above stays in case the roster changes back. Not in our roster: neutral multipliers, item from
-    # the profile where it names one, else the starter's shard.
-    3: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.POWER_SHARD_OF_STRENGTH, 0.12, 1.0),      # Cassi & Issac: mixed, starter
-    5: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.MONSTER_SHARD_OF_FOCUS, 0.12, 1.0),       # Prism: Focus shards
-    7: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.MONSTER_SHARD_OF_FOCUS, 0.12, 1.0),       # Willow: Focus shards
-    8: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.POWER_SHARD_OF_STRENGTH, 0.12, 1.0),      # Ren: mixed, starter
-    10: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _IT.POWER_SHARD_OF_STRENGTH, 0.12, 1.0),     # Tavi: none named, starter
+    # join 1.2 area spell on groups, needs a frontline. Build: the default (Monster, Power Strength).
+    4: _row(1.5, 1.0, 1.2, 1.2, 0.5, 1.0, 1.2, _MS, 0.10, 1.0, _B_OTHER),
+    # Stellar's row above stays in case the roster changes back. Not in our roster: neutral multipliers, default build
+    # (Monster Strength, then Power Strength).
+    3: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Cassi & Issac
+    5: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Prism
+    7: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Willow
+    8: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),     # Ren
+    10: _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, _MS, 0.12, 1.0, _B_OTHER),    # Tavi
 }
 
 _TYPE_TO_DRAFT = (0, 1, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10)     # ChampionType -> ChampionDraft [sdk enums]
@@ -93,6 +103,30 @@ def shards_owned(c):
         if k:
             t += k * _SHARD_W[i]
     return t
+
+
+def build_target(c, build):
+    """First entry of `build` whose emblem is not complete: fewer than 5 (combine_count) of that shard and no emblem
+    (the 5 shards combine into a separate item, ItemType.result() [sdk]). All complete: the last entry (shard stats
+    stack, GameRules "Stats stack"). Returns (ItemType, item_count list or None)."""
+    try:
+        n = c.item_count()
+    except Exception:
+        return build[0], None
+    for it in build:
+        i = int(it)
+        try:
+            need = it.combine_count()
+            res = it.result()
+            j = int(res) if res is not None else -1
+        except Exception:
+            need, j = 5, -1
+        if i < len(n) and n[i] >= need:
+            continue
+        if 0 <= j < len(n) and n[j] > 0:
+            continue
+        return it, n
+    return build[-1], n
 
 
 def me_init():
@@ -137,4 +171,4 @@ def me_init():
                     f"focus={ME['focus']} spell_range={ME['spell_range']} passive={ME['passive']} "
                     + " ".join(k for k in ("has_cc", "has_dash", "has_heal", "has_shield", "has_aoe",
                                            "attack_reset", "camp_spell") if ME[k])
-                    + " prof=" + ",".join(f"{p[k]}" for k in _KEYS) + f" item={int(p['item'])} gain={p['item_gain']}")
+                    + " prof=" + ",".join(f"{p[k]}" for k in _KEYS) + f" build={'/'.join(str(int(b)) for b in p['build'])} gain={p['item_gain']}")

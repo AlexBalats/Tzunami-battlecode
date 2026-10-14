@@ -271,3 +271,6 @@ corners A 19, 23 (W0 never); corners B 22, 25, 73; expanse 121 only (2 of 3 neve
 Shards at round 300: Vesper 9-12 (others 6-12). Not done: PRICES.md still says Vesper gold 1.2.
 Open: collision r50 is lower (bags carried to a far centre altar, then a shop trip); far ward tiles on big maps are
 rarely on anyone's way (expanse 1 of 3).
+
+- 14 Oct: shard builds (`build` in `PROFILES`, `build_target()` in 20_champs, `buy_all` in 50_exec): buy the first family whose emblem is not complete, 5 at a time; Vesper Treasure > Monster > Power Str [user decision], others in PRICES.md; `shop` trace line per buy.
+- Checked collision + corners vs starter (W both, 0 err): emblems complete in order (collision Vesper 5 Treasure, 5 Monster by r146); corners Vesper had 2 shards at r300 (she earned ~no gold, a farming issue, not the build).
