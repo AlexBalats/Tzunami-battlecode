@@ -1755,6 +1755,14 @@ Layout: strat/MEMORY_LAYOUT.md, "Shared 8 bytes".
 
 KEEP_HP = 0.4               # [guess] the hit body keeps >= 40 % of max HP (KEEP_FRAC)
 HYST = 1.2                  # switch only when a new option beats the current one by 20 %
+SMOOTH_ON = 1               # [user plan 15 Oct night, IMPROVEMENTS change 1] smooth factors instead of the KILL pl / closable,
+                            # BANK near-enemy and STACK_R cliffs (0: the old gates exactly)
+KILL_PL_POWS = {0.6: 0.756, 0.95: 0.231}    # KILL value x (1 - pl) ** pow, pow = ln(0.5) / ln(1 - kill_plose): the factor
+KILL_PL_POW = 0.756                         # is 0.5 at pl = kill_plose (no math module: precomputed; other kp -> this)
+SMOOTH_CHASE = 0            # [measured 15 Oct night] smooth closable (FAR_CHASE) off: on, full games to 1,000 took 4,645
+                            # rounds summed vs 4,033 base (6/6 slower, chases); off 3,917 (bench below, HANDOVER)
+FAR_CHASE = 2               # [guess] KILL: rounds added per tile beyond reach + hunt (smooth closable)
+FAR_CHASE_MAX = 8           # [fuel] KILL targets beyond reach + hunt + this are still skipped (not the whole map)
 EXCL = 20                   # rounds an (option, target) is excluded after a timeout / failure
 DENIAL = 24                 # default of the profile key `denial` (Vesper 60, 20_champs); [measured-ish] their farm rate 0.4 g/r x 60 rounds out (PRICES KILL)
 THEIR_RATE = 0.4            # [guess] their gems per round per body (HOLD value 30 x 0.4)
@@ -1851,6 +1859,13 @@ HUNT_BAG = 30               # [guess] expected bag of a sighted enemy (sighting 
 HUNT_REVISIT = 150          # [guess; 60 -> 150 user plan 15 Oct, ladder 5: chain patrol] rounds before a patrol hunt goes back to an enemy altar I reached
 ROAM_STACK = 60             # [guess] rounds a >= 3-enemy sighting halves the no-sighting hunt
 HUNT_MAX = 40               # rounds a sighting hunt walks before it gives up
+
+
+def sig(x):
+    """Rational sigmoid (no exp): 0.5 at 0, -> 0 / 1 at -inf / +inf."""
+    return x / (1 + abs(x)) * 0.5 + 0.5
+
+
 # Posture columns: multipliers over the options (price *= POSTURE[col][key]), neutral 1.0, all [guess].
 # Selection (posture(), every champion locally, same inputs, no byte): draft regime few -> defend, pick / many /
 # unknown -> economy; a fresh sighting (<= SIGHT_FRESH rounds) of >= STACK_N enemies -> defend; a fresh one of <= 2
@@ -2422,8 +2437,11 @@ def price_all(w, s, cl, by):
         if fp > rawb:
             rawb = fp                           # death_cost: the best farm price before multipliers
         p = fp * prof["farm"] * pm["farm_their_side" if o.side == 2 else "farm"]
-        if sap is not None and o.anchor.chebyshev_distance(sap) <= STACK_R:
-            p *= STACK_FARM                     # the stack was just seen there
+        if sap is not None:
+            if SMOOTH_ON:                       # smooth: x0.29 at the altar, x0.6 at STACK_R, x0.96 at 40 tiles
+                p *= 1 - (1 - STACK_FARM) * sig((STACK_R - o.anchor.chebyshev_distance(sap)) / 3)
+            elif o.anchor.chebyshev_distance(sap) <= STACK_R:
+                p *= STACK_FARM                 # the stack was just seen there
         if sm and h in w.lowsub:
             p *= STACK_FOLLOW                   # [user plan 15 Oct, pair/trio opener] follow my subgroup's lower slots
         out.append((p, "farm", h))
@@ -2446,7 +2464,7 @@ def price_all(w, s, cl, by):
         wk = w.walk_to(f"a{a}", s.pos)
         if wk is None or wk >= FAR:
             wk = max(0, w.ad[a] - 1)
-        if wk < FAR and not (s.near_e <= 4 and s.plose > P_LOSE_MAX):
+        if wk < FAR and (SMOOTH_ON or not (s.near_e <= 4 and s.plose > P_LOSE_MAX)):
             P = s.P
             # [deviation] the risk of holding the bag is ADDED to BANK (PRICES: "at bag >= 20 with an enemy
             # within 8, risk dominates and BANK wins"); subtracting it would stop every bank near an enemy.
@@ -2457,6 +2475,8 @@ def price_all(w, s, cl, by):
                 bp *= STACK_BANK_LOW            # [user plan 15 Oct, stack opener] bank in lumps
             elif sm and GROUP_BANK_BAG and s.bag >= GROUP_BANK_BAG:
                 bp *= GROUP_BANK_X * s.bag / GROUP_BANK_BAG     # the carry banks its lump
+            if SMOOTH_ON:
+                bp *= sig((s.near_e - 4) / 1.5)     # x0.5 enemy at 4, x0.12 at 1, x0.88 at 7 (exec_bank still refuses <= 3)
             out.append((bp, "bank", a))
     # KILL: closable targets only
     reach = ME.get("range", 1) + 1 + (2 if ME.get("has_dash") else 0)
@@ -2466,6 +2486,7 @@ def price_all(w, s, cl, by):
     kmul *= min(1.0, s.hp / s.maxhp / 0.6) * max(0.5, 1 - s.bag / 200)   # bag term [ladder 5: was max(0.3, 1 - bag/100)]
     fights = []                                 # (value, rounds, multiplier, P(lose), option, target): risk added below
     kp = prof.get("kill_plose", KILL_PLOSE)     # [user plan 15 Oct, ladder 6] per-champion / phase kill gate
+    kpow = KILL_PL_POWS.get(kp, KILL_PL_POW)    # SMOOTH_ON: kill value x (1 - pl) ** kpow, 0.5 at pl = kp
     dn = prof.get("denial", DENIAL)             # [user decision 15 Oct afternoon] per-champion denial term (Vesper 60)
     if sm and w.roster and w.slot < len(w.roster) and w.roster[w.slot] == VESPER_ID:
         kmul *= GROUP_KILL_X                    # [user decision 15 Oct afternoon] her kill must beat an unsplit farm
@@ -2492,12 +2513,18 @@ def price_all(w, s, cl, by):
         # near-dead target within reach + 2 ttk + 2 is closable (ladder: a 1-HP enemy recalled 3 tiles away)
         # [rule, 15 Oct ladder 3] HUNT: a phase's `hunt` tiles extend the reach (Vesper 12 from 15 shards); the
         # walk is in rounds below and exec_kill gives up after the phase's `chase` rounds without closing
-        if not (chan or stun or dd <= reach + prof.get("hunt", 0) or (fin and dd <= reach + 2 * ttk + 2)):
-            continue
+        hr = reach + prof.get("hunt", 0)
+        far = 0
+        if not (chan or stun or dd <= hr or (fin and dd <= reach + 2 * ttk + 2)):
+            if not (SMOOTH_ON and SMOOTH_CHASE) or dd > hr + FAR_CHASE_MAX:
+                continue
+            far = (dd - hr) * FAR_CHASE         # smooth closable: each tile past reach + hunt costs FAR_CHASE rounds
         value = bag + 50 * g2g(r) + dn
-        rounds = max(0, dd - ME.get("range", 1)) + ttk
+        rounds = max(0, dd - ME.get("range", 1)) + ttk + far
         pl = s.plose
-        if pl > kp:                             # tried 15 Oct: x min(1, hp/maxhp/0.5), x0.67 carrying > 40 [measured: worse]
+        if SMOOTH_ON:
+            value *= (1 - pl) ** kpow           # smooth gate: x0.5 at pl = kp; risk pl x fcost unchanged below
+        elif pl > kp:                           # tried 15 Oct: x min(1, hp/maxhp/0.5), x0.67 carrying > 40 [measured: worse]
             continue
         if fin:
             w.excl.pop(("kill", int(c)), None)  # finishers ignore the kill exclusion (P(lose) vs ~0 HP is ~0)

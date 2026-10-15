@@ -796,3 +796,40 @@ at r622 (base W 1000-88 at r562). Trace (full games, base -> sunk): farm -> farm
 8.7/19.5/12.7 (Vesper's rise is the pre-existing hunt/farm alternation when a hunt stops pricing on sight, cur=None);
 failed stuck 0+1 -> 0+0, failed stall 2 (collision, farm g14 one tile short) + 4 (packs, Vesper's patrol hunt g5
 idling 4 tiles out: caught in 8 rounds instead of HUNT_MAX 40).
+
+## 15 Oct (night): change 1 smooth factors
+
+`strat/IMPROVEMENTS.md` change 1 (smooth factors instead of gates), without the HEAL part, under `SMOOTH_ON = 1`
+in `40_prices.py` (0 = the old gates exactly). `sig(x) = x / (1 + |x|) x 0.5 + 0.5` (no `math`).
+
+- Rule: KILL no longer skips at `pl > kill_plose`; value x `(1 - pl) ** pow`, pow = ln 0.5 / ln(1 - kill_plose)
+  precomputed in `KILL_PL_POWS` {0.6: 0.756, 0.95: 0.231} (fallback 0.756), so the factor is 0.5 at the old gate.
+  Risk term pl x fcost unchanged. The HUNT / patrol / JOIN `pl <= kp` gates are unchanged.
+- Rule: BANK no longer vanishes at `near_e <= 4 and plose > 0.5`; price x sig((near_e - 4) / 1.5). `exec_bank`
+  still refuses at near_e <= 3.
+- Rule: stack FARM x `1 - (1 - STACK_FARM) x sig((STACK_R - dist) / 3)` instead of the x0.2 cliff at STACK_R.
+- Rule, built but OFF: smooth closable (`SMOOTH_CHASE = 0`): targets past reach + hunt priced with +FAR_CHASE 2
+  rounds per tile up to FAR_CHASE_MAX 8 tiles. On, games to 1,000 took 4,645 rounds summed on the 6 games below vs
+  4,033 base (6/6 slower: chases); FAR_CHASE 4 4,990, FAR_CHASE_MAX 3 4,596 (and a loss). Off: 3,917.
+- Unchanged: HEAL block (HEAL_PLOSE / HEAL_LOW / HEAL_FLOOR), FARM_PLOSE.
+- Numbers: none of the old constants changed; new ones KILL_PL_POWS, FAR_CHASE 2, FAR_CHASE_MAX 8, the sig scales
+  1.5 (bank) and 3 (stack) from the plan.
+
+Check vs tzunami444, collision/corners/packs, both sides (base = 2b8ec86):
+
+| game | r300 margin base -> now | full game base -> now (margin, end round) |
+| --- | --- | --- |
+| collision A | +242 -> +242 | W +562 r884 -> W +758 r854 |
+| collision B | +198 -> +198 | W +750 r837 -> W +724 r852 |
+| corners A | +154 -> +416 | W +586 r484 -> W +774 r422 |
+| corners B | +380 -> +124 | W +460 r495 -> W +518 r456 |
+| packs A | +368 -> +372 | W +912 r562 -> W +548 r695 |
+| packs B | -4 -> +228 | W +400 r771 -> W +768 r680 |
+
+r300: ahead 6/6 (base 5/6), gems/round 1.40 (1.29), worst corners B -256 vs base. Full: 6/6 both, rounds to win
+4,033 -> 3,958. errs 0, fuel median 1.10-1.29M, max 2.36M (base 2.31M). Choices per 100 rounds per champion about
+the same (9-18), except packs B champion 1: 29-37 from a patrol loop (`patrol visit g4` / `hunt g4 done` twice a
+turn r231-273): a patrol to an enemy-side GROUP (target 100 + h) never records the visit (HUNT_REVISIT counts
+altars only), so it re-picks the same group; pre-existing, not fixed here. Kills chosen below 40 % HP: 8 base, 6 now
+(full games). Every single factor alone moved a map's r300 margin by 200-500 either way (trajectories diverge
+early); the light check is noise-level except the closable slow-down, which was consistent in 6/6 games.
