@@ -1,5 +1,29 @@
 # strat: the price-list bot, thinking first
 
+## What is here now (15 Oct, read this first)
+
+**The bot that is on the ladder is `bots/strat`.** `bots/strat-imp` is a frozen copy of the build uploaded on
+15 Oct evening as the ladder entry "strat imp" (`submissions/strat-imp.zip`): only `src/main.py`, no parts, do not
+edit it; rebuild it from `bots/strat` when the next version goes up. Everything older (`bots/tzunami444`, `tzu`,
+`core`, `v2`, `strat2`) is kept for history and is not developed (`docs/HANDOFF.md`, 14 Oct entries, say why).
+
+| what | where |
+| --- | --- |
+| source, in numbered parts (edit these) | `bots/strat/parts/00_base.py` (trace, constants), `10_model.py` (draft: map model, 1,024-byte memory), `20_champs.py` (roster, profiles, phases, builds), `30_world.py` (per-turn world, dash, cast, reset), `40_prices.py` (the price list: FARM / BANK / KILL / JOIN / HUNT / HEAL / SHOP / WARD / HOLD, posture, `choose`, comms), `50_exec.py` (one executor per option), `90_main.py` (turn loop, stall guards, ticks) |
+| the single file the engine runs | `bots/strat/src/main.py`, generated: `python -I tools/assemble.py --bot strat` after every edit to a part |
+| run one game | `cambc run bots/strat tzunami444 --map collision` (`cambc run strat` does not resolve) |
+| the light check (house rule) | `python -I tools/bench.py strat --vs tzunami444 --maps collision,corners,packs --rounds 300 --label X` and the same without `--rounds` for full games; `--baseline` diffs two labels; outputs in `runs/bench/<label>/` (git-ignored) |
+| a parameter variant without editing | `python -I tools/variant.py strat NAME KEY=VALUE` makes `bots/_var-NAME` (git-ignored) |
+| read a trace | `python -I tools/plog.py <bundle.repl26a or logs dir> [TAG ...]`; ladder logs are downloaded to `runs/ladder/` (git-ignored); lines look like `P|round|team|champ|tag|text` |
+| upload | zip `src/main.py` only (`submissions/strat.zip`), upload in the browser; `TRACE` stays 1 (the ladder logs are how we learn) |
+| how we change things | `HANDOVER.md` section "how we tweak": numbers first, rules only for something missing, one change per commit behind a constant, light check, the ladder decides |
+| where we are | `HANDOVER.md` (dated entries, newest last), `LADDER_NOTES.md` (what the opponents do), `IMPROVEMENTS.md` and `STRAT2.md` (plans and their status) |
+| the numbers | every tunable is a one-line constant in the parts, tagged [rules] / [measured] / [guess]; `PRICES.md` is the original price list (partly stale: the code is the reference) |
+
+Feature flags in `40_prices.py` as of the last commit: `SMOOTH_ON` 1, `SUNK_ON` 1 (shipped 15 Oct night);
+`CHAIN_ON` 0, `CENTRE_ON` 0, `SMOOTH_CHASE` 0 (built, off: did not beat the previous build locally). Each has its
+HANDOVER entry with the check numbers.
+
 Started 14 Oct 2026. Everything about the new strategy lives here: thinking, priorities, decisions, measurements,
 and later the bot itself. Nothing in `bots/tzu` or `bots/core` is a reference; only their failures are
 (`docs/HANDOFF.md`, 14 Oct entries).
@@ -65,4 +89,4 @@ opponent = editing a column or a threshold.
 
 ## Status
 
-- Step 1 in progress: writing `PRICES.md`.
+- Steps 1-4 done (14-15 Oct), see HANDOVER.md; step 5 (draft picks from the map model) not started.

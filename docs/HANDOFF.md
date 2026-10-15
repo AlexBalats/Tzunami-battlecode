@@ -1,5 +1,8 @@
 # Handoff: where we are and what to do next
 
+> **15 Oct:** the bot on the ladder is **`bots/strat`** (price-list bot). Start at `strat/README.md` ("What is here now"),
+> then `strat/HANDOVER.md`. The rest of this file is the 13-14 Oct history of `tzunami444`, `tzu` and `core`.
+
 Written 13 Oct 2026. Updated the same evening after the Phase 2 session (harness done, cambc upgraded to 2.1.4, then to 2.1.5), again late on 13 Oct (v1 started in `bots/tzunami444`, battle plan written), after build item 1 (group takes) was finished, when we dropped precompiled bytecode, and last when the bot was handed over for its first ladder run. For whichever teammate (or Claude session) picks this up next. Read it first, then `CLAUDE.md`. Keep it current: when you stop, update it for the next person.
 
 ## The situation in five lines
@@ -187,3 +190,58 @@ Measurements the plan needs soon: A22, A23 (Ryth and Stellar area spells on camp
 - Claude doesn't commit unless asked: we commit ourselves.
 - Claude doesn't edit `docs/Champions/*.md`: we write those.
 - Before stopping, update this file (and the ROADMAP status) so the next person can continue.
+
+## bots/tzu: fighting pieces wired (14 Oct 2026, overnight)
+
+**Wired** (parts edited in `bots/tzu/parts/`, build `python -I tools/assemble.py`, bundle `submissions/tzu.zip`):
+- **50_kit:** `inc_at`'s enemy term is `enemy_threat(s, p)` (burst at distance, 0 past reach), and `enemy_dpr` is `enemy_model(c).burst()` (60_tasks), with fallbacks to the old code. 65's Hunt.strike still uses its own movement plus `plan_turn`: it is **not** moved onto `Intent.move_to/.land`.
+- **65_hunt:** `INT_ON` HUNT, JOIN and HOLD are True. Row 2/3 skip while `hunt_keep`, row 4/6 need `may_fight(w)`, and HOME, AWAKE, CAPTURE and STALL are skipped while `hunt_busy`. Its extra burst line in `hunt_gate` is removed (Duel is burst-first).
+- **68_defend:** `runs/_def/build_def.py`'s `wire()` is applied verbatim to 60, 70, 80 and 90. DEF_ON["TEMPO"] stays False. The local strength code is not swapped for `team_strength`: `_enemy_rows` already goes through `live_kit` -> `enemy_model`.
+- **69_ward:** new `WARD_ON = True`. 90_main housekeeping calls `ward_turn(w, s, dec.task)` for living champions, and `shop_turn` also runs on boot turns before the Decider exists.
+- **Fixes:** (a) `choose()` sends `GoHome("shop")` when gold >= 150, bag <= bank_at_threat and the recall is safe, at most once per 40 rounds. (b) 67 GroupTake: an ack extends staging only while the mate is visible, and there is a hard cap at WAIT_ACK rounds. **Not done:** (c) the draft's take bit and (e) the hunt-collision regression hunt.
+- **Boot** (`runs/final-check`, packs vs null): boot on round 1, all 9 lazy parts loaded by round 7, 0 error lines in the game.
+
+**Status: shipped with every flag ON as wired, on the user's instruction. This configuration is not the best one measured.** Arena numbers from before the stop (9 maps x 2 sides):
+
+| build | vs starter | vs tzunami444 | vs _snap-tzu-pre |
+| --- | --- | --- | --- |
+| tzu as shipped (all on) | 11W/7L, +102, 4 deaths, 136 gems lost (collision A, interlock B, packs A) | 7W/11L, -143 | 10W/8L, +40 |
+| HUNT/JOIN/HOLD off | 11W/7L, +147, 0 deaths | 7W/11L, -115 | 10W/8L, +55 |
+| DEF PASSIVE off | **13W/5L**, +157, 2 deaths | **9W/9L**, -112 | - |
+| WARD off | 10W/8L, +103 | 7W/11L, -181 | - |
+| HUNT off + PASSIVE off | 11W/7L, +75, 0 deaths | 6W/12L, -270 | 10W/8L, +23 |
+
+**Open:**
+- The hunt rows are what cause the deaths with gems against the starter.
+- PASSIVE off looked best on its own, but combining it with HUNT off was worse. Next: try PASSIVE off with HUNT on, and look at the deaths in the traces.
+- elkring and interlock are still the worst maps against both opponents.
+- Draft take bit (c) and the collision regression (e) are still open.
+
+## 14 Oct: ladder post-mortem of `bots/tzu` and the fix pass
+
+Five ladder losses (our trace is in `runs/ladder/*/team-b.stdout`; ladder bundles DO keep stdout, ~1 MB cap) showed no crashes and no fuel starvation. Every freeze was a wait with no deadline [measured]:
+- Vendetta still for 743 rounds: ClearCamp on a group whose last monster was out of reach behind spawn tiles; no exit, and the STALL row could not fire because `busy` was shadowed in the decider.
+- Three champions parked at the altar for 100+ rounds: Station (no cap), then FLEE at full HP from any enemy, so no fight row ever ran. Deny needs a stun or lock, which Varg/Vendetta lack; Farmers had intercept radius 0; carrying a bag disabled hunting; the 1.3x duel margin rejects every even fight. 0 Deny tasks in 5 games.
+- GroupTake partner loops (start→fail retarget→start same round) and a 61-round tank deadlock (uncached pair prediction never affordable).
+
+Fixed (all parts, `tools/assemble.py` run; constants are provisional, no A# yet): STRIKE reflex row after the Flee veto (lone channeller, or outnumber with more Lanchester strength; `INT_ON["STRIKE"]`); flee ignores the burst of a channelling enemy and does not flee a lone enemy the duel gate says we beat (`INT_ON["FLEE_GATE"]`); hold watchdog aborts any task that waits 15 rounds on one tile, 3 for Station (`INT_ON["IDLE"]`); `busy` shadowing; ClearCamp/GroupTake walk the camp's ring then fail `unreach`; retarget rests the group 20 rounds; partner follows only a tank that claims the group; pair prediction forced after 2 rounds; repeated identical crash drops the task and takes the opening step; Farmer intercept 5 / chase 3; carried bag no longer blocks a channelling target; live enemy model in fights; inline Deny no longer blacklists its target.
+
+Smoke [measured, collision, tzu as A vs starter]: won 1008–440 at round 1130, 4 kills, 0 deaths, 0 `err:` lines, 15 STRIKE / 7 DENY / 3 STALL firings, longest idle streak 24 rounds (was 743). Not run on the arena: judge on the ladder (`int|STRIKE`, `int|DENY`, `int|IDLE` lines).
+
+Next: the bot is 10.4k lines with ~20 interrupt kinds; Escort pre-empted 7 of the smoke match's hunts after one round. Prune by toggling rows off in `INT_ON` and keeping only what wins; a 3k-line farm/bank/flee/strike/deny core is the target.
+
+## 14 Oct (evening): `bots/core`, the simple bot, replaces tzu
+
+Three more ladder games of tzu came back with a champion parked at the altar all game, and the bundles carried no stdout (we were team A?), so the fix pass could not even be judged. Decision (user): stop patching tzu. `bots/core` is a 1,600-line bot (7 parts, `python -I tools/assemble.py --bot core`) with **no tasks and no stored intent**: every turn each champion walks one rule list top to bottom and does the first rule that applies (`docs/design/CORE.md`). The order and every threshold live in `PROFILES` in `bots/core/parts/50_rules.py` (`PROFILE = "farm"` or `"aggro"`): to change behaviour, edit numbers or reorder the list, nothing else.
+
+Smoke games [measured, one game each, not the arena]: collision as A won 1060–154 (11 kills, 0 deaths); rows as B won 1056–396 (0 deaths; rows needs pair takes, which emerge from claims: the first champion waits outside camp range until a partner is present). 0 `err:` lines, boot on round 2, no idle streak but the 60-round death timer.
+
+General fixes found through those two games (none map-specific): recall only outside camp range (a camp's hit cancels it); a group stays awake while a live monster is within 3 of me (A32), not only while its HP drops; clear damage shared across champions actually present, dead monsters not counted; a claimant cap per group (max(2, need)); nav progress reset after death/recall; retreat step checks map bounds; a carrier never starts a kill except a finisher; contested-bank gate overridden at 2×BANK_AT.
+
+Submission: `submissions/core.zip` (src/main.py only). Trace is on (`P|r|T|id|t|<RULE> x,y hp= bag= gold= fuel= cl=`): count rule tags per game, kills, deaths with gems, and any champion whose position repeats > 20 rounds outside DEAD/CAMP/CAPTURE.
+
+Next: ladder results decide the profile (`aggro` if kills are cheap); the arena (`tools/arena.py core starter-python`) before any lock; KEEP_HP 0.4 and CHIP_ROUNDS 8 are untested guesses.
+
+**Later on 14 Oct, core vs tzu (one game each, core as A):** collision won 1028–570 (opportunistic kill rule: target must be channelling/stunned or adjacent, chase dropped after 3 rounds without closing); lanes lost 758–1026. Lanes cause found, not fixed: at round 7 all five champions pick the same far group (walk 36–38) because the pick is made before the group fields exist and the "redo once the field exists" then sends them across the map; Ryth walks 4x the turns it hits. Fix next: no pick until the nearest fields exist (or pick by Chebyshev within a radius), and one claimant per solo group.
+
+**Process lesson (user asked):** every freeze was a wait whose exit another rule reset; every regression came from checking one map vs the starter only. Build `tools/check.py` (fixed games: 2 maps × both sides vs starter and tzu; fails on any `err` line, any tile held > 30 rounds outside DEAD/CHANNEL/CAPTURE/attacking, or gems/round below the last build) and run it before claiming a fix or zipping.

@@ -350,3 +350,171 @@ def boom(state):
     """Error-handler check: raise on turns 5-7; the handler must not spill the turn."""
     if 5 <= state["turn"] <= 7:
         raise ValueError(f"boom {state['turn']}")
+
+
+def _free(blocked, p):
+    return 0 <= p.x < game_map.width() and 0 <= p.y < game_map.height() and not blocked.is_set(p)
+
+
+def _line_start(wp, dist, blocked, steps):
+    """A free tile at Chebyshev distance `dist` from wp on a straight or diagonal line, whose next `steps`
+    tiles towards wp are free too. Returns (start, [tiles towards wp]) or None."""
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            if dx == 0 and dy == 0:
+                continue
+            s = cambc.Vec2(wp.x - dx * dist, wp.y - dy * dist)
+            if not _free(blocked, s):
+                continue
+            path = [cambc.Vec2(s.x + dx * k, s.y + dy * k) for k in range(1, steps + 1)]
+            if all(_free(blocked, p) for p in path):
+                return s, path
+    return None
+
+
+def _call(name, f):
+    """Run one API call; return a loggable record of its result or exception."""
+    try:
+        return {"call": name, "ret": rec(f())}
+    except Exception as e:
+        return {"call": name, "exc": type(e).__name__ + ": " + str(e)}
+
+
+def reach(state):
+    """A46: can a champion dash (slot 1), walk and basic attack in one turn?
+
+    Team A drafts Vendetta (melee, dash) and Vesper Vale (ranged, dash). Each walks to a lone wolf and,
+    from a straight line at a scripted distance, runs one sequence per visit (dash cooldown is 8 turns,
+    so it retreats out of wolf range and waits between visits):
+      Vendetta:    S1 dash -> move -> attack   S2 move -> dash -> attack   S3 attack(out of range) -> dash -> attack
+      Vesper Vale: S1 dash -> attack           S2 move -> move -> attack (control)   S3 dash -> attack -> move
+    Every call's return value or exception, positions and the wolf's HP are logged (tag `reach`).
+    """
+    me = cambc.me()
+    t = state["turn"]
+    if team_letter() != "A":
+        return
+    kind = int(me.champion_name())   # str() of a ChampionType is a bare number, so compare ints
+    if kind not in (int(cambc.ChampionType.VENDETTA), int(cambc.ChampionType.VESPER_VALE)):
+        return
+    melee = kind == int(cambc.ChampionType.VENDETTA)
+    name = "VENDETTA" if melee else "VESPER_VALE"
+    if "camp" not in state:
+        # Group handles and order, to compare with the draft bot's `gids` line and the other champion's.
+        gs = camp_groups(None)
+        log("gids", n=len(gs), gids=[int(g) for g in gs], camp0=[int(g.camps()[0]) for g in gs],
+            spawn0=[rec(g.camps()[0].spawn_position()) for g in gs[:3]])
+        spawn = game_map.spawn_region(Team.ALLY).positions()[0]
+        wolves = sorted(lone_wolves(), key=lambda g: g.camps()[0].spawn_position().chebyshev_distance(spawn))
+        if not wolves:
+            log("reach", err="no lone wolf on this map")
+            state["camp"] = None
+            return
+        idx = 0 if melee or len(wolves) == 1 else 1
+        state["delay"] = 0 if (melee or len(wolves) > 1) else 90   # same wolf: Vesper goes second
+        g = wolves[idx]
+        state["g"], state["camp"] = g, g.camps()[0]
+        wp = state["camp"].spawn_position()
+        blocked = static_blocked()
+        rng = me.attack_range()
+        # Melee: start 4 away, dash 2 + walk 1 -> adjacent. Ranged: start range+2 away, dash 2 -> in range.
+        dist = 4 if melee else rng + 2
+        found = _line_start(wp, dist, blocked, 3)
+        if found is None:
+            log("reach", err="no straight free line", dist=dist)
+            state["camp"] = None
+            return
+        start, path = found
+        state["start"], state["path"] = start, path
+        goal = cambc.Bitboard()
+        goal.set(start, True)
+        state["nav"] = Nav(goal)
+        state["phase"], state["since"], state["seq"], state["pending"] = "approach", t, 0, None
+        log("reach_setup", name=name, melee=melee, range=rng, wolf=[wp.x, wp.y], start=[start.x, start.y],
+            path=[[p.x, p.y] for p in path], n_lone_wolves=len(wolves), delay=state["delay"])
+    camp = state["camp"]
+    if camp is None:
+        return
+    pos = me.position()
+    visible = camp.is_visible()
+    camp_hp = camp.health() if visible else None
+    ab = me.abilities()[1]
+    phase = state["phase"]
+
+    def go(new):
+        state["phase"], state["since"] = new, t
+
+    if state["pending"]:   # the turn after a sequence: did the hit land?
+        log("reach_after", seq=state["pending"], pos=[pos.x, pos.y], hp=me.health(), camp_hp=camp_hp,
+            can_move=me.can_move(), can_attack=me.can_attack(), can_cast=me.can_cast(), cd=ab.cooldown())
+        state["pending"] = None
+    if t < state["delay"]:
+        return
+    if phase == "approach":
+        state["nav"].step(me)
+        if state["nav"].at_goal(me.position()):
+            go("ready")
+        elif t % 10 == 0:
+            log("reach", t=t, phase=phase, pos=[pos.x, pos.y], d=state["nav"].dist(pos))
+    elif phase == "ready":
+        # Wait for the dash cooldown and for the wolf to fall asleep (2 rounds with nobody in range).
+        if t - state["since"] >= 3 and ab.is_ready():
+            state["seq"] += 1
+            seq = state["seq"]
+            if seq > 3:
+                go("done")
+                log("reach", t=t, phase="done")
+                return
+            d1, d2, d3 = state["path"]
+            pre = dict(pos=[pos.x, pos.y], hp=me.health(), camp_hp=camp_hp,
+                       camp_pos=rec(camp.position()) if visible else None,
+                       can_move=me.can_move(), can_attack=me.can_attack(), can_cast=me.can_cast(),
+                       is_dash=ab.is_dash(), cd=ab.cooldown(), ready=ab.is_ready())
+            calls = []
+
+            def step(label, f):
+                r = _call(label, f)
+                p = me.position()
+                r.update(pos=[p.x, p.y], can_move=me.can_move(), can_attack=me.can_attack(), can_cast=me.can_cast())
+                calls.append(r)
+
+            if melee:
+                if seq == 1:      # dash 2 -> walk 1 -> attack (adjacent)
+                    step("dash->" + str([d2.x, d2.y]), lambda: ab.use(d2))
+                    step("move->" + str([d3.x, d3.y]), lambda: me.move_absolute(d3))
+                    step("attack", lambda: me.attack(camp))
+                elif seq == 2:    # walk 1 -> dash 2 -> attack
+                    step("move->" + str([d1.x, d1.y]), lambda: me.move_absolute(d1))
+                    step("dash->" + str([d3.x, d3.y]), lambda: ab.use(d3))
+                    step("attack", lambda: me.attack(camp))
+                else:             # attack from 4 away (expected out of range) -> dash -> attack from 2 away
+                    step("attack", lambda: me.attack(camp))
+                    step("dash->" + str([d2.x, d2.y]), lambda: ab.use(d2))
+                    step("attack", lambda: me.attack(camp))
+            else:
+                if seq == 1:      # dash 2 -> attack (now in range)
+                    step("dash->" + str([d2.x, d2.y]), lambda: ab.use(d2))
+                    step("attack", lambda: me.attack(camp))
+                elif seq == 2:    # walk -> walk -> attack: ranged control, expected to fail
+                    step("move->" + str([d1.x, d1.y]), lambda: me.move_absolute(d1))
+                    step("move->" + str([d2.x, d2.y]), lambda: me.move_absolute(d2))
+                    step("attack", lambda: me.attack(camp))
+                else:             # dash -> attack -> move
+                    step("dash->" + str([d2.x, d2.y]), lambda: ab.use(d2))
+                    step("attack", lambda: me.attack(camp))
+                    step("move->" + str([d3.x, d3.y]), lambda: me.move_absolute(d3))
+            log("reach", t=t, seq=seq, name=name, pre=pre, calls=calls,
+                camp_hp_now=camp.health() if camp.is_visible() else None)
+            state["pending"] = seq
+            go("retreat")
+    elif phase == "retreat":
+        # Back to the start tile (outside wolf range 3), then wait for the cooldown.
+        state["nav"].step(me)
+        if state["nav"].at_goal(me.position()):
+            go("ready")
+        elif t - state["since"] > 30:
+            log("reach", t=t, phase="retreat_timeout", pos=[pos.x, pos.y], hp=me.health())
+            go("done")
+    if phase == "retreat" or (phase == "ready" and t - state["since"] < 2):
+        log("reach_tick", t=t, phase=phase, pos=[pos.x, pos.y], hp=me.health(), camp_hp=camp_hp, cd=ab.cooldown(),
+            gstate=group_state(state["g"]))

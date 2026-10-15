@@ -1,5 +1,5 @@
 """Which experiment to run (a function name in experiments.py) and each team's draft. Edit by hand before a run."""
-EXPERIMENT = "carry"
-PICKS_A = [0, 5, 4, 8, 1]  # ChampionDraft numbers, in pick order
-PICKS_B = [9, 2, 6, 3, 10]
-TICK = True  # log round and fuel at start/end of every turn
+EXPERIMENT = "reach"
+PICKS_A = [2, 1, 0, 4, 5]  # ChampionDraft numbers, in pick order (reach: Vendetta, Vesper Vale first)
+PICKS_B = [9, 6, 7, 10, 8]
+TICK = False  # log round and fuel at start/end of every turn

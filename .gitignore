@@ -7,4 +7,14 @@ bots/*/target/
 .DS_Store
 .venv/
 runs/
-bots/_snap-*/
+
+# local-only outputs and scratch copies (15 Oct cleanup)
+__pycache__/
+.claude/worktrees/
+bots/_*/
+replays/
+runs/
+/*.csv
+submissions/*.zip
+!submissions/strat.zip
+!submissions/strat-imp.zip

@@ -9,6 +9,8 @@ if cambc.is_draft():
     _t = 0
     while True:
         _t += 1
+        _fuel_start = cambc.fuel_remaining()   # draft-turns measurement: fuel at the top of every draft turn
+        _picked = None
         try:
             try:
                 _rn = cambc.round_number()
@@ -35,6 +37,14 @@ if cambc.is_draft():
                     except Exception as _e:
                         _v = "ERR " + type(_e).__name__ + " " + str(_e)
                     print(f"P|-1|?|draft|a19|{_name}={_v!r} fuel={_f0 - cambc.fuel_remaining()}", flush=True)
+                # Group handles and order as the draft sees them (compare with the champions' `gids` lines).
+                try:
+                    _gs = _gm.camp_groups()
+                    print(f'P|-1|?|draft|gids|{{"n":{len(_gs)},"gids":{[int(g) for g in _gs]},'
+                          f'"camp0":{[int(g.camps()[0]) for g in _gs]},'
+                          f'"spawn0":{[[g.camps()[0].spawn_position().x, g.camps()[0].spawn_position().y] for g in _gs[:3]]}}}', flush=True)
+                except Exception as _e:
+                    print(f"P|-1|?|draft|gids|ERR {_e!r}", flush=True)
             # A27: does importing a module not named "draft" work in the draft instance?
             _f0 = cambc.fuel_remaining()
             try:
@@ -49,10 +59,28 @@ if cambc.is_draft():
             for _p in _picks:
                 if _p not in _ally:
                     cambc.draft.pick(_p)
+                    _picked = _p
                     break
             print(f"P|-1|?|draft|inline_picked|t={_t} fuel={cambc.fuel_remaining()}", flush=True)
         except Exception as error:
             print(f"P|-1|?|draft|error|{error!r}", flush=True)
+        # Draft-turns measurement: one line per draft turn (turn count, fuel, team size, picks so far).
+        try:
+            _rn = cambc.round_number()
+        except Exception:
+            _rn = -1
+        try:
+            _n_ally = len(cambc.draft.current_draft(cambc.Team.ALLY))
+            _n_enemy = len(cambc.draft.current_draft(cambc.Team.ENEMY))
+        except Exception as _e:
+            _n_ally = _n_enemy = "ERR " + str(_e)
+        try:
+            _team = "AB"[cambc._bc.my_team()]
+        except Exception:
+            _team = "?"
+        print(f'P|{_rn}|{_team}|draft|dturn|{{"turn":{_t},"fuel_start":{_fuel_start},"fuel_end":{cambc.fuel_remaining()},'
+              f'"picked":{_picked if _picked is not None else "null"},"size":{cambc.draft.team_size()},'
+              f'"n_ally":{_n_ally!r},"n_enemy":{_n_enemy!r}}}', flush=True)
         cambc.end_turn()
 else:
     f0 = cambc.fuel_remaining()

@@ -90,10 +90,40 @@ def altar_dump():
             d_enemy=near_dist(fields["enemy"], [a], walls))
 
 
+def deadmem(me):
+    """Can a dead champion write shared memory, and do living teammates see it the same round?
+
+    Dead: write (round & 255) to byte 0 and log the result. Alive: log byte 0 whenever it changes.
+    """
+    rnd = cambc.round_number()
+    if not me.is_alive():
+        try:
+            cambc.shared_memory.write(0, bytes([rnd & 255]))
+            res = "ok"
+        except Exception as e:
+            res = "ERR " + type(e).__name__ + ": " + str(e)
+        try:
+            back = cambc.shared_memory[0]
+        except Exception as e:
+            back = "ERR " + str(e)
+        log("deadmem", role="dead", wrote=rnd & 255, write=res, readback=back, can_move=me.can_move())
+        return True
+    try:
+        v = cambc.shared_memory[0]
+    except Exception as e:
+        v = "ERR " + str(e)
+    if v != STATE.get("mem0"):
+        STATE["mem0"] = v
+        log("deadmem", role="alive", byte0=v, expected_if_same_round=rnd & 255)
+    return False
+
+
 def play_turn():
     STATE["turn"] += 1
     t = STATE["turn"]
     me = cambc.me()
+    if deadmem(me):
+        return
     if t <= 6:
         log("fuel_turn_start", turn=t, fuel=cambc.fuel_remaining())
     if t == 1:

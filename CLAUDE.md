@@ -45,6 +45,7 @@ Game in one line: draft 3–5 champions, kill camps, capture them for gold and g
 | `docs/ARCHITECTURE.md` | Before writing or restructuring bot code (layout, turn pipeline, fuel, memory plans). |
 | `docs/ROADMAP.md` | Deciding what to work on next; sprint dates and "done when" criteria. |
 | `docs/HANDOFF.md` | Start of every session; update it at the end. |
+| `strat/README.md` | **The current bot is `bots/strat`** (15 Oct). Layout, build, check and upload commands, flags, and where its handover lives. Read before touching `bots/strat`. |
 | `docs/ASSUMPTIONS.md` | Before using any number or mechanic not tagged [rules]/[sdk]/[measured]; when closing one with a measurement. |
 
 ## Key facts (from `GameRules.md`)
