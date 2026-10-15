@@ -883,3 +883,28 @@ bag > 100: collision A 48 -> 50, B 97 -> 53, rows A 125 -> 291, rows B 105 -> 0,
 
 Open: rows A holds 132-bags longer; monolith finishes ~100 rounds later; `PRICES.md` still lists `bank_detour` /
 GROUP_BANK as the bank rule (not edited in this commit).
+
+## 15 Oct (night): changes 1-3 merged, shipped with the chain OFF (submissions/strat.zip)
+
+The three IMPROVEMENTS.md changes were built in parallel on worktrees (entries above) and merged: `SMOOTH_ON` 1
+(`SMOOTH_CHASE` 0), `SUNK_ON` 1, `CHAIN_ON` 0. Merged light check vs tzunami444 [measured, cambc 2.1.5], base =
+2b8ec86, collision + corners + packs both sides cut at r300, full games on collision + packs:
+
+| build | r300 ahead | r300 summed margin | worst map | full games | gems/round r300 |
+| --- | --- | --- | --- | --- | --- |
+| base 2b8ec86 | 5/6 | +1338 | packs (-4 on B) | 4/4 | 1.29 |
+| all three on | 5/6 | +960 | packs (-4 on B) | 3/4 (packs B lost 988-1004 at r841) | 1.19 |
+| smooth + sunk, chain off (shipped) | 6/6 | +1342 | collision (+143) | 4/4 | 1.27 |
+| all three off (same file, flags 0) | 6/6 | +1414 | collision (+209) | 4/4 | 1.35 |
+
+Noise: the all-off file differs from base only by line count and still moves packs B from -4 to +224, so single
+r300 margins are not evidence; the full-game loss with the chain on is the only signal that is not noise (the chain's
+own check had corners B -32 at r300 and a lost full game in its first version). Chain stays in the code, off, until it
+is re-derived with the group handoff in mind (packs B: champion 0 held bag 0 most of the game and banked twice).
+0 err lines in every game; fuel max 2.42M (nochain packs B), medians 1.2-1.4M. Both agents saw an old patrol bug:
+a hunt on an enemy-side GROUP is never recorded as visited (`HUNT_REVISIT` tracks altars only), so Vesper re-picks
+the same group twice a turn (packs B r231-273). Not fixed.
+
+Open: the patrol bug above; Vesper's hunt/farm flip-flop (hunt vanishes from the list once enemies are in sight);
+`strat/PRICES.md` still describes the old bank detour and group-bank lumps (code is the reference).
+

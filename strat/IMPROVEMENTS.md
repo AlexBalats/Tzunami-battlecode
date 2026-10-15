@@ -1,4 +1,9 @@
-# strat: pricing improvements (planned 15 Oct night, not built)
+# strat: pricing improvements (planned 15 Oct night; built 15 Oct night, see HANDOVER.md)
+
+**Status (15 Oct night):** 1 built, on (`SMOOTH_ON` 1; the closable factor `SMOOTH_CHASE` 0: it slowed every full game;
+the HEAL part was NOT built, the proposed square cut heals at 40-60 % HP, left for the strat2 danger layer). 2 built, on
+(`SUNK_ON` 1, scoped: never protects a job against HEAL / retreat; threshold max(hyst, 1 + 2 x prog)). 3 built with the
+marginal-leg formula, OFF (`CHAIN_ON` 0: lost packs B as a full game when merged). Numbers in HANDOVER.md.
 
 Three changes to how `bots/strat` forms its prices, inside the existing per-turn argmax (`40_prices.py`
 `price_all` / `choose`, `50_exec.py` `set_cur`). None adds an option or an executor. Order: 1, 2, 3; one per

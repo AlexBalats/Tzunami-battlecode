@@ -1793,7 +1793,7 @@ GROUP_HANDOFF = 1           # 1: capture handoff in group mode (50_exec exec_far
 # [user plan 15 Oct night, IMPROVEMENTS 3, amended] chain pricing: FARM prices the marginal leg of farm + carry + bank
 # (extra carry rounds, extra channel turns, the bag's exposure over them); BANK uses (1 - P). 0 = the old prices exactly.
 # With it on, GROUP_BANK_X / GROUP_BANK_BAG / STACK_BANK_MIN have no effect (the chain replaces those patches).
-CHAIN_ON = 1
+CHAIN_ON = 0
 CHAIN_PMAX = 0.9            # [guess] P(lose the bag) cap
 CHAIN_BAG = 100             # [guess] P(lose the bag) x (1 + bag / this): a big bag is a target
 CHAIN_EXPO = 60             # [guess] risk_extra = P x bag x (extra exposed rounds) / this
