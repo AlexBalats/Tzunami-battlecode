@@ -228,6 +228,9 @@ class World:
                 roots.set(t)
         elif k == "a":
             roots = disk(self.apos[int(key[1:])], 1) & ~blk
+        elif k == "r":                          # [CENTRE_ON] rally tile of altar <a> (40_prices rally_tile)
+            roots = Bitboard()
+            roots.set(self.rally[int(key[1:])])
         elif k == "w":                          # ward j: any free tile within 2 of its tile (placement reach 2 [rules])
             roots = disk(self.wtiles[int(key[1:])], 2) & ~blk
         else:

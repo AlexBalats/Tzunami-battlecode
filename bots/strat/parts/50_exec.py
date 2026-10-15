@@ -41,6 +41,12 @@ def _set_cur(self, new, r, s):
         walk = 20
     elif op == "kill":
         walk = 6 + ME["prof"].get("hunt", 0)
+    elif op == "hunt" and tg is not None and tg >= CONV_T:
+        rt = self.rally.get(tg - CONV_T)        # [CENTRE_ON] converge: walk to the rally + the wait + the step in
+        walk = fget(self.F_me, rt) if rt is not None else FAR
+        if walk >= FAR:
+            walk = 2 * s.pos.chebyshev_distance(rt) if rt is not None else HUNT_MAX
+        work = RALLY_WAIT + RALLY_D + 5
     elif op == "hunt":
         walk = HUNT_MAX
     elif op == "fall":
@@ -81,6 +87,11 @@ def prog_target(w, s):
         return w.apos[tg] if tg < len(w.apos) else None
     if op == "ward":
         return w.wtiles[tg] if tg < len(w.wtiles) else None
+    if op == "hunt" and tg >= CONV_T:          # [CENTRE_ON] the rally tile, then (released) the altar
+        a = tg - CONV_T
+        if a >= len(w.apos):
+            return None
+        return w.apos[a] if w.rgo == (a, w.started) else w.rally.get(a)
     if op == "hunt":
         return w.G[tg - 100].anchor if tg >= 100 else (w.apos[tg] if tg < len(w.apos) else None)
     if op == "kill":
@@ -524,6 +535,8 @@ def exec_kill(w, s, hd):
 def exec_hunt(w, s, a):
     """Walk toward the sighting's altar a; done once an enemy is visible (KILL prices it); failed (excluded EXCL
     rounds) on arrival with nobody there or after HUNT_MAX rounds."""
+    if a >= CONV_T:
+        return exec_conv(w, s, a - CONV_T)
     if s.enemies:
         return "done"
     key, t = (f"g{a - 100}", w.G[a - 100].anchor) if a >= 100 else (f"a{a}", w.apos[a])
@@ -539,6 +552,47 @@ def exec_hunt(w, s, a):
     elif w.step_avoid(key, s, z) == "nopath":
         trace("exec", f"hunt {tname(w, 'hunt', a)} failed camp")
         return "failed"
+    return "going"
+
+
+def exec_conv(w, s, a):
+    """[CENTRE_ON] converge on altar a: walk to its rally tile (40_prices rally_tile), wait there (w.waiting) until
+    conv_count >= min(alive roster, s.sc + 1), then step in toward the altar (released: w.crel). Enemies in sight on
+    the way to the rally: keep walking (fall back); at the rally an enemy within RALLY_ENGAGE, or any enemy after the
+    release: done (KILL / JOIN take over).
+    After RALLY_WAIT rounds at the rally with the count unmet: failed, and my decision for a is LEAVE for
+    RALLY_FAIL_ROUNDS (w.cfail; trace `failed rally`). At the altar with nobody seen: failed (EXCL)."""
+    rt = w.rally.get(a) if a < len(w.apos) else None
+    if rt is None:
+        return "failed"
+    if w.rgo != (a, w.started):
+        if s.pos.chebyshev_distance(rt) > 2:
+            w.step_to(f"r{a}", s)
+            return "going"
+        if w.arrived is None:
+            w.arrived = s.r
+        if s.near_e <= RALLY_ENGAGE:
+            w.crel[a] = s.r                     # they came to the rally: fight here (KILL / JOIN)
+            trace("exec", f"hunt C{a} rally enemies n={conv_count(w, s, a)} ne={s.near_e} waited={s.r - w.arrived}")
+            return "done"
+        n, need = conv_count(w, s, a), min(max(1, getattr(w, "cnus", 1)), s.sc + 1)
+        if n < need:
+            if s.r - w.arrived >= RALLY_WAIT:
+                w.cfail[a] = s.r + RALLY_FAIL_ROUNDS
+                trace("exec", f"hunt C{a} failed rally n={n}/{need} waited={s.r - w.arrived}")
+                return "failed"
+            w.waiting = True
+            return "going"
+        w.rgo = (a, w.started)
+        w.crel[a] = s.r
+        w.d0, w.pbest = None, 0.0               # sunk progress restarts toward the altar
+        trace("exec", f"hunt C{a} rally go n={n}/{need} waited={s.r - w.arrived}")
+    if s.enemies:
+        return "done"
+    if s.pos.chebyshev_distance(w.apos[a]) <= 2:
+        trace("exec", f"hunt C{a} empty")
+        return "failed"
+    w.step_to(f"a{a}", s)
     return "going"
 
 

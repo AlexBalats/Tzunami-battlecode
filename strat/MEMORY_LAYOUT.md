@@ -37,10 +37,12 @@ Written and read by `bots/strat/parts/40_prices.py` (`sense`, `broadcast`) and `
 
 | byte | written by | layout |
 | --- | --- | --- |
-| 0-4 | roster slot k (one byte each) | low 3 bits option code: 0 idle / heal / ward, 1 farm, 2 bank, 3 kill, 4 hold, 5 shop, 6 join, 7 dead; high 5 bits target: group index (draft-memory order, 31 = past index 30), altar index, enemy handle & 31, ally slot for join. Code 0 with target 1-3 = walking to place ward 0-2 (target = ward index + 1); code 0 with target 0 = idle or heal |
+| 0-4 | roster slot k (one byte each) | low 3 bits option code: 0 idle / heal / ward, 1 farm, 2 bank, 3 kill, 4 hold, 5 shop, 6 join, 7 dead; high 5 bits target: group index (draft-memory order, 31 = past index 30), altar index, enemy handle & 31, ally slot for join. Code 0 with target 1-3 = walking to place ward 0-2 (target = ward index + 1); code 0 with target 0 = idle or heal. Code 3 is also the hunt: target 31 = a sighting / patrol hunt; **target 0-30 = a converge hunt on that altar index** (`CENTRE_ON`, 15 Oct night; `conv_count` counts code-3 bytes with target = the stack's altar, plus code-3 bytes of allies in my vision; a kill on an enemy whose handle & 31 equals the altar index also counts, accepted). JOIN-a-fight and `exec_join` read any code 3 as a fight at the ally's position, as before |
 | 5 | any champion seeing >= 2 enemies together | high 3 bits = enemies seen together (the largest count within 8 of one seen enemy, own vision + own ward, capped 7; 0 = no sighting); low 5 bits = `(round // 4) & 31` stamp. Overwritten when the new count >= the stored one or the stored one is older than 12 rounds. Readers clear it once 32+ rounds old (the stamp wraps at 128) |
 | 6 | same writer, with byte 5 | region: index of the altar nearest the sighted cluster (only meaningful while byte 5's count > 0) |
 | 7 | a champion that died farming | group death marker: low 5 bits = group index + 1 (0 none; groups past index 30 are not marked), high 3 bits = `(round // 32) & 7`; live while age x 32 < 100 rounds (`DEATH_MARK`), readers clear it after |
+
+Before 15 Oct night (`CENTRE_ON`): a hunt always broadcast target 31.
 
 Before this change: byte 5 was (altar + 1) << 4 | (round // 2) & 15 for enemies on our half, bytes 6-7 the death marker
 (group index + 1, `(round // 8) & 255`).

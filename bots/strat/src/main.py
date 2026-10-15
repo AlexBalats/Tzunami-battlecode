@@ -1307,6 +1307,9 @@ class World:
                 roots.set(t)
         elif k == "a":
             roots = disk(self.apos[int(key[1:])], 1) & ~blk
+        elif k == "r":                          # [CENTRE_ON] rally tile of altar <a> (40_prices rally_tile)
+            roots = Bitboard()
+            roots.set(self.rally[int(key[1:])])
         elif k == "w":                          # ward j: any free tile within 2 of its tile (placement reach 2 [rules])
             roots = disk(self.wtiles[int(key[1:])], 2) & ~blk
         else:
@@ -1873,6 +1876,25 @@ HUNT_BAG = 30               # [guess] expected bag of a sighted enemy (sighting 
 HUNT_REVISIT = 150          # [guess; 60 -> 150 user plan 15 Oct, ladder 5: chain patrol] rounds before a patrol hunt goes back to an enemy altar I reached
 ROAM_STACK = 60             # [guess] rounds a >= 3-enemy sighting halves the no-sighting hunt
 HUNT_MAX = 40               # rounds a sighting hunt walks before it gives up
+# [user plan 15 Oct night, ladder 1a406974] converge-or-leave: a fresh stack sighting at an altar on our side or
+# contested -> every champion computes one team decision from the shared bytes (centre()): CONVERGE (all to a rally
+# tile on our side, wait for the team, step in) or LEAVE (that region's farm / hold / ward / bank priced 0). 0 = off.
+CENTRE_ON = 1
+CENTRE_MIN_SC = 3           # [measured 15 Oct night, deviation] the trigger needs >= this many enemies seen together even
+                            # where STACK_N_FEW makes a pair "the stack" (collision S=3: pair sightings fired converge
+                            # every ~30 rounds, full game B +810 -> +124 vs tzunami444); 0 = stack_n() only (the spec)
+CONVERGE_PLOSE = 0.4        # [guess] CONVERGE when the team's Lanchester P(lose) (base HP x Str, square law) <= this ...
+CONVERGE_MARGIN = 1         # [guess] ... and alive roster champions >= sighted enemies + this; else LEAVE
+HOT_R = 12                  # [guess] LEAVE: groups / ward tiles within this (Chebyshev) of the stack's altar ...
+HOT_FARM = 0.0              # [guess] ... FARM x this (HOLD / WARD / BANK there x 0); replaces STACK_R / STACK_FARM
+CONVERGE_X = 1.5            # [guess] the converge hunt's multiplier (it must beat an ordinary farm clearly)
+RALLY_D = 8                 # [guess] the rally tile: walkable, this far (Chebyshev) from the altar, lowest F_home
+RALLY_WAIT = 20             # [guess] rounds at the rally with too few allies converging before the rally fails ...
+RALLY_FAIL_ROUNDS = 60      # [guess] ... and my decision for that altar is LEAVE for this many rounds
+RALLY_ENGAGE = 4            # [guess] waiting at the rally, an enemy this close releases me to fight (KILL / JOIN)
+CONV_REL = 30               # rounds after my release from a rally (step in / enemies at the rally) with no converge
+                            # price on that altar (KILL / JOIN own the fight; no walk back to the rally)
+CONV_T = 200                # converge hunt target = CONV_T + altar index (hunt 0-99 altar, 100+ group: unchanged)
 
 
 def sig(x):
@@ -1972,7 +1994,8 @@ CLEAR_MEMO = {}
 class Snap:
     __slots__ = ("r", "st", "alive", "recalling", "submitting", "can_move", "can_attack", "pos", "hp", "maxhp",
                  "bag", "gold", "S", "enemies", "allies", "live", "vis", "mem", "spawn", "near_e", "P", "walt", "edps", "plose",
-                 "sc", "sa", "sage", "stack", "dcost", "attacker", "trapped", "ba", "bwk", "sap", "carry")
+                 "sc", "sa", "sage", "stack", "dcost", "attacker", "trapped", "ba", "bwk", "sap", "carry",
+                 "cdec", "cpl", "nus")
 
 
 def sense(w):
@@ -2003,6 +2026,7 @@ def sense(w):
     s.enemies, s.allies, s.live, s.near_e = [], [], {}, 99
     s.dcost = 0.0
     s.attacker, s.trapped = None, False
+    s.cdec, s.cpl, s.nus = None, 0.0, 0
     if not s.alive:
         s.pos, s.hp, s.maxhp, s.bag, s.S, s.vis, s.spawn = w.pos, 0, 1, 0, 1, None, False
         return s
@@ -2334,6 +2358,80 @@ def engaged(s, h):
     return any(hp > 0 and p.chebyshev_distance(s.pos) <= CAMP_R for _c, hp, p, _st in s.live.get(h, ()))
 
 
+def rally_tile(w, a):
+    """[CENTRE_ON] rally tile for altar a, cached in w.rally: a walkable tile at Chebyshev RALLY_D from it (then
+    RALLY_D - 1, + 1, ...) with the lowest F_home (nearest our spawn); None if none is reachable. One ring per altar."""
+    rl = w.rally
+    if a in rl:
+        return rl[a]
+    F = w.home_field()
+    ap = w.apos[a]
+    best = None
+    for d in (RALLY_D, RALLY_D - 1, RALLY_D + 1, RALLY_D - 2, RALLY_D + 2, RALLY_D - 3, RALLY_D - 4):
+        for x in range(ap.x - d, ap.x + d + 1):
+            for y in ((ap.y - d, ap.y + d) if ap.x - d < x < ap.x + d else range(ap.y - d, ap.y + d + 1)):
+                if not (0 <= x < w.Wm and 0 <= y < w.Hm):
+                    continue
+                q = V(x, y)
+                if w.blk_nav.is_set(q):
+                    continue
+                v = fget(F, q)
+                if v < FAR and (best is None or v < best[0]):
+                    best = (v, q)
+        if best is not None:
+            break
+    rl[a] = best[1] if best else None
+    trace("centre", f"rally A{a}@{ap.x},{ap.y} -> {best[1].x},{best[1].y} home={best[0]}" if best else f"rally A{a} none")
+    return rl[a]
+
+
+def conv_count(w, s, a):
+    """[CENTRE_ON] roster champions converging on altar a, me included: bytes with the hunt code (3) and target a,
+    plus code-3 bytes (a kill) of allies I can see (the fight at the rally has started)."""
+    vis = {w.ally_slot(x[0]) for x in s.allies}
+    n = 1
+    for k in range(min(5, len(w.roster))):
+        if k == w.slot:
+            continue
+        b = s.mem[k]
+        if b & 7 == 3 and ((b >> 3) == a or k in vis):
+            n += 1
+    return n
+
+
+def centre(w, s):
+    """[CENTRE_ON, user plan 15 Oct night] the team's answer to a fresh stack sighting at altar s.sa on our side or
+    contested: "converge" | "leave" | None (no trigger). Same bytes -> same answer on every champion, except my own
+    failed rally (w.cfail: LEAVE for RALLY_FAIL_ROUNDS). P(lose) by the square law on draft base HP x Strength: ours
+    = the alive roster (byte code != 7, me included), theirs = s.sc x the roster mean. Sets s.cdec, s.cpl, s.nus;
+    traces `centre` on every change."""
+    dec, pl, n = None, 0.0, 0
+    a = s.sa
+    if CENTRE_ON and s.stack and s.sc >= CENTRE_MIN_SC and w.apos and w.aside[a] <= 1:
+        ros = w.roster or [ME.get("id", -1)]
+        hs = [BASE_STATS.get(d, (1000, 50)) for d in ros]
+        mean = sum(h * st for h, st in hs) / max(1, len(hs))
+        us = 0.0
+        for k in range(len(ros)):
+            if k == w.slot or k > 4 or s.mem[k] & 7 != 7:
+                n += 1
+                us += hs[k][0] * hs[k][1]
+        th = s.sc * mean
+        pl = th * th / max(1.0, us * us + th * th)
+        dec = "converge" if pl <= CONVERGE_PLOSE and n >= s.sc + CONVERGE_MARGIN and a <= 30 else "leave"
+        if dec == "converge" and (w.cfail.get(a, -1) > s.r or rally_tile(w, a) is None):
+            dec = "leave"
+    s.cdec, s.cpl, s.nus = dec, pl, n
+    w.cnus = n
+    key = (dec, a if dec else None)
+    if key != w.cdec:
+        w.cdec = key
+        trace("centre", f"{dec or 'none'} sc={s.sc} sa=A{a if a < 255 else '-'} n_us={n} plose_team={pl:.2f} "
+                        f"side={w.aside[a] if a < len(w.aside) else '-'} age={s.sage if s.sc else '-'} "
+                        f"fail={int(w.cfail.get(a, -1) > s.r)}")
+    return dec
+
+
 def stack_n(w):
     """STACK_N, or STACK_N_FEW on a regime-few map (draft) [guess]."""
     d = w.d
@@ -2475,6 +2573,8 @@ def price_all(w, s, cl, by):
         dead_g = w.idx.get((b7 & 31) - 1)
     sap = w.apos[s.sa] if s.stack else None
     s.sap = sap
+    cdec = centre(w, s) if CENTRE_ON else None      # [CENTRE_ON] converge / leave / None
+    hot = w.apos[s.sa] if cdec == "leave" else None # LEAVE: that altar's region prices 0 (below, end of price_all)
     s.ba, s.bwk = bank_altar(w, s, sap) if w.apos else (0, FAR)
     s.carry = True
     if CHAIN_ON and sm and s.bag == 0:
@@ -2523,7 +2623,10 @@ def price_all(w, s, cl, by):
         if fp > rawb:
             rawb = fp                           # death_cost: the best farm price before multipliers
         p = fp * prof["farm"] * pm["farm_their_side" if o.side == 2 else "farm"]
-        if sap is not None:
+        if hot is not None:
+            if o.anchor.chebyshev_distance(hot) <= HOT_R:
+                p *= HOT_FARM                   # [CENTRE_ON] LEAVE: replaces the STACK_R / STACK_FARM term
+        elif sap is not None:
             if SMOOTH_ON:                       # smooth: x0.29 at the altar, x0.6 at STACK_R, x0.96 at 40 tiles
                 p *= 1 - (1 - STACK_FARM) * sig((STACK_R - o.anchor.chebyshev_distance(sap)) / 3)
             elif o.anchor.chebyshev_distance(sap) <= STACK_R:
@@ -2610,7 +2713,7 @@ def price_all(w, s, cl, by):
     # HUNT a sighting [rule, 15 Oct ladder 3]: hunt phase only, nobody visible, fresh byte 5 -> walk to its altar.
     # value = HUNT_BAG + 50 g2g + DENIAL [guess bag], rounds = walk + 5; Lanchester vs s.sc enemies at my base stats.
     if (pat and not s.enemies and s.sc and s.sage <= SIGHT_FRESH and s.sa < len(w.apos)
-            and r >= w.kh_until):
+            and r >= w.kh_until and cdec != "converge"):
         a = s.sa
         wk = w.walk_to(f"a{a}", s.pos)
         if wk is None or wk >= FAR:
@@ -2688,6 +2791,18 @@ def price_all(w, s, cl, by):
     fcost = min(prof.get("dcost_fight", DCOST_FIGHT_CAP), dcost)   # [user plan 15 Oct, ladder 5/6] fights risk at most 150 (key dcost_fight); HEAL keeps dcost
     for v, rd, m, pl, o, tg in fights:
         out.append(((v - pl * fcost) / rd * m, o, tg))
+    if cdec == "converge" and r - w.crel.get(s.sa, -999) > CONV_REL:
+        # [CENTRE_ON] CONVERGE (also with enemies in sight: a champion by the stack falls back to the rally first;
+        # after my release KILL / JOIN own the fight for CONV_REL rounds): every champion hunts the stack's altar via the rally tile, priced as a team fight:
+        # value s.sc x (HUNT_BAG + 50 g2g) x (1 - P) - P x fcost over (walk to the rally + 5) x CONVERGE_X, P = the
+        # team's P(lose) (centre). Not in death_cost's best price above (HEAL untouched).
+        a = s.sa
+        rt = rally_tile(w, a)
+        wk = w.walk_to(f"r{a}", s.pos)
+        if wk is None or wk >= FAR:
+            wk = s.pos.chebyshev_distance(rt)
+        pl = s.cpl
+        out.append(((s.sc * (HUNT_BAG + 50 * g2g(r)) * (1 - pl) - pl * fcost) / (wk + 5) * CONVERGE_X, "hunt", CONV_T + a))
     # HEAL: what a death costs (death_cost: bag + 60 rounds of my best farm price) x P(die), over a recall (5) + the walk back out.
     # P(die) = (1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, clamped to [0, 1]; at least STACK_HEAL with >= 3
     # enemies within 8 and no ally within 5, even at full HP (HEAL is then "go home": the executor walks while an
@@ -2750,6 +2865,11 @@ def price_all(w, s, cl, by):
         gain = farm_price(w, s, h, b + 1, wk) * ((b + 1) if bx == 1.0 else (b + 1) ** bx) - max(0.0, lo)
         if gain > 0:
             out.append((gain / max(1, wk) * prof["join"] * pm["join"], "join", k))
+    if hot is not None:
+        # [CENTRE_ON] LEAVE: HOLD and BANK at the stack's altar and WARD tiles within HOT_R of it x 0
+        a = s.sa
+        out = [t for t in out if not ((t[1] in ("hold", "bank") and t[2] == a)
+                                      or (t[1] == "ward" and w.wtiles[t[2]].chebyshev_distance(hot) <= HOT_R))]
     return out
 
 
@@ -2764,8 +2884,12 @@ def seeded(w, s):
     if sd is None:
         return False
     o = w.G.get(sd)
+    cd = w.cdec[0] if CENTRE_ON else None      # [CENTRE_ON] converge, or leave with the seed in the hot region: no seed
+    hotseed = cd == "leave" and o is not None and w.cdec[1] is not None \
+        and o.anchor.chebyshev_distance(w.apos[w.cdec[1]]) <= HOT_R
     if s.r <= w.seed_until and w.cur == ("farm", sd) and w.status == "going" and o is not None \
-            and not (o.st == "resp" and o.until > s.r) and s.bag <= w.lastbag and s.gold <= w.lastgold:
+            and not (o.st == "resp" and o.until > s.r) and s.bag <= w.lastbag and s.gold <= w.lastgold \
+            and cd != "converge" and not hotseed:
         return True
     w.seed = None
     trace("choice", f"seed end {tname(w, 'farm', sd)} cur={w.cur[0]} status={w.status} st={o.st if o else '-'} "
@@ -2852,6 +2976,8 @@ def tname(w, op, tg):
     if op == "farm":
         o = w.G.get(tg)
         return f"g{tg}@{o.anchor.x},{o.anchor.y}" if o else str(tg)
+    if op == "hunt" and tg >= CONV_T:
+        return f"C{tg - CONV_T}"                # converge on altar tg - CONV_T
     if op == "hunt" and tg >= 100:
         return f"g{tg - 100}"
     if op in ("bank", "hold", "hunt"):
@@ -2874,7 +3000,10 @@ def broadcast(w, s, code):
     if w.cur[0] == "ward" and w.cur[1] is not None:
         b = ((w.cur[1] + 1) & 31) << 3         # code 0, target = ward index + 1
     else:
-        b = code | ((31 if w.cur[0] == "hunt" else tbits(w, OPT[code], w.cur[1])) << 3 if 0 < code < 7 else 0)
+        hb = 31                                 # hunt: 31 = sighting / patrol; a converge hunt: its altar (0-30)
+        if w.cur[0] == "hunt" and w.cur[1] is not None and w.cur[1] >= CONV_T:
+            hb = min(31, w.cur[1] - CONV_T)
+        b = code | ((hb if w.cur[0] == "hunt" else tbits(w, OPT[code], w.cur[1])) << 3 if 0 < code < 7 else 0)
     if b != w.sent:
         try:
             cambc.shared_memory[w.slot] = b
@@ -2959,6 +3088,12 @@ def _set_cur(self, new, r, s):
         walk = 20
     elif op == "kill":
         walk = 6 + ME["prof"].get("hunt", 0)
+    elif op == "hunt" and tg is not None and tg >= CONV_T:
+        rt = self.rally.get(tg - CONV_T)        # [CENTRE_ON] converge: walk to the rally + the wait + the step in
+        walk = fget(self.F_me, rt) if rt is not None else FAR
+        if walk >= FAR:
+            walk = 2 * s.pos.chebyshev_distance(rt) if rt is not None else HUNT_MAX
+        work = RALLY_WAIT + RALLY_D + 5
     elif op == "hunt":
         walk = HUNT_MAX
     elif op == "fall":
@@ -2999,6 +3134,11 @@ def prog_target(w, s):
         return w.apos[tg] if tg < len(w.apos) else None
     if op == "ward":
         return w.wtiles[tg] if tg < len(w.wtiles) else None
+    if op == "hunt" and tg >= CONV_T:          # [CENTRE_ON] the rally tile, then (released) the altar
+        a = tg - CONV_T
+        if a >= len(w.apos):
+            return None
+        return w.apos[a] if w.rgo == (a, w.started) else w.rally.get(a)
     if op == "hunt":
         return w.G[tg - 100].anchor if tg >= 100 else (w.apos[tg] if tg < len(w.apos) else None)
     if op == "kill":
@@ -3442,6 +3582,8 @@ def exec_kill(w, s, hd):
 def exec_hunt(w, s, a):
     """Walk toward the sighting's altar a; done once an enemy is visible (KILL prices it); failed (excluded EXCL
     rounds) on arrival with nobody there or after HUNT_MAX rounds."""
+    if a >= CONV_T:
+        return exec_conv(w, s, a - CONV_T)
     if s.enemies:
         return "done"
     key, t = (f"g{a - 100}", w.G[a - 100].anchor) if a >= 100 else (f"a{a}", w.apos[a])
@@ -3457,6 +3599,47 @@ def exec_hunt(w, s, a):
     elif w.step_avoid(key, s, z) == "nopath":
         trace("exec", f"hunt {tname(w, 'hunt', a)} failed camp")
         return "failed"
+    return "going"
+
+
+def exec_conv(w, s, a):
+    """[CENTRE_ON] converge on altar a: walk to its rally tile (40_prices rally_tile), wait there (w.waiting) until
+    conv_count >= min(alive roster, s.sc + 1), then step in toward the altar (released: w.crel). Enemies in sight on
+    the way to the rally: keep walking (fall back); at the rally an enemy within RALLY_ENGAGE, or any enemy after the
+    release: done (KILL / JOIN take over).
+    After RALLY_WAIT rounds at the rally with the count unmet: failed, and my decision for a is LEAVE for
+    RALLY_FAIL_ROUNDS (w.cfail; trace `failed rally`). At the altar with nobody seen: failed (EXCL)."""
+    rt = w.rally.get(a) if a < len(w.apos) else None
+    if rt is None:
+        return "failed"
+    if w.rgo != (a, w.started):
+        if s.pos.chebyshev_distance(rt) > 2:
+            w.step_to(f"r{a}", s)
+            return "going"
+        if w.arrived is None:
+            w.arrived = s.r
+        if s.near_e <= RALLY_ENGAGE:
+            w.crel[a] = s.r                     # they came to the rally: fight here (KILL / JOIN)
+            trace("exec", f"hunt C{a} rally enemies n={conv_count(w, s, a)} ne={s.near_e} waited={s.r - w.arrived}")
+            return "done"
+        n, need = conv_count(w, s, a), min(max(1, getattr(w, "cnus", 1)), s.sc + 1)
+        if n < need:
+            if s.r - w.arrived >= RALLY_WAIT:
+                w.cfail[a] = s.r + RALLY_FAIL_ROUNDS
+                trace("exec", f"hunt C{a} failed rally n={n}/{need} waited={s.r - w.arrived}")
+                return "failed"
+            w.waiting = True
+            return "going"
+        w.rgo = (a, w.started)
+        w.crel[a] = s.r
+        w.d0, w.pbest = None, 0.0               # sunk progress restarts toward the altar
+        trace("exec", f"hunt C{a} rally go n={n}/{need} waited={s.r - w.arrived}")
+    if s.enemies:
+        return "done"
+    if s.pos.chebyshev_distance(w.apos[a]) <= 2:
+        trace("exec", f"hunt C{a} empty")
+        return "failed"
+    w.step_to(f"a{a}", s)
     return "going"
 
 
@@ -3766,8 +3949,8 @@ else:
             w.build_fme(s.pos)                    # also after a recall (the jump is > 6)
         # stuck guard: same tile, last turn neither capturing, channelling, attacking nor dead
         exempt = flags[0] or flags[1] or s.recalling or s.submitting
-        if flags[2] and not exempt and stack_mode(w, r):
-            exempt = True                         # [user plan 15 Oct, stack opener] group mode never sets waiting
+        if flags[2] and not exempt and (stack_mode(w, r) or (w.cur[0] == "hunt" and (w.cur[1] or 0) >= CONV_T)):
+            exempt = True                         # [user plan 15 Oct, stack opener] group mode never sets waiting; [CENTRE_ON] rally wait
         if s.pos == w.pos and not exempt:
             w.same += 1
             w.stay += 1
@@ -3881,6 +4064,7 @@ else:
         w.fh, w.flips, w.tflip = [], 0, None              # farm target history (50_exec set_cur flip lock), flips, last flip
         w.peekn, w.peeked = 0, False                      # dead-camp pickup (50_exec exec_farm)
         w.kh_until = 0
+        w.rally, w.cfail, w.cdec, w.rgo, w.crel = {}, {}, (None, None), None, {}   # [CENTRE_ON] rally tiles, failed rallies, decision, released
         w.hit = False
         w.hvis, w.roam, w.big3 = {}, 0.0, -999                                       # hunt patrol: altar (or 100 + group) -> round I reached it
         w.lastfarm = None                                 # last farm group (50_exec camp_zone: its monsters are not avoided)

@@ -908,3 +908,58 @@ the same group twice a turn (packs B r231-273). Not fixed.
 Open: the patrol bug above; Vesper's hunt/farm flip-flop (hunt vanishes from the list once enemies are in sight);
 `strat/PRICES.md` still describes the old bank detour and group-bank lumps (code is the reference).
 
+## 15 Oct (night): converge-or-leave (CENTRE_ON)
+
+Why: ladder 1a406974 (71x71, 5 picks, lost 256-906 / 342-934 / 70-996): the enemy 3-stack held a contested altar from
+r19; three of ours cycled heal / hold / farm (0.0-1.0) / ward next to it for 130 rounds. Neither team answer happened:
+all converge, or all leave.
+
+**Rule (code, `CENTRE_ON` 1; 0 = the old behaviour, checked: identical r300 games vs tzunami444 6/6, identical full
+games vs the base snapshot on 9/12 (rows / monolith drift from file length)).** `centre()` (40_prices), every champion
+from the same bytes: trigger = fresh stack sighting (`s.stack`) at altar `s.sa` with draft side 0/1 (never 2) and
+`s.sc >= CENTRE_MIN_SC`. n_us = roster bytes not code 7 (me included); P(lose) by the square law on draft base HP x Str
+(`BASE_STATS`): ours = alive roster sum, theirs = s.sc x roster mean. CONVERGE when P <= `CONVERGE_PLOSE` 0.4 and
+n_us >= s.sc + `CONVERGE_MARGIN` 1 (5 v 3: 0.26, 4 v 3: 0.36, 5 v 4: 0.39, 3 v 3: 0.50), else LEAVE; trace `centre`
+on every change (decision, sc, sa, n_us, plose_team, side, age, fail).
+- LEAVE (while fresh): FARM of groups within `HOT_R` 12 of the altar x `HOT_FARM` 0.0 (replaces the STACK_R / STACK_FARM
+  sigmoid for that altar), HOLD / BANK at it and WARD tiles within HOT_R dropped. HEAL untouched.
+- CONVERGE: hunt target `CONV_T` 200 + altar for every champion (the Vesper / patrol sighting hunt is skipped then),
+  price (s.sc x (HUNT_BAG + 50 g2g) x (1 - P) - P x fcost) / (walk to the rally + 5) x `CONVERGE_X` 1.5, not in
+  death_cost. Executor `exec_conv` (50_exec): walk to the rally tile (`rally_tile`: walkable, Chebyshev `RALLY_D` 8 from
+  the altar, lowest F_home, cached per altar, goal key `r<a>`), wait (`w.waiting`, stuck-guard exempt) until
+  `conv_count` >= min(n_us, s.sc + 1), then step in; enemies in sight on the way keep it walking (fall back); at the
+  rally an enemy within `RALLY_ENGAGE` 4 releases it; after the release any enemy -> done (KILL / JOIN own the fight) and
+  no converge price on that altar for `CONV_REL` 30 rounds; the altar reached with nobody -> failed `empty`. After
+  `RALLY_WAIT` 20 rounds unmet: `failed rally`, my decision is LEAVE for `RALLY_FAIL_ROUNDS` 60.
+- Broadcast: a converge hunt sends code 3 with target = the altar (0-30); 31 stays the sighting / patrol hunt
+  (MEMORY_LAYOUT.md). The opening seed ends under CONVERGE, or under LEAVE when the seed group is in the hot region.
+
+**Numbers:** CONVERGE_PLOSE 0.4, CONVERGE_MARGIN 1, HOT_R 12, HOT_FARM 0.0, CONVERGE_X 1.5, RALLY_D 8, RALLY_WAIT 20,
+RALLY_FAIL_ROUNDS 60 (all guess, from the plan); RALLY_ENGAGE 4, CONV_REL 30 (guess, added); CENTRE_MIN_SC 3 (measured).
+
+**Deviations from the plan:** (1) `CENTRE_MIN_SC` 3: on regime-few maps a pair is "the stack" (STACK_N_FEW 2); with
+pairs the rule fired every ~30 rounds on collision (S=3) and the full game B vs tzunami444 fell +810 -> +124. (2)
+converge is priced also with enemies in sight (the plan's hunt needs none) so a champion next to the stack falls back
+to the rally; first build released at the rally on any enemy in sight and nobody waited (the rally is 8 tiles from
+the stack): now only within RALLY_ENGAGE. (3) seed break (above). (4) tzunami444 does group up: 3-5 enemies together
+on corners and collision, so the rule fires against it (not 0 lines as expected).
+
+**Check [measured, cambc 2.1.5]** (base = `bots/_snap-strat-base` = 14a553a):
+
+| check | base | CENTRE_ON 1 |
+| --- | --- | --- |
+| vs tzunami444 r300 margins col A/B, cor A/B, packs A/B | +154 +132 / +254 +386 / +284 +84 | +154 +132 / +118 +360 / +284 +84 |
+| vs tzunami444 full col A/B, packs A/B | W +568 r768, W +810 r787 / W +820 r615, W +568 r703 | W +636 r789, W +284 r983 / W +820 r603, W +532 r706 |
+| vs base, 4-5 pick maps (corners elkring interlock lanes monolith rows, both sides) | CENTRE_ON 0 build: 6/12, summed margin +81 | 6/12, summed +269; interlock A L -624 -> W +320, elkring A L -324 -> L -846, corners A W +728 -> W +310, corners B L -728 -> L -392, monolith A W +302 -> L -72 |
+| mirror (strat vs strat, 6 maps) deaths per game | corners 1, elkring 19, interlock 3, lanes 0, monolith 8, rows 1 | 7, 17, 10, 2, 8, 2 |
+| mirror game length | corners 369, elkring 939, interlock 537, monolith 692 | 631, 837, 720, 715 |
+
+Mirror rally outcomes (both teams, 6 maps): 53 `rally go` (n/need 4/4 or 5/4 every time), 7 `failed rally`, 24 `rally
+enemies`, 0 `empty`; rows never fires (no 3+ sighting); lanes fires 5 decisions, no rally. Choices per 100 rounds per
+champion 6-22 (base 7-30). 0 err lines; fuel max 2.497M (base 2.497M). Collision B full vs tzunami444: LEAVE at 3 v 3
+on A0 (one of 2 altars) from r320, score flat 242 r350-500 while theirs went 44 -> 394 (bank there removed): LEAVE on
+a 2-altar map costs. Verdict: the mechanism works (teams gather 4/4 and step in, no deadlock); the win effect is noise
+level at home (6/12 either way); the ladder is the test.
+
+Open: LEAVE with HOT_R 12 on small 2-altar maps (collision B); converge dissolves when the sighting goes stale (8
+rounds) while the team walks away from the stack (spec item 5); counting kill bytes whose handle & 31 equals the altar.

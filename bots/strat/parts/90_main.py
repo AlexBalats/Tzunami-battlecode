@@ -134,8 +134,8 @@ else:
             w.build_fme(s.pos)                    # also after a recall (the jump is > 6)
         # stuck guard: same tile, last turn neither capturing, channelling, attacking nor dead
         exempt = flags[0] or flags[1] or s.recalling or s.submitting
-        if flags[2] and not exempt and stack_mode(w, r):
-            exempt = True                         # [user plan 15 Oct, stack opener] group mode never sets waiting
+        if flags[2] and not exempt and (stack_mode(w, r) or (w.cur[0] == "hunt" and (w.cur[1] or 0) >= CONV_T)):
+            exempt = True                         # [user plan 15 Oct, stack opener] group mode never sets waiting; [CENTRE_ON] rally wait
         if s.pos == w.pos and not exempt:
             w.same += 1
             w.stay += 1
@@ -249,6 +249,7 @@ else:
         w.fh, w.flips, w.tflip = [], 0, None              # farm target history (50_exec set_cur flip lock), flips, last flip
         w.peekn, w.peeked = 0, False                      # dead-camp pickup (50_exec exec_farm)
         w.kh_until = 0
+        w.rally, w.cfail, w.cdec, w.rgo, w.crel = {}, {}, (None, None), None, {}   # [CENTRE_ON] rally tiles, failed rallies, decision, released
         w.hit = False
         w.hvis, w.roam, w.big3 = {}, 0.0, -999                                       # hunt patrol: altar (or 100 + group) -> round I reached it
         w.lastfarm = None                                 # last farm group (50_exec camp_zone: its monsters are not avoided)
