@@ -11,7 +11,6 @@ runs/
 # local-only outputs and scratch copies (15 Oct cleanup)
 __pycache__/
 .claude/worktrees/
-bots/_*/
 replays/
 runs/
 /*.csv

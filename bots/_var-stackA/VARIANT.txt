@@ -1,0 +1,2 @@
+from bots\strat
+STACK_UNTIL=150

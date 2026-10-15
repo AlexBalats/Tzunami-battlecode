@@ -1,0 +1,2 @@
+from bots\strat
+REWARD_X=1.0

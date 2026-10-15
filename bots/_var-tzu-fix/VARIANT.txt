@@ -1,0 +1,5 @@
+from bots\tzu
+INT_ON.HUNT=False
+INT_ON.JOIN=False
+INT_ON.HOLD=False
+DEF_ON.PASSIVE=False

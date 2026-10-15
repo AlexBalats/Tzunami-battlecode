@@ -1,0 +1,3 @@
+from bots\strat
+PEEK_ON=0
+REWARD_X=1.0

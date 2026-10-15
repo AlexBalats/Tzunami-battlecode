@@ -1,0 +1,3 @@
+from bots\strat
+SPAWN_KILL_R=-1
+KILL_CAMP_R=-1

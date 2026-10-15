@@ -1,0 +1,3 @@
+from bots\strat
+GROUP_UNTIL=300
+GROUP_SOLO_MAX=0.6

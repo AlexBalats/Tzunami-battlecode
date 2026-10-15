@@ -1,0 +1,3 @@
+from bots\strat
+GROUP_UNTIL=300
+PAIR_NEAR=10

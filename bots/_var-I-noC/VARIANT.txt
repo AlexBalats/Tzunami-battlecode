@@ -1,0 +1,3 @@
+from bots\strat
+ONEWAY_PARTNERS=0
+FLIP_WINDOW=-1

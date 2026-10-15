@@ -1,0 +1,5 @@
+from bots\strat
+REWARD_X=1.0
+KFAIL_ROUNDS=20
+LANCH_FAR_W=1.0
+GROUP_KILL_X=1.0

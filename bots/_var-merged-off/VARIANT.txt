@@ -1,0 +1,4 @@
+from bots\strat
+CHAIN_ON=0
+SUNK_ON=0
+SMOOTH_ON=0
