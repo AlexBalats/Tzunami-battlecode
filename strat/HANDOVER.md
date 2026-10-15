@@ -755,3 +755,53 @@ off, rows 0.22 on.
 
 Open: peek untested; the hunt patrol unchanged (user wants hold-and-deny from bushes instead: bush tile per altar at
 the draft, hold-from-bush executor, flee into bushes); subgroup sizes from camps off; interlock r300.
+
+## 15 Oct (night): change 3 chain pricing
+
+IMPROVEMENTS.md change 3 with the review's amended (marginal-leg) formula, behind `CHAIN_ON` 1 (0 = the old prices
+exactly). Only `40_prices.py` (`farm_price`, BANK block, new helpers `dz`, `bank_altar`, `chain`).
+
+**Rule (code):** FARM = `(g x (1 - P) + gold value) / (walk + clear + 5 + wait + carry_extra + channel_extra) - risk_extra`.
+g = the group's gems / bodies ** exp (as today; group mode unsplit); gold converted as today but kept out of the bag terms
+(gold is not lost with the bag and adds no channel). carry_extra = max(0, walk anchor -> the altar I would bank at from
+there (draft `o.near`, unless their side / by a fresh stack: then today's bank altar) - my walk to today's bank altar);
+replaces `detour`. channel_extra = ceil((bag + g) / 10) - ceil(bag / 10). P = mean draft danger at the anchor and that
+altar x (1 + (bag + g) / 100), clamped [0, 0.9]. risk_extra = P x bag x (carry_extra + clear + 5) / 60 replaces P x bag
+(a clear that breaks KEEP_HP still risks the whole bag, as today). Reward (cleared camp) prices use the same chain with
+clear 0. Group mode: the chain is priced by the subgroup's carry only (Vesper if in my subgroup, else its lowest slot, the
+handoff's rule) or anyone holding a bag; the others price the farm leg only. The BANK altar choice moved into
+`bank_altar()` (same logic, computed once per turn). With CHAIN_ON, `GROUP_BANK_X` / `GROUP_BANK_BAG` / `STACK_BANK_MIN`
+have no effect (constants kept).
+
+**Numbers:** `CHAIN_PMAX` 0.9, `CHAIN_BAG` 100, `CHAIN_EXPO` 60 (all guess); `CHAIN_NEAR` 0 and `CHAIN_BANK_PLUS` 1
+(measured, below: two deviations from the plan).
+
+**Deviations, measured** (r300 cut, vs tzunami444, collision / corners / packs both sides; base = `bots/_snap-strat-base`,
+r300 margins base +242 +198 / +154 +380 / +368 -4): the plan as written (P_NEAR 0.5 with an enemy within 8 in the farm
+chain, BANK with (1 - P)) gave +198 +198 / -170 -280 / +500 +224 and lost corners B as a full game 584-1044. With P_NEAR
+in the farm chain a bag-0 farmer's value fell ~60 % whenever an enemy was in sight (heal choices 7 -> 53 on corners B);
+with (1 - P) bank choices fell 22 -> 13. So `CHAIN_NEAR` 0 (farm chain uses the draft danger only) and `CHAIN_BANK_PLUS` 1
+(BANK keeps today's (1 + P), the plan's own fallback). Ablations at r300 (summed margin, base 1338): plan 670, no P_NEAR
+1068, (1 + P) only 582, both 1280 (shipped), both minus carry_extra 1106 (better corners, worse packs A), minus channel 1016,
+P = 0 852. Corners B is the swing game in every variant.
+
+**Check (shipped build)** [measured, cambc 2.1.5]:
+
+| map | r300 margin base -> chain | full game base -> chain (margin, end round) |
+| --- | --- | --- |
+| collision A / B | +242 -> +154 / +198 -> +132 | W +562 r884 -> W +802 r848 / W +750 r837 -> W +602 r828 |
+| corners A / B | +154 -> +250 / +380 -> -32 | W +586 r484 -> W +666 r532 / W +460 r495 -> W +328 r508 |
+| packs A / B | +368 -> +548 / -4 -> +228 | W +912 r562 -> W +860 r534 / W +400 r771 -> W +492 r646 |
+| rows A / B (50x50, 4 picks, solo 0.22: the 173c26eb shape) | +330 -> +66 / +132 -> +132 | W +693 r711 -> W +726 r752 / W +693 r724 -> W +550 r678 |
+| monolith A / B (50x50 group by ggems) | +72 -> +146 / -74 -> +146 | W +336 r649 -> W +154 r732 / W +320 r554 -> W +196 r710 |
+
+r300: ahead 5/6 on the three maps (worst corners B -32, was +380); rows A at r300 is a timing cut (three carries walking to
+bank 264 at r300). Full games 10/10 won (base 10/10), mean end round 670 vs 667. err lines 0, fuel median 1.19-1.42M,
+max 2.37M (base 2.31M). Trace (full games, collision / packs / rows, base -> chain): score r100 66-0 -> 44-0 (col A), r200
+packs A 232-44 -> 276-0, rows A 66-0 -> 132-0; bank choices per champion e.g. rows A {9:12, 1:3, 0:2, 2:2} -> {9:6, 1:7,
+0:9, 2:8} (the bank spreads off one carry); max bag at death 22 -> 196 (collision A: Vesper took a 174-gem kill at r414, kept
+fighting at 42 % HP, died at 7 % HP dithering heal/bank: KILL/HEAL logic, not the chain); sampled champion-rounds with a
+bag > 100: collision A 48 -> 50, B 97 -> 53, rows A 125 -> 291, rows B 105 -> 0, packs 0 -> 0.
+
+Open: rows A holds 132-bags longer; monolith finishes ~100 rounds later; `PRICES.md` still lists `bank_detour` /
+GROUP_BANK as the bank rule (not edited in this commit).

@@ -1782,6 +1782,18 @@ GROUP_SHOP_GOLD = 300       # [user decision 15 Oct; guess] group mode: SHOP x G
 GROUP_SHOP_X = 3.0          # (ladder 173c26eb: 1128 gold at r245 unspent)
 STACK_FOLLOW = 3.0          # in group mode FARM x this on a group a LOWER slot of my subgroup farms (w.lowsub)
 GROUP_HANDOFF = 1           # 1: capture handoff in group mode (50_exec exec_farm reward branch: one carry captures)
+# [user plan 15 Oct night, IMPROVEMENTS 3, amended] chain pricing: FARM prices the marginal leg of farm + carry + bank
+# (extra carry rounds, extra channel turns, the bag's exposure over them); BANK uses (1 - P). 0 = the old prices exactly.
+# With it on, GROUP_BANK_X / GROUP_BANK_BAG / STACK_BANK_MIN have no effect (the chain replaces those patches).
+CHAIN_ON = 1
+CHAIN_PMAX = 0.9            # [guess] P(lose the bag) cap
+CHAIN_BAG = 100             # [guess] P(lose the bag) x (1 + bag / this): a big bag is a target
+CHAIN_EXPO = 60             # [guess] risk_extra = P x bag x (extra exposed rounds) / this
+CHAIN_NEAR = 0              # [measured 15 Oct night] 1: the farm chain's P is P_NEAR with an enemy within 8 (the plan);
+                            # 0: draft danger only. With 1 a bag-0 farmer's value fell ~60 % whenever an enemy was in
+                            # sight, heal choices 7 -> 53 on corners B, and corners B lost the full game 584-1044
+CHAIN_BANK_PLUS = 1         # [measured 15 Oct night] 1: BANK keeps today's (1 + P); 0: (1 - P x (1 + bag / CHAIN_BAG)) (the
+                            # plan). With 0 bank choices fell 22 -> 13 on corners B (r300 -660); the plan's own fallback
 SPAWN_KILL_R = 2            # [user decision 15 Oct] KILL / JOIN a fight / HUNT price 0 on targets within this of an enemy
                             # spawn tile (it heals to full at turn end [rules], camps ring it); exec_kill fails there (-1: off)
 FUEL_FLOOR = 400_000        # after sensing: below this skip pricing, repeat the executor step
@@ -1936,7 +1948,7 @@ CLEAR_MEMO = {}
 class Snap:
     __slots__ = ("r", "st", "alive", "recalling", "submitting", "can_move", "can_attack", "pos", "hp", "maxhp",
                  "bag", "gold", "S", "enemies", "allies", "live", "vis", "mem", "spawn", "near_e", "P", "walt", "edps", "plose",
-                 "sc", "sa", "sage", "stack", "dcost", "attacker", "trapped")
+                 "sc", "sa", "sage", "stack", "dcost", "attacker", "trapped", "ba", "bwk", "sap", "carry")
 
 
 def sense(w):
@@ -2097,12 +2109,59 @@ def claims(w, s):
 def danger_p(w, s):
     if s.near_e <= 8:
         return P_NEAR
+    return dz(w, s.pos)
+
+
+def dz(w, p):
+    """The draft's danger at p's cell as P(lose the bag) (DANGER_W per 14ths; unreached cell 0)."""
     d = w.d
     if d and d.get("danger"):
-        v = d["danger"][(s.pos.y * GRID // w.Hm) * GRID + s.pos.x * GRID // w.Wm]
+        v = d["danger"][(p.y * GRID // w.Hm) * GRID + p.x * GRID // w.Wm]
         if v < 15:
             return DANGER_W * v / 14
     return 0.0
+
+
+def bank_altar(w, s, sap):
+    """(altar index, walk) BANK would use now: nearest by walk, our bank if that one is on their side; with a fresh
+    stack sighting the nearest safe one (draft side 0/1, > STACK_R from the stack), else the farthest from it."""
+    order = sorted(range(len(w.apos)), key=lambda i: w.ad[i])
+    a = order[0]
+    if w.aside[a] == 2 and w.bank < len(w.apos):
+        a = w.bank
+    if sap is not None:
+        # [deviation] spec: "the altar farthest from the sighting among safe ones". Here safe = draft side 0/1,
+        # reachable and more than STACK_R from the stack's altar, and the nearest such by walk wins (the
+        # farthest can be across the map); none safe: the one farthest from the stack.
+        ok = [i for i in order if w.aside[i] <= 1 and w.ad[i] < FAR]
+        away = [i for i in ok if w.apos[i].chebyshev_distance(sap) > STACK_R]
+        if away:
+            a = away[0]
+        elif ok:
+            a = max(ok, key=lambda i: w.apos[i].chebyshev_distance(sap))
+    wk = w.walk_to(f"a{a}", s.pos)
+    if wk is None or wk >= FAR:
+        wk = max(0, w.ad[a] - 1)
+    return a, wk
+
+
+def chain(w, s, o, g):
+    """[IMPROVEMENTS 3, amended] (carry_extra, channel_extra, P_lose_bag) for farming group o that adds g gems to my
+    bag: carry_extra = walk anchor -> the altar I would bank at from there (o.near unless on their side or by the
+    stack, then today's bank altar) - my walk to today's bank altar, >= 0; channel_extra = extra channel turns;
+    P = mean draft danger over the anchor and that altar (P_NEAR with an enemy within 8 if CHAIN_NEAR) x
+    (1 + (bag + g) / CHAIN_BAG), clamped to [0, CHAIN_PMAX]."""
+    a = s.ba
+    n = o.near
+    if n < len(w.apos) and w.aside[n] != 2 and (s.sap is None or w.apos[n].chebyshev_distance(s.sap) > STACK_R):
+        a = n
+    f = w.nav.get(f"a{a}")
+    d = fget(f, o.anchor) if f is not None else FAR
+    if d >= FAR:
+        d = max(0, o.anchor.chebyshev_distance(w.apos[a]) - 1)
+    b = s.bag + g
+    P = P_NEAR if CHAIN_NEAR and s.near_e <= 8 else (dz(w, o.anchor) + dz(w, w.apos[a])) / 2
+    return max(0, d - s.bwk), int((-s.bag // 10) - (-b // 10)), min(CHAIN_PMAX, max(0.0, P * (1 + b / CHAIN_BAG)))
 
 
 def farm_price(w, s, h, bodies, walk, c=None):
@@ -2116,7 +2175,14 @@ def farm_price(w, s, h, bodies, walk, c=None):
     sm = stack_mode(w, s.r)
     bx = STACK_BODY_EXP if sm else BODY_EXP     # [user plan 15 Oct, stack opener] value / bodies ** bx
     div = max(1, bodies) if bx == 1.0 else max(1, bodies) ** bx
+    if CHAIN_ON:
+        g = o.gems / div                        # gems my bag gains; gold is not carried risk and adds no channel
+        gv = value / div - g
+        ce, he, P = chain(w, s, o, g) if s.carry and w.apos else (0, 0, 0.0)
+        cv = g * (1 - P) + gv                   # [IMPROVEMENTS 3] the gems reach the altar with P(keep the bag)
     if o.st == "reward":
+        if CHAIN_ON:
+            return cv / (walk + 5 + ce + he) * REWARD_X - P * s.bag * (ce + 5) / CHAIN_EXPO
         return value / div / (walk + 5) * REWARD_X     # [user decision 15 Oct afternoon] free gems beat a clear
     Se = s_eff(w, s, h, bodies)                 # [user decision 15 Oct] my Strength x my splash (30_world)
     if o.hp is None:                            # full HP: cached per (group, bodies, my Strength)
@@ -2130,6 +2196,8 @@ def farm_price(w, s, h, bodies, walk, c=None):
     else:
         mons = [m for m in o.hp if m[0] > 0]
         if not mons:
+            if CHAIN_ON:
+                return cv / (walk + 5 + ce + he) - P * s.bag * (ce + 5) / CHAIN_EXPO
             return value / div / (walk + 5)
         clear, dmg = clear_dmg(mons, Se, bodies)
     per = dmg * tank(bodies) + s.edps * min(clear + 5, 10)    # [tuned] + enemies hitting me; TANK_SHARE [15 Oct afternoon]
@@ -2142,6 +2210,12 @@ def farm_price(w, s, h, bodies, walk, c=None):
     if RECALL_COST and s.hp - per < KEEP_HP * s.maxhp:
         # [user decision 15 Oct afternoon] the clear leaves me below KEEP_HP: a recall (5) + the walk back out follow it
         walk += 5 + min(fget(w.F_home, o.anchor) if w.F_home is not None else 20, 20)
+    if CHAIN_ON:
+        # [IMPROVEMENTS 3, amended] marginal leg: carry_extra replaces detour, risk_extra (the bag exposed over the
+        # extra rounds) replaces P x bag; a clear that breaks KEEP_HP still risks the whole bag (kept as today)
+        if s.hp - per >= KEEP_HP * s.maxhp:
+            risk = P * s.bag * (ce + clear + 5) / CHAIN_EXPO
+        return cv / (walk + clear + 5 + ce + he) - risk
     detour = 0
     if o.near < len(w.apos):
         detour = max(0, o.anchor.chebyshev_distance(w.apos[o.near]) - s.walt)
@@ -2376,6 +2450,16 @@ def price_all(w, s, cl, by):
     if b7 & 31 and (((r // 32) - (b7 >> 5)) & 7) * 32 < DEATH_MARK:
         dead_g = w.idx.get((b7 & 31) - 1)
     sap = w.apos[s.sa] if s.stack else None
+    s.sap = sap
+    s.ba, s.bwk = bank_altar(w, s, sap) if w.apos else (0, FAR)
+    s.carry = True
+    if CHAIN_ON and sm and s.bag == 0:
+        # [IMPROVEMENTS 3] group mode: the chain is the subgroup carry's (handoff: Vesper if in my subgroup, else its
+        # lowest slot); the others' bags stay 0 after the handoff, they price the farm leg only
+        mine = (getattr(w, "subs", None) or {}).get(w.slot, ())
+        if len(mine) > 1:
+            vs = w.roster.index(VESPER_ID) if VESPER_ID in w.roster else -1
+            s.carry = w.slot == (vs if vs in mine else min(mine))
     update_groups(w, s, cand)
     rawb = 0.0
     for h in cand:
@@ -2422,31 +2506,20 @@ def price_all(w, s, cl, by):
         out.append((p, "farm", h))
     # BANK
     if s.bag > 0 and w.apos:
-        order = sorted(range(len(w.apos)), key=lambda i: w.ad[i])
-        a = order[0]
-        if w.aside[a] == 2 and w.bank < len(w.apos):
-            a = w.bank
-        if sap is not None:
-            # [deviation] spec: "the altar farthest from the sighting among safe ones". Here safe = draft side 0/1,
-            # reachable and more than STACK_R from the stack's altar, and the nearest such by walk wins (the
-            # farthest can be across the map); none safe: the one farthest from the stack.
-            ok = [i for i in order if w.aside[i] <= 1 and w.ad[i] < FAR]
-            away = [i for i in ok if w.apos[i].chebyshev_distance(sap) > STACK_R]
-            if away:
-                a = away[0]
-            elif ok:
-                a = max(ok, key=lambda i: w.apos[i].chebyshev_distance(sap))
-        wk = w.walk_to(f"a{a}", s.pos)
-        if wk is None or wk >= FAR:
-            wk = max(0, w.ad[a] - 1)
+        a, wk = s.ba, s.bwk                     # bank_altar(): nearest / our bank / away from a stack
         if wk < FAR and not (s.near_e <= 4 and s.plose > P_LOSE_MAX):
             P = s.P
+            if CHAIN_ON and not CHAIN_BANK_PLUS:
+                # [IMPROVEMENTS 3] the bag's risk lives on the farm side (risk_extra), so BANK could use (1 - P)
+                P = -min(CHAIN_PMAX, P * (1 + s.bag / CHAIN_BAG))
             # [deviation] the risk of holding the bag is ADDED to BANK (PRICES: "at bag >= 20 with an enemy
             # within 8, risk dominates and BANK wins"); subtracting it would stop every bank near an enemy.
             # BANK_NEAR_BONUS [guess]: tempo, a bag next to an altar banks now (ladder: 22 gems carried 40 rounds)
             near = 1 + BANK_NEAR_BONUS if wk <= BANK_NEAR else 1
             bp = s.bag * (1 + P) * near / (wk * race(w)["bank_ret"] + max(1, -(-s.bag // 10))) * prof["bank"] * pm["bank_risk"]
-            if sm and s.bag < STACK_BANK_MIN:
+            if CHAIN_ON:
+                pass                            # the chain replaces the lump / cash-out patches
+            elif sm and s.bag < STACK_BANK_MIN:
                 bp *= STACK_BANK_LOW            # [user plan 15 Oct, stack opener] bank in lumps
             elif sm and GROUP_BANK_BAG and s.bag >= GROUP_BANK_BAG:
                 bp *= GROUP_BANK_X * s.bag / GROUP_BANK_BAG     # the carry banks its lump
