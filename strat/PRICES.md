@@ -251,3 +251,13 @@ Sanity check against G2G: 0.13 g/r per 100 gold over 1,000 rounds is ~1.3 gems p
 - S3: real `f` (gems per round per body) on each public map, to set G2G.
 - S4: how many rounds a bank trip costs per map (walk to nearest altar from the farm region).
 - S5: pair take rates: does 2× bodies halve the clear, and who takes the hits (nearest, ties to lowest id [measured A2])?
+
+### Ship set I (15 Oct evening) numbers, all [guess] unless marked
+Varg splash: live clear damage x (1 + SPLASH_K x (min(3, m) - 1)), m = 1 + most live neighbours within 1 of a monster.
+Kills: none within SPAWN_KILL_R 2 of an enemy spawn tile [rules: spawn heals to full]. Carry: bag >= 100 banks x12,
+gold >= 300 shops x3. Group game also when ggems >= 0.7. Cleared camp x REWARD_X 1.0 [measured: 2.0 worse]. Partners
+count only from a lower slot; A,B,A target flips within 10 rounds lock B out for 30. Vesper < 15 shards: hunt reach 6,
+chase 6, failed-chase ban 6 rounds, bystanders at 5-8 tiles weigh 0.5 in Lanchester, denial 60, kill x2 in group mode.
+Spike (ally Vesper Strength >= 120 seen, or round 300): others gold 0.05 -> 1.0, shop 1.5. Clear model: the most-hit
+body takes max(1/k, 0.6) of the damage; a clear ending under KEEP_HP adds a recall (5 + walk home <= 20) to the rounds;
+draft bodies from the roster's mean Strength / HP.

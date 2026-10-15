@@ -723,3 +723,35 @@ capture at r68); `group_go` steps toward spawn when no claiming ally is visible 
 3-pick rosters tested only on packs. `tools/assemble.py` has no `--help`: it rewrote `bots/tzu/src/main.py` (untracked,
 dropped bot). Tools: `tools/bench.py --rounds N`, `tools/openviz.py` (bench page), `tools/gameviz.py` + a per-round
 `pos` trace (our own replay page; the official one is `cambc view <bundle>`).
+
+## 15 Oct (evening): ship set I (uploaded as submissions/strat.zip)
+
+Ladder 12:16 (ten games, LADDER_NOTES.md) + game cd737718 (Varg / Ryth swapped two cleared camps for 900 rounds) +
+the user watching Vesper attack champions on their spawn. Built by two agents, light checks only (user: no benches).
+
+Kept ON from the first set: Varg splash targeting + live clear model (`SPLASH_ON` 1, `SPLASH_K` 1.0; neighbours hit per
+swing on packs 0.55 -> 1.1), no KILL / JOIN / HUNT on a target within `SPAWN_KILL_R` 2 of an enemy spawn tile (0 such
+kills after), carry cash-out (`GROUP_BANK_X` 12 at bag >= 100, `GROUP_SHOP_GOLD` 300 x `GROUP_SHOP_X` 3), group game
+also when `ggems >= GROUP_GEMS_MIN` 0.7 (monolith, the 50x50 afc28f06). Code kept but OFF: `KILL_CAMP_R` -1 (camp-zone
+avoidance blocked most melee kills), `GROUP_CAMP_SIZES` 0 (trio + solo on 4 picks lost rows).
+New: dead-camp pickup (`PEEK_ON`: step onto a spawn tile when nothing of the group is visible from the ring; after
+`PEEK_ROUNDS` 3 unseen rounds the memory calls it a reward; `REWARD_X` 1.0, 2.0 measured worse); one-way partners
+(`ONEWAY_PARTNERS`: a claimant counts for the clear only from a lower slot, every group) + flip lock (A,B,A within
+`FLIP_WINDOW` 10 -> B excluded `FLIP_LOCK` 30; `osc` also fires on target flips); Vesper aggression before 15 shards
+(`hunt` 6 tiles with `patrol` 0, `chase` 6, `KFAIL_ROUNDS` 6, Lanchester bodies at 5-8 tiles x `LANCH_FAR_W` 0.5,
+`denial` 60, `GROUP_KILL_X` 2); Varg build Monster > Treasure > alternate Durability Health / Power (gold stays 0.05);
+spike shift (`SPIKE_STR` 120 seen on an ally Vesper, or `SPIKE_ROUND` 300: every non-Vesper row gold 1.0, shop 1.5;
+fired r95-187 in the checks); clear model `TANK_SHARE` 0.6 (the most-hit body takes max(1/k, 0.6)), `RECALL_COST`
+(a clear that leaves me under KEEP_HP adds 5 + walk home, capped 20, to the rounds), draft bodies from the roster's
+mean Strength / mean HP (`BASE_STATS`; min HP put collision into group mode).
+
+Light check [measured, cambc 2.1.5], full games vs tzunami444 on collision + packs both sides, HEAD 9e0b3c4 -> this:
+won 3/4 -> 4/4 (1016-372, 1016-218, 1000-44, 1032-560); Vesper deaths 5 -> 1, kill choices 128 -> 200; farm-target
+flips 13 -> 4 (flip lock fired 4x); kills within 2 of the enemy spawn 0; fuel median 1.09-1.23M, max 2.17M; 0 err.
+Peek / aged reward never fired (no public map has a bush-ring camp): unproven in play. Earlier r300 bench of A-D only
+(`runs/bench/open-groupI*`): group maps ahead 4/6 (+254), with REWARD_X 1.0 ahead 11/18 (+806 summed); D (Vesper
+aggression) costs interlock at r300 but helps the sum. Draft buckets rechecked after the mean-HP fix: collision 0.70
+off, rows 0.22 on.
+
+Open: peek untested; the hunt patrol unchanged (user wants hold-and-deny from bushes instead: bush tile per altar at
+the draft, hold-from-bush executor, flee into bushes); subgroup sizes from camps off; interlock r300.

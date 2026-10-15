@@ -16,15 +16,17 @@ _IT = cambc.ItemType
 _KEYS = ("farm", "gold", "bank", "kill", "hold", "shop", "join", "heal")
 
 
-def _row(farm, gold, bank, kill, hold, shop, join, item, gain, heal=1.0, build=None, phases=None, alt=None):
+def _row(farm, gold, bank, kill, hold, shop, join, item, gain, heal=1.0, build=None, phases=None, alt=None, splash=False):
     """build: ordered shard types; the shop buys the first whose emblem is not complete (build_target()).
     `item` stays the first entry so older readers keep working. phases: optional ((shards_threshold, overrides), ...)
-    ascending; the last entry whose threshold <= shards owned overrides the row's keys (apply_phase())."""
+    ascending; the last entry whose threshold <= shards owned overrides the row's keys (apply_phase()).
+    splash: basic attacks splash Strength onto every other monster within 1 of the target [rules, Varg] (50_exec
+    targeting, 30_world splash_m in the live clear model)."""
     if build is None:
         build = (item,)
     return {"farm": farm, "gold": gold, "bank": bank, "kill": kill, "hold": hold, "shop": shop, "join": join,
             "item": build[0], "item_gain": gain, "heal": heal, "build": tuple(build), "phases": phases,
-            "alt": tuple(alt) if alt else (build[-1],)}   # after the build: alternate these by emblem count
+            "alt": tuple(alt) if alt else (build[-1],), "splash": splash}   # after the build: alternate these by emblem count
 
 
 _MS, _TS, _PS, _DH = (_IT.MONSTER_SHARD_OF_STRENGTH, _IT.TREASURE_SHARD_OF_STRENGTH, _IT.POWER_SHARD_OF_STRENGTH,
@@ -49,7 +51,10 @@ PROFILES = {
     2: _row(1.1, 0.05, 1.1, 1.3, 0.5, 1.0, 1.0, _PS, 0.12, 1.0, (_PS, _MS, _DH)),
     # Varg [guess all]: farm 1.3 splash = Strength on adjacent monsters, 2-3x on groups; kill 0.8 no mobility, no CC,
     # mediocre single target; hold 0.5 no stun; join 1.2 packs are where splash pays.
-    9: _row(1.3, 0.05, 1.0, 0.8, 0.5, 1.0, 1.2, _MS, 0.16, 1.0, (_MS, _PS, _DH)),
+    # [user decision 15 Oct] splash=True: targets / stands by the monster with the most live neighbours within 1, and the
+    # live clear model counts his hits x the splash count (30_world splash_m)
+    # [user decision 15 Oct afternoon] build Monster, Treasure, then alternate Durability Health / Power (gold stays 0.05)
+    9: _row(1.3, 0.05, 1.0, 0.8, 0.5, 1.0, 1.2, _MS, 0.16, 1.0, (_MS, _TS), splash=True, alt=(_DH, _PS)),
     # Marcella [guess all]: farm 1.1 2x Focus nuke on camps beyond her 45 Str; bank 0.8 stun-immune tributer, the
     # designated carrier; kill 1.1 enhanced attack stuns; hold 1.2 melee stun + immune to theirs; join 1.1 1200 HP
     # front body. Item: Strength (profile: Strength and Health), Monster for farm speed.
@@ -77,10 +82,14 @@ PROFILES = {
     # shop 2.0 below 10 shards [user plan 15 Oct, ladder 2; guess]: she buys instead of hoarding (sat on 170-276
     # gold for 50-150 rounds with gold 3.0 out-pricing SHOP); 1.0 from 10 shards.
     1: _row(1.2, 1.6, 1.1, 0.9, 0.0, 1.0, 1.0, _TS, 0.17, 1.0, (_TS, _MS, _PS),
-            ((0, {"farm": 1.5, "gold": 3.0, "kill": 0.9, "bank": 1.1, "shop": 2.0}),
+            ((0, {"farm": 1.5, "gold": 3.0, "kill": 0.9, "bank": 1.1, "shop": 2.0, "hunt": 6, "chase": 6, "denial": 60,
+                  "patrol": 0}),
              (15, {"farm": 0.4, "gold": 3.0, "kill": 2.5, "bank": 1.5, "shop": 0.5, "hunt": 20, "chase": 8,
-                   "heal": 0.5, "retreat_hp": 0.3, "kill_plose": 0.95, "dcost_fight": 30})),
+                   "heal": 0.5, "retreat_hp": 0.3, "kill_plose": 0.95, "dcost_fight": 30, "denial": 60})),
             alt=(_DH, _PS)),   # [user decision 15 Oct] after Treasure/Monster/Power: alternate Durability Health and Power
+    # [user decision 15 Oct afternoon, Vesper aggression; guess] below 15 shards: hunt 6 tiles (KILL reach + 6: everything
+    # in vision is closable, chase rounds bound the pursuit), chase 6 (was 3); denial 60 in both phases (others: DENIAL 24).
+    # patrol 0: the hunt key no longer switches on the sighting hunt / patrol before 15 shards (unchanged behaviour there).
     # Stellar [guess all]: farm 1.5 spells deal ~77/turn vs 35 Str (2.2x), cut for cast-only-standing and 2 casts per
     # 8; bank 1.2 750 HP, fragile carrier; kill 1.2 235 burst at range 4 finishes carriers; hold 0.5 no stun;
     # join 1.2 area spell on groups, needs a frontline. Build: the default (Monster, Power Strength).
@@ -97,6 +106,11 @@ PROFILES = {
 _TYPE_TO_DRAFT = (0, 1, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10)     # ChampionType -> ChampionDraft [sdk enums]
 
 ME = {}
+SPIKE_STR = 120            # [user decision 15 Oct afternoon; guess] an ally Vesper seen at this Strength ...
+SPIKE_ROUND = 300          # ... or this round: the spike shift (non-Vesper rows' gold / shop below; w.spike)
+SPIKE_GOLD = 1.0           # non-Vesper `gold` after the spike (was 0.05: all gold to Vesper until she spikes)
+SPIKE_SHOP = 1.5           # non-Vesper `shop` after the spike
+BASE_STATS = {9: (1000, 50), 1: (900, 45), 0: (1200, 50), 2: (800, 70), 6: (1200, 45)}   # draft id -> (HP, Str) [docs/Champions]
 _SHARD_W = []               # item_count() index -> shards it stands for (shard 1, emblem its combine_count, else 0)
 
 
@@ -176,20 +190,26 @@ def apply_phase(w):
     if base is None:
         return
     ph = base.get("phases")
-    if not ph:
-        ME["prof"] = base
-        return
+    spk = bool(getattr(w, "spike", False)) and ME.get("id") != 1     # [user decision 15 Oct afternoon] Vesper (1) unchanged
     i = 0
-    for j, (th, _ov) in enumerate(ph):
+    for j, (th, _ov) in enumerate(ph or ()):
         if w.shards >= th:
             i = j
-    if i == w.phase:
+    if (i, spk) == w.phase:
+        return
+    if not ph and not spk:
+        ME["prof"] = base
+        w.phase = (i, spk)
         return
     p = dict(base)
-    p.update(ph[i][1])
+    if ph:
+        p.update(ph[i][1])
+    if spk:
+        p["gold"], p["shop"] = SPIKE_GOLD, SPIKE_SHOP
     ME["prof"] = p
-    w.phase = i
-    trace("phase", f"{i} shards={w.shards} " + " ".join(f"{k}={v}" for k, v in ph[i][1].items()))
+    w.phase = (i, spk)
+    trace("phase", f"{i} shards={w.shards} " + (" ".join(f"{k}={v}" for k, v in ph[i][1].items()) if ph else "")
+          + (f" spike gold={SPIKE_GOLD} shop={SPIKE_SHOP}" if spk else ""))
 
 
 def me_init():

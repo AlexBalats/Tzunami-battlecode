@@ -12,12 +12,24 @@ def _set_cur(self, new, r, s):
     self.kd, self.kn, self.arrived, self.waited = 99, 0, None, 0
     self.hit = False                            # trace only: attacked since this choice (choice `hit=`)
     self.lastbag, self.lastgold = s.bag, s.gold
+    self.peekn, self.peeked = 0, False          # dead-camp pickup (exec_farm): rounds near the group seeing nothing
     walk, work = 0, 0
     if op == "farm" and tg in self.G:
+        # [user decision 15 Oct afternoon, ladder cd737718] backstop: farm target A -> B -> A within FLIP_WINDOW rounds
+        # locks A (B excluded FLIP_LOCK rounds); 90_main's osc detector traces the flip
+        fh = self.fh = (self.fh + [(r, tg)])[-3:]
+        if len(fh) == 3 and fh[0][1] == tg != fh[1][1] and r - fh[0][0] <= FLIP_WINDOW:
+            self.excl[("farm", fh[1][1])] = r + FLIP_LOCK
+            self.flips += 1
+            self.tflip = (fh[1][1], tg)
+            trace("choice", f"flip lock {tname(self, 'farm', tg)} excl={tname(self, 'farm', fh[1][1])} in={r - fh[0][0]}")
+            self.fh = []
+        self.lastfarm = tg                      # kill exclusions: this group's monsters are not avoided (camp_zone)
         walk = self.gd.get(tg, 40)
         o = self.G[tg]
         mons = [m for m in (o.hp if o.hp is not None else o.mons) if m[0] > 0]
-        work = (clear_dmg(mons, s.S, max(1, o.need))[0] if mons else 0) + 8
+        k = max(1, o.need)
+        work = (clear_dmg(mons, s_eff(self, s, tg, k), k)[0] if mons else 0) + 8
         if o.need >= 2:
             work += 10                          # waiting for the partner (group mode: walking to it)
     elif op in ("bank", "hold") and tg is not None and tg < len(self.ad):
@@ -54,6 +66,13 @@ PAIR_NEAR = 6               # [user plan 15 Oct, pair/trio opener; guess] group 
 GROUP_SEEK_CAP = 15         # [guess] group mode: rounds stepping toward a partner at a group before the take fails
 WAIT_EXCL = 30              # [guess] rounds that (farm, group) is excluded after a failed partner wait
 RETREAT_HP = 0.6            # [guess] fallback retreats from enemies within 4 below this HP fraction
+PEEK_ON = 1                 # [user decision 15 Oct afternoon] dead-camp pickup: step onto a spawn tile of an unseen group at the goal
+PEEK_ROUNDS = 3             # ... within 2 of its tiles this many rounds with nothing seen: remembered as a waiting reward
+SPLASH_ON = 1               # [user decision 15 Oct] splash champions (profile `splash`): target / walk to the monster with the
+                            # most live neighbours within 1 (0: lowest HP in range, the old rule; the `splash` trace stays)
+KILL_CAMP_R = -1            # [user decision 15 Oct] kill / hunt never step within this of a live monster of a group I do
+                            # not farm (camp_zone); no such path: the kill / hunt fails (-1: off)
+                            # [user decision 15 Oct afternoon] off by default (3 blocked most melee kills); code kept
 
 
 def in_camp_range(s, w):
@@ -128,7 +147,7 @@ def live_ok(w, s, h, k):
     mons = [m for m in (o.hp if o.hp is not None else o.mons) if m[0] > 0]
     if not mons:
         return True
-    return clear_dmg(mons, s.S, k)[1] / k <= s.hp * SURVIVE
+    return clear_dmg(mons, s_eff(w, s, h, k), k)[1] * tank(k) <= s.hp * SURVIVE     # TANK_SHARE
 
 
 def handoff(w, s, o):
@@ -169,6 +188,33 @@ def group_go(w, s, h, o):
     return "going"
 
 
+def splash_nb(lv, i):
+    """Live monsters of lv (sense entries) other than lv[i] within Chebyshev 1 of it (Varg's splash reach [rules])."""
+    p = lv[i][2]
+    n = 0
+    for j, (_c, hp, q, _st) in enumerate(lv):
+        if j != i and hp > 0 and q.chebyshev_distance(p) <= 1:
+            n += 1
+    return n
+
+
+def camp_zone(w, s, skip=None):
+    """[user decision 15 Oct, kill exclusions] tiles within KILL_CAMP_R of the visible live monsters (s.live) of every
+    group but my last farm group (w.lastfarm) and skip; None when there are none (or KILL_CAMP_R < 0)."""
+    if KILL_CAMP_R < 0:
+        return None
+    z = None
+    for h, lv in s.live.items():
+        if h == w.lastfarm or h == skip:
+            continue
+        for _c, hp, p, _st in lv:
+            if hp > 0:
+                if z is None:
+                    z = Bitboard()
+                z.draw_chebyshev(p, KILL_CAMP_R)
+    return z
+
+
 def exec_farm(w, s, h):
     o = w.G[h]
     lv = s.live.get(h)
@@ -196,9 +242,26 @@ def exec_farm(w, s, h):
                     return "failed"
             w.waiting = True
             return "going"
+        spl = ME["prof"].get("splash")
+        if spl and SPLASH_ON and not hurt and len(lv) >= 2:
+            # [user decision 15 Oct, Varg's splash] before the first hit: stand next to the monster with the most live
+            # neighbours within 1 when no monster in range has as many
+            nb = [(splash_nb(lv, i), -hp, i) for i, (_c, hp, _p, _st) in enumerate(lv) if hp > 0]
+            if nb:
+                bn = max(nb)
+                inr = max((splash_nb(lv, i) for _hp, i in tgt), default=-1)
+                if bn[0] > inr and bn[0] >= 1 and w.step_near(lv[bn[2]][2], ME.get("range", 1), s) == "moved":
+                    return "going"
         if tgt and s.can_attack:
-            tgt.sort()
+            if spl and SPLASH_ON:
+                tgt = [(-splash_nb(lv, i), hp, i) for hp, i in tgt]    # most neighbours, then lowest HP
+                tgt.sort()
+                tgt = [(hp, i) for _n, hp, i in tgt]
+            else:
+                tgt.sort()
             c = lv[tgt[0][1]][0]
+            if spl and TRACE:
+                trace("splash", f"nb={splash_nb(lv, tgt[0][1])} live={sum(1 for x in lv if x[1] > 0)} hp={tgt[0][0]:.0f} g{h}")
             try:
                 w.me.attack(c)
                 w.attacked = True
@@ -217,7 +280,8 @@ def exec_farm(w, s, h):
             w.step_to(f"g{h}", s)
         return "going"
     # no live camp of h in vision
-    if visible(w, s, o):
+    vis = visible(w, s, o)
+    if vis:
         if o.seen != s.r:
             update_groups(w, s, [h])
         if o.st == "resp":
@@ -244,6 +308,27 @@ def exec_farm(w, s, h):
     if s.bag > w.lastbag and w.capt:
         o.st, o.until = "resp", s.r + o.resp
         return "done"
+    if o.st == "reward":
+        # memory says cleared (seen, or aged below): the capture tile shows the cluster on arrival (reward branch above)
+        if w.step_to(f"c{h}", s) == "blocked" and s.can_move:
+            w.step_near(o.tiles, 0, s)
+        return "going"
+    dm = min(t.chebyshev_distance(s.pos) for t in o.tiles)
+    if PEEK_ON and not vis and dm <= max(1, ME.get("range", 1)):
+        # [user decision 15 Oct afternoon, ladder cd737718: Varg and Ryth priced two cleared camps as alive for 900
+        # rounds from the ring around a bush cluster] at the goal, nothing of the group seen: step onto its nearest spawn
+        # tile (inside the bush the cluster is visible; a failed step onto an occupied tile reveals it [rules])
+        if dm <= 2:
+            w.peekn += 1
+            if w.peekn >= PEEK_ROUNDS and o.st == "alive":
+                o.st = "reward"                 # memory ageing: priced / executed as a waiting reward (capture branch)
+                trace("exec", f"farm {tname(w, 'farm', h)} aged reward n={w.peekn}")
+        if not w.peeked:
+            w.peeked = True
+            trace("exec", f"farm {tname(w, 'farm', h)} peek d={dm} st={o.st}")
+        if dm > 0:
+            w.step_near(o.tiles, 0, s)
+        return "going"
     w.step_to(f"g{h}", s)
     return "going"
 
@@ -291,6 +376,11 @@ def exec_kill(w, s, hd):
     c, p, hp, _b, dd, _st = e
     if hp <= 0:
         return "done"
+    kz = w.cur[0] == "kill"                     # the exclusions apply to a chosen kill, not the trapped fight (exec_fall)
+    if kz and near_espawn(w, p):
+        w.kfail[hd] = s.r + EXCL                # [user decision 15 Oct] the target reached their spawn: heals to full
+        trace("exec", f"kill {hd} failed espawn tp={p.x},{p.y}")
+        return "failed"
     rng = ME.get("range", 1)
     if dd <= rng:
         w.attacked = True
@@ -308,7 +398,7 @@ def exec_kill(w, s, hd):
         ttk = -(-int(hp) // int(s.S))
         # a finisher chase gets 2 ttk + 2 rounds (pinned / 1 tile/turn); else the phase's `chase` (default 3)
         if w.kn >= (2 * ttk + 2 if ttk <= 2 else ME["prof"].get("chase", 3)):
-            w.kfail[hd] = s.r + EXCL            # [bug fix 15 Oct, ladder 4] finishers too (40_prices KILL)
+            w.kfail[hd] = s.r + KFAIL_ROUNDS    # [bug fix 15 Oct, ladder 4] finishers too; [15 Oct afternoon] 6 rounds
             return "failed"
     else:
         w.kn = 0
@@ -316,7 +406,8 @@ def exec_kill(w, s, hd):
     # CLOSE [user plan 15 Oct]: 1-2 tiles beyond range -> dash into range (farthest such tile), then try the attack.
     # [user plan 15 Oct, ladder 4] only onto a target I kill in <= CLOSE_TTK hits, and with enemies within 8 of me
     # <= allies within 8 + 1 (ladder: dashes onto 750-HP targets, 5 hits, with 4 enemies in sight); else walk
-    if rng < dd <= rng + 2 and -(-int(hp) // int(s.S)) <= CLOSE_TTK             and sum(1 for x in s.enemies if x[4] <= 8) <= sum(1 for a in s.allies if a[1].chebyshev_distance(s.pos) <= 8) + 1             and w.dash_to(s, lambda q: -q.chebyshev_distance(p) if q.chebyshev_distance(p) <= rng else None, "close"):
+    z = camp_zone(w, s) if kz else None         # [user decision 15 Oct] never step within KILL_CAMP_R of other camps
+    if rng < dd <= rng + 2 and -(-int(hp) // int(s.S)) <= CLOSE_TTK             and sum(1 for x in s.enemies if x[4] <= 8) <= sum(1 for a in s.allies if a[1].chebyshev_distance(s.pos) <= 8) + 1             and w.dash_to(s, lambda q: -q.chebyshev_distance(p) if q.chebyshev_distance(p) <= rng and (z is None or not z.is_set(q)) else None, "close"):
         res = "no-attack"
         try:
             w.me.attack(c)
@@ -327,7 +418,10 @@ def exec_kill(w, s, hd):
         return "going"
     if s.st & 0x800:
         w.cast(c, False)                        # dashes and ranged spells close the gap
-    w.step_near(p, rng, s)
+    if w.step_near(p, rng, s, z) == "nopath":
+        w.kfail[hd] = s.r + KFAIL_ROUNDS
+        trace("exec", f"kill {hd} failed camp tp={p.x},{p.y}")
+        return "failed"
     return "going"
 
 
@@ -343,7 +437,12 @@ def exec_hunt(w, s, a):
         return "done"
     if s.r - w.started >= HUNT_MAX or s.pos.chebyshev_distance(t) <= 2:
         return "failed"
-    w.step_to(key, s)
+    z = camp_zone(w, s, a - 100 if a >= 100 else None)     # [user decision 15 Oct] kill exclusions (target group exempt)
+    if z is None:
+        w.step_to(key, s)
+    elif w.step_avoid(key, s, z) == "nopath":
+        trace("exec", f"hunt {tname(w, 'hunt', a)} failed camp")
+        return "failed"
     return "going"
 
 

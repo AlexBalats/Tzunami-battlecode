@@ -47,6 +47,43 @@ def clear_dmg(mons, S, k):
     return r, dmg
 
 
+SPLASH_K = 1.0              # [user decision 15 Oct] splash champions (profile `splash`, Varg): live clear model Strength x
+                            # 1 + SPLASH_K x (min(3, max over live monsters of 1 + live neighbours within 1) - 1); 0 = off
+SPLASH_M = {}               # (group, round) -> splash count this round (splash_m cache)
+
+
+def splash_m(w, s, h):
+    """[user decision 15 Oct, Varg's splash, rules: Strength onto every other monster within radius 1 of the target]
+    Damage multiplier of MY basic attack on group h: 1 + SPLASH_K x (min(3, m) - 1), m = max over its live monsters
+    (visible ones, else the group's spawn tiles) of 1 + live neighbours within Chebyshev 1. 1.0 without the flag."""
+    if SPLASH_K <= 0 or not ME["prof"].get("splash"):
+        return 1.0
+    key = (h, s.r)
+    m = SPLASH_M.get(key)
+    if m is None:
+        lv = s.live.get(h)
+        pts = [p for _c, hp, p, _st in lv if hp > 0] if lv else w.G[h].tiles
+        m = 1
+        for p in pts:
+            n = 0
+            for q in pts:
+                if q.chebyshev_distance(p) <= 1:
+                    n += 1
+            if n > m:
+                m = n
+        if len(SPLASH_M) > 64:
+            SPLASH_M.clear()
+        SPLASH_M[key] = m
+    return 1.0 + SPLASH_K * (min(3, m) - 1)
+
+
+def s_eff(w, s, h, k):
+    """Per-body Strength of k bodies on group h for clear_dmg: me with my splash multiplier, the k - 1 others plain
+    (only I splash): s.S x (splash_m + k - 1) / k."""
+    m = splash_m(w, s, h)
+    return s.S if m == 1.0 else s.S * (m + k - 1) / max(1, k)
+
+
 class Grp:
     __slots__ = ("h", "obj", "camps", "tiles", "anchor", "mons", "gems", "gold", "resp", "need", "side", "near",
                  "d_us", "d_them", "mi", "hp", "st", "until", "seen")
@@ -387,23 +424,53 @@ class World:
                 return st
         return self.step_field(f, s.pos)
 
-    def step_near(self, tiles, r, s):
-        """Towards the tiles within r of tile(s) (a one-off compute_to, ~75k)."""
+    def step_near(self, tiles, r, s, avoid=None):
+        """Towards the tiles within r of tile(s) (a one-off compute_to, ~75k). avoid: a Bitboard of tiles never
+        stepped onto (50_exec camp_zone); with it, "nopath" when no path avoids them (my own tile stays free)."""
         if not s.can_move:
             return "blocked"
         blk = self.blk_nav | vision.champion_tiles()
+        if avoid is not None:
+            blk = blk | avoid
         blk.set(s.pos, False)
         roots = Bitboard()
         for t in (tiles if isinstance(tiles, list) else (tiles,)):
             roots.draw_chebyshev(t, r)
         roots &= ~blk
         if roots.is_empty():
-            return "blocked"
+            return "nopath" if avoid is not None else "blocked"
+        return self._step_roots(blk, roots, s, avoid)
+
+    def _step_roots(self, blk, roots, s, avoid):
         dest = Bitboard()
         dest.set(s.pos)
         f = DistanceField()
         f.compute_to(blk & ~roots, roots, dest, Bitboard(), FAR - 1)
+        if avoid is not None and fget(f, s.pos) >= FAR:
+            return "nopath"
         return self.step_field(f, s.pos)
+
+    def step_avoid(self, key, s, avoid):
+        """[user decision 15 Oct, kill exclusions] step_to(key) never stepping onto an avoid tile: the goal field's
+        roots (as goal()) minus avoid, a one-off compute_to (~75k). "nopath" when none is reachable that way."""
+        if not s.can_move:
+            return "blocked"
+        k = key[0]
+        blk = self.blk_nav | vision.champion_tiles() | avoid
+        blk.set(s.pos, False)
+        if k == "g":
+            r = max(1, ME.get("range", 1))
+            roots = Bitboard()
+            for t in self.G[int(key[1:])].tiles:
+                roots.draw_chebyshev(t, r)
+        elif k == "a":
+            roots = disk(self.apos[int(key[1:])], 1)
+        else:
+            roots = self.sp | Bitboard()
+        roots &= ~blk
+        if roots.is_empty():
+            return "nopath"
+        return self._step_roots(blk, roots, s, avoid)
 
     def step_flee(self, s, pts):
         """HEAL / recall refused: one step that keeps the min distance to pts (enemies) as large as possible, capped
@@ -488,20 +555,51 @@ def rich_group(w, m, used, tests):
     return None
 
 
-GROUP_NAMES = {3: "trio", 2: "pair", 1: "solo"}
+GROUP_NAMES = {5: "five", 4: "quad", 3: "trio", 2: "pair", 1: "solo"}
+GROUP_CAMP_SIZES = 0        # [user decision 15 Oct afternoon: off, rows 4-pick trio+solo lost] [user decision 15 Oct] 1: subgroup sizes from the camps (camp_sizes); 0: fixed 3+2 / 2+2 / 2+1
+
+
+def camp_sizes(w, S):
+    """[user decision 15 Oct, subgroups from the camps] (sizes, groups): subgroup 0's size = the draft need of the
+    richest group needing 2..S (rich_group key with m = its own need); the rest (S - that, >= 1) form subgroup 1 on the
+    next richest group whose need <= its size (else any). None when no group needs 2..S (the fixed sizes then)."""
+    best = None
+    for h in w.order:
+        o = w.G[h]
+        if o.d_us >= 255 or not 2 <= o.need <= S:
+            continue
+        cr = -(-sum(x[0] for x in o.mons) // (CHAMP_STR * o.need))
+        key = (o.side > 1, -(o.gems + g2g(1) * o.gold) / (o.d_us + cr + 1), h)
+        if best is None or key < best:
+            best = key
+    if best is None:
+        return None
+    g0 = best[2]
+    m0 = w.G[g0].need
+    if m0 >= S:
+        return (S,), [g0]
+    m1 = S - m0
+    g1 = rich_group(w, m1, {g0}, (lambda n, m=m1: n <= m, lambda n: True))
+    return (m0, m1), [g0, g1]
 
 
 def group_slots(w):
-    """[user plan 15 Oct, pair/trio opener] group-game seeds: the roster split by size (5 -> trio + pair, 4 -> two
-    pairs, 3 -> pair + solo, <= 2 -> one subgroup). Subgroup 0 takes the richest group needing 2..its size (else >= 2,
+    """[user plan 15 Oct, pair/trio opener] group-game seeds. [user decision 15 Oct] GROUP_CAMP_SIZES: sizes and groups
+    are camp_sizes (the richest group's need, the rest on the next group they can take); fallback below: the roster
+    split by size (5 -> trio + pair, 4 -> two pairs, 3 -> pair + solo, <= 2 -> one subgroup). Subgroup 0 takes the richest group needing 2..its size (else >= 2,
     else any); a pair as subgroup 1 the next richest needing exactly 2 (else >= 2, else any); a solo the best need-1
     group (else any). Vesper's slot joins the subgroup whose group has more gold (ties: subgroup 0); the other slots
     fill hers first, lowest slot first, then the other. Sets w.subs {slot: tuple of its subgroup's slots}; returns
     5 entries (slot -> group). Same on every champion: draft S, roster order, draft records only."""
     S = min(5, max(1, (w.d or {}).get("S") or len(w.roster)))
-    sizes = (3, 2) if S >= 5 else (2, 2) if S == 4 else (2, 1) if S == 3 else (S,)
-    gs, used = [], set()
-    for i, m in enumerate(sizes):
+    cs = camp_sizes(w, S) if GROUP_CAMP_SIZES else None
+    if cs is not None:
+        sizes, gs = cs
+    else:
+        sizes = (3, 2) if S >= 5 else (2, 2) if S == 4 else (2, 1) if S == 3 else (S,)
+        gs = []
+    used = set(g for g in gs if g is not None)
+    for i, m in enumerate(sizes if cs is None else ()):
         if m == 1:
             tests = (lambda n: n <= 1, lambda n: True)
         elif i == 0:

@@ -33,6 +33,7 @@ NARROW_MAX = 0.6            # [model]
 TRAFFIC_MIN_FRAC = 0.25     # [model]
 CHAMP_STR, CHAMP_HP = 50, 1000   # generic champion (docs/ECONOMY.md farming rates: S 50)
 KEEP_FRAC = 0.4             # [model] the hit body keeps >= 40% HP
+TANK_SHARE = 0.6            # [user decision 15 Oct afternoon; guess] the most-hit body takes max(1/k, this) of the damage
 SPREAD = True               # [model] monster hits shared evenly by the k bodies (False: all on one body)
 WARD_CANDS = 16             # [model] ward candidates (fuel: ~12k each per evaluation)
 WARD_HEAVY = 4              # [model] ward weight: 1 per path tile, +3 when its traffic >= WARD_HEAVY
@@ -55,23 +56,40 @@ def side_of(m):
     return 0 if m > R_REACT else 2 if m < -R_REACT else 1
 
 
-def clear_damage(mons, k):
+def clear_damage(mons, k, S=CHAMP_STR):
     """Damage the k bodies take clearing a group with basic attacks (docs/ECONOMY.md, measured wolf row):
     all k hit the same monster, monsters die one at a time (highest Strength/HP first), overkill is lost;
     the whole group wakes on the first hit [rules L206] and every live monster hits from the round after our
     first hit, once per round [rules, measured A1]. Returns total damage."""
     r, dmg = 0, 0
     for hp, st in sorted(mons, key=lambda m: -m[1] / m[0]):
-        r += -(-hp // (k * CHAMP_STR))
+        r += -(-hp // int(k * S))
         dmg += st * (r - 1)
     return dmg
 
 
+def tank(k):
+    """[user decision 15 Oct afternoon] share of a clear's damage on the most-hit of k bodies: max(1/k, TANK_SHARE)."""
+    return max(1.0 / max(1, k), TANK_SHARE)
+
+
+def roster_stats(S):
+    """[user decision 15 Oct afternoon] (mean Strength, mean HP) of the first S picks (ROSTER, BASE_STATS in 20_champs);
+    CHAMP_STR / CHAMP_HP when unknown. [measured 15 Oct] min HP (Vendetta 800) made a lone wolf "need 2" and put
+    collision into group mode (solo 0.70 -> 0.30); the mean keeps every public map in its bucket."""
+    st = [BASE_STATS[d] for d in ROSTER[:max(1, S)] if d in BASE_STATS]
+    if not st:
+        return CHAMP_STR, CHAMP_HP
+    return sum(x[1] for x in st) / len(st), sum(x[0] for x in st) / len(st)
+
+
 def bodies_needed(mons, S):
-    """Smallest k in 1..S whose most-hit body keeps >= KEEP_FRAC of its HP; S + 1 if none does."""
+    """Smallest k in 1..S whose most-hit body keeps >= KEEP_FRAC of its HP; S + 1 if none does. [user decision 15 Oct
+    afternoon] the roster's mean Strength / min HP (roster_stats), the most-hit body takes tank(k) of the damage."""
+    rs, rh = roster_stats(S)
     for k in range(1, S + 1):
-        d = clear_damage(mons, k)
-        if (d / k if SPREAD else d) <= (1 - KEEP_FRAC) * CHAMP_HP:
+        d = clear_damage(mons, k, rs)
+        if (d * tank(k) if SPREAD else d) <= (1 - KEEP_FRAC) * rh:
             return k
     return S + 1
 

@@ -98,6 +98,18 @@ else:
                 buy_all(w, s)                     # dead champions may shop [rules]
             broadcast(w, s, 7)
             return
+        if not w.spike:
+            vs = 0                                # [user decision 15 Oct afternoon] spike shift: an ally Vesper's Strength
+            for c, _p, _hp, st in s.allies:
+                try:
+                    if _TYPE_TO_DRAFT[int(c.champion_name())] == VESPER_ID and st > vs:
+                        vs = st
+                except Exception:
+                    pass
+            if vs >= SPIKE_STR or r >= SPIKE_ROUND:
+                w.spike = True
+                trace("phase", f"spike r={r} vstr={vs:.0f}")
+                apply_phase(w)
         if r - w.shards_r >= 20:
             w.shards_r = r
             fs = fuel()
@@ -145,6 +157,9 @@ else:
                          f"wait={int(flags[2])} same={w.same} excl={ex or '-'} pair_until={w.pair_until}")
         elif w.osc == 0:
             w.osc_fired = False
+        if w.tflip is not None:                   # [user decision 15 Oct afternoon] target flips count as oscillation
+            trace("osc", f"target g{w.tflip[0]}<->g{w.tflip[1]} flips={w.flips} {w.cur[0]} {tname(w, w.cur[0], w.cur[1])}")
+            w.tflip = None
         w.pos, w.bag_alive, w.hp_alive = s.pos, s.bag, s.hp
         w.ne_alive = len(s.enemies)
         if w.same >= 20 and w.status == "going":
@@ -156,9 +171,9 @@ else:
             w.same = 0
         if w.status == "going" and r > w.deadline and not (s.recalling or s.submitting):
             trace("exec", f"{w.cur[0]} {tname(w, w.cur[0], w.cur[1])} failed timeout")
-            w.excl[w.cur] = r + EXCL
+            w.excl[w.cur] = r + (KFAIL_ROUNDS if w.cur[0] == "kill" else EXCL)
             if w.cur[0] == "kill":
-                w.kfail[w.cur[1]] = r + EXCL      # a timed-out kill: finishers excluded too (40_prices KILL)
+                w.kfail[w.cur[1]] = r + KFAIL_ROUNDS    # a timed-out kill: finishers excluded too (40_prices KILL)
             w.status = "failed"
         for _k in range(2):
             if not (s.recalling or s.submitting) and fuel() > FUEL_FLOOR:
@@ -177,7 +192,7 @@ else:
                 break
             trace("exec", f"{op} {tname(w, op, tg)} {st}")
             if st == "failed":
-                w.excl[w.cur] = max(w.excl.get(w.cur, 0), r + EXCL)    # keeps a longer exclusion (failed partner)
+                w.excl[w.cur] = max(w.excl.get(w.cur, 0), r + (KFAIL_ROUNDS if op == "kill" else EXCL))   # keeps a longer one
             w.status = st
             if fuel() < 900_000:
                 break
@@ -205,7 +220,8 @@ else:
         w.cur, w.status, w.excl, w.sent, w.started, w.deadline = ("idle", None), "done", {}, -1, 0, 0
         w.claims, w.was_alive, w.same, w.stay, w.seed_until = {}, True, 0, 0, 0
         w.seed, w.lowcl, w.lowsub, w.subs = None, set(), set(), {}   # opening seed (40_prices seeded), lower-slot claims, subgroups
-        w.phase = None                                    # 20_champs phase index last applied
+        w.phase = None                                    # 20_champs (phase index, spike) last applied
+        w.spike = False                                   # spike shift on (20_champs SPIKE_*)
         w.attacked = w.capt = w.waiting = False
         w.bag_alive, w.hp_alive, w.ne_alive, w.kd, w.kn, w.arrived = 0, 0, 0, 99, 0, None
         w.lastbag = w.lastgold = 0
@@ -213,9 +229,12 @@ else:
         w.idle = 0
         w.pair_until = 0
         w.osc, w.osc_fired, w.p2 = 0, False, None
+        w.fh, w.flips, w.tflip = [], 0, None              # farm target history (50_exec set_cur flip lock), flips, last flip
+        w.peekn, w.peeked = 0, False                      # dead-camp pickup (50_exec exec_farm)
         w.kh_until = 0
         w.hit = False
         w.hvis, w.roam, w.big3 = {}, 0.0, -999                                       # hunt patrol: altar (or 100 + group) -> round I reached it
+        w.lastfarm = None                                 # last farm group (50_exec camp_zone: its monsters are not avoided)
         w.kfail = {}                                      # enemy handle -> round a chased-out kill stays excluded to
         w.score = (0, 0)
         w.post = None                                     # posture column last traced
