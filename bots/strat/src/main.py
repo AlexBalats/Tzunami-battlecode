@@ -249,6 +249,7 @@ class DraftModel:
         memo = {}
         cbb = Bitboard()
         S = self.S
+        n1 = gtot = g2 = 0                         # game type [user plan 15 Oct, game type]: solo share, group gems
         for g in game_map.camp_groups():           # the only call (~0.94M) [measured]
             mons = []
             cs = []
@@ -266,6 +267,14 @@ class DraftModel:
             bd = memo.get(key)
             if bd is None:
                 bd = memo[key] = bodies_needed(list(key), S)
+            try:
+                gv = int(g.gem_value())
+            except Exception:
+                gv = 0
+            n1 += bd == 1
+            gtot += gv
+            if bd >= 2:
+                g2 += gv
             if len(cs) == 1:
                 x, y = cs[0]
                 self.groups.append((int(g), x, y, x, y, cs, bd))
@@ -273,6 +282,12 @@ class DraftModel:
                 xs = [c[0] for c in cs]
                 ys = [c[1] for c in cs]
                 self.groups.append((int(g), min(xs), min(ys), max(xs), max(ys), cs, bd))
+        ng = len(self.groups)
+        # [user plan 15 Oct, game type] solo = groups needing 1 body / all groups (any side); ggems = share of all
+        # groups' gems in groups needing >= 2. Bytes 14 / 15 of the header, 0-255 (255 = 1.0, also "unknown")
+        self.solo = n1 / ng if ng else 1.0
+        self.ggems = g2 / gtot if gtot else 0.0
+        trace("game", f"solo={self.solo:.2f} ({n1}/{ng}) ggems={self.ggems:.2f} ({g2}/{gtot})")
         self.block = self.terr | cbb               # live camps block movement [sdk]
         self.free = ~self.block
 
@@ -720,7 +735,8 @@ class DraftModel:
         out = [MEM_VERSION, getattr(self, "W", 0), getattr(self, "H", 0), getattr(self, "S", 0),
                getattr(self, "regime", 3) | getattr(self, "bank", 3) << 2, getattr(self, "spawn_altar", 255), fl,
                len(A), len(G), len(B), len(Wd), min(255, getattr(self, "rich", 0)), min(255, getattr(self, "a0", 255)),
-               min(255, getattr(self, "traffic_min", 0)), 0, 0]
+               min(255, getattr(self, "traffic_min", 0)), round(255 * getattr(self, "solo", 1.0)),
+               round(255 * getattr(self, "ggems", 0.0))]
         for a, p in zip(A, self.apos):
             out += (a[SD], p.x, p.y)
         for o in G:
@@ -753,7 +769,7 @@ def decode(mem):
     if len(m) < 16 or m[0] != MEM_VERSION:
         return None
     d = dict(W=m[1], H=m[2], S=m[3], regime=m[4] & 3, bank=m[4] >> 2 & 3, bank_altar=m[5], flags=m[6],
-             rich=m[11], a0=m[12], traffic_min=m[13])
+             rich=m[11], a0=m[12], traffic_min=m[13], solo=m[14] / 255, ggems=m[15] / 255)
     k = 16
     d["altars"] = [(m[k + 3 * i], m[k + 3 * i + 1], m[k + 3 * i + 2]) for i in range(m[7])]
     k += 3 * m[7]
@@ -779,7 +795,8 @@ def summary(d):
     ba = "-" if d["bank_altar"] == 255 else f"A{d['bank_altar']}"
     return (f"SUMMARY {d['W']}x{d['H']} S={d['S']} regime={(REGIMES + ('?',))[d['regime']]} "
             f"altars={ca[0]}/{ca[1]}/{ca[2]} bank={(BANKS + ('?',))[d['bank']]} bank_altar={ba} "
-            f"rich={d['rich']}/{S}={d['rich'] / S:.2f} altar_sides={alt} groups={grp}")
+            f"rich={d['rich']}/{S}={d['rich'] / S:.2f} altar_sides={alt} groups={grp} "
+            f"solo={d.get('solo', 1.0):.2f} ggems={d.get('ggems', 0.0):.2f}")
 
 # ---- 20_champs.py ----
 """Champion data (no decisions). PROFILES: per-champion multipliers over the six prices (strat/PRICES.md, "Roles and
@@ -1493,6 +1510,68 @@ def ward_init(w):
 VESPER_ID = 1                # draft id of Vesper Vale (her slot takes a gold group first)
 
 
+def rich_group(w, m, used, tests):
+    """[user plan 15 Oct, pair/trio opener] the richest reachable group not in used for m bodies: sides 0/1 before 2,
+    then (gems + g2g(1) gold) / (d_us + clear rounds with m bodies); tests are need filters tried in order (the first
+    that matches anything wins). None if nothing is reachable."""
+    for ok in tests:
+        best = None
+        for h in w.order:
+            o = w.G[h]
+            if o.d_us >= 255 or h in used or not ok(o.need):
+                continue
+            cr = -(-sum(x[0] for x in o.mons) // (CHAMP_STR * m))
+            key = (o.side > 1, -(o.gems + g2g(1) * o.gold) / (o.d_us + cr + 1), h)
+            if best is None or key < best:
+                best = key
+        if best:
+            return best[2]
+    return None
+
+
+GROUP_NAMES = {3: "trio", 2: "pair", 1: "solo"}
+
+
+def group_slots(w):
+    """[user plan 15 Oct, pair/trio opener] group-game seeds: the roster split by size (5 -> trio + pair, 4 -> two
+    pairs, 3 -> pair + solo, <= 2 -> one subgroup). Subgroup 0 takes the richest group needing 2..its size (else >= 2,
+    else any); a pair as subgroup 1 the next richest needing exactly 2 (else >= 2, else any); a solo the best need-1
+    group (else any). Vesper's slot joins the subgroup whose group has more gold (ties: subgroup 0); the other slots
+    fill hers first, lowest slot first, then the other. Sets w.subs {slot: tuple of its subgroup's slots}; returns
+    5 entries (slot -> group). Same on every champion: draft S, roster order, draft records only."""
+    S = min(5, max(1, (w.d or {}).get("S") or len(w.roster)))
+    sizes = (3, 2) if S >= 5 else (2, 2) if S == 4 else (2, 1) if S == 3 else (S,)
+    gs, used = [], set()
+    for i, m in enumerate(sizes):
+        if m == 1:
+            tests = (lambda n: n <= 1, lambda n: True)
+        elif i == 0:
+            tests = (lambda n, m=m: 2 <= n <= m, lambda n: n >= 2, lambda n: True)
+        else:
+            tests = (lambda n: n == 2, lambda n: n >= 2, lambda n: True)
+        g = rich_group(w, m, used, tests)
+        gs.append(g)
+        if g is not None:
+            used.add(g)
+    vs = w.roster.index(VESPER_ID) if VESPER_ID in w.roster else -1
+    gold = [w.G[g].gold if g is not None else -1 for g in gs]
+    iv = gold.index(max(gold)) if 0 <= vs < S else 0
+    rest = [k for k in range(S) if k != vs] if 0 <= vs < S else list(range(S))
+    mem = [[] for _ in sizes]
+    if 0 <= vs < S:
+        mem[iv].append(vs)
+    for i in [iv] + [j for j in range(len(sizes)) if j != iv]:
+        while len(mem[i]) < sizes[i] and rest:
+            mem[i].append(rest.pop(0))
+    w.subs = {}
+    slots = [None] * 5
+    for i, ms in enumerate(mem):
+        for k in ms:
+            w.subs[k] = tuple(sorted(ms))
+            slots[k] = gs[i]
+    return slots
+
+
 def opening_slots(w, n):
     """n DISTINCT group handles (slot i takes entry i); every champion computes the same list with no comms.
     Groups on our side (0) and contested (1), ranked by the walk from our spawn (d_us; ties: higher value per round),
@@ -1500,6 +1579,8 @@ def opening_slots(w, n):
     group with gold > 0 (one she can take alone if any: all gold to Vesper); no group is given to two slots (the
     50x50 4-pick ladder map had one seedable group and three champions on it); when the list runs out, the
     next-nearest unused reachable group of any need and side. Seeds only the first choice."""
+    if stack_mode(w, cambc.round_number()):
+        return group_slots(w)[:n]               # [user plan 15 Oct, pair/trio opener] subgroup seeds
     solo, pair, rest = [], [], []
     for h in w.order:
         o = w.G[h]
@@ -1546,6 +1627,21 @@ DANGER_W = 0.2              # [guess] P(lose the bag) per unit of draft danger (
 SHOP_RETURN = True          # [deviation] SHOP rounds include the walk back from spawn to where I am
 SURVIVE = 0.6               # [tuned] k bodies are enough if the most-hit body keeps > 40 % of its current HP
 WAIT_PARTNER = 15           # [guess] rounds added to a pair take while the partner is not committed
+# Group game [user plan 15 Oct, game type + pair/trio opener; all guess]: while stack_mode() (round < GROUP_UNTIL and the
+# draft's solo share <= GROUP_SOLO_MAX) the team opens in subgroups (30_world opening_slots: trio + pair / two pairs /
+# pair + solo), prices groups for its subgroup without the per-body split, never waits at a camp (50_exec) and hands
+# captures to one carry. GROUP_UNTIL 0 = off (behaviour unchanged).
+GROUP_UNTIL = 300           # rounds; group mode is on while s.r < this (0: never) [measured 15 Oct: bench open-groupG, 6/6 group-map games won]
+GROUP_SOLO_MAX = 0.4        # [guess] group game when the draft's solo share (groups needing 1 body / all) <= this
+BODY_EXP = 1.0              # FARM value / bodies ** this outside stack mode (1.0 = per-body split, today)
+STACK_BODY_EXP = 0.0        # the same exponent in stack mode (0.0: value not split, the stack clears 5x faster)
+STACK_WAIT_PARTNER = 0      # replaces race()["wait"] (WAIT_PARTNER) in farm_price in stack mode
+STACK_BANK_MIN = 0          # in stack mode BANK with a bag below this x STACK_BANK_LOW (bank in lumps; 0 = off)
+STACK_BANK_LOW = 0.3
+GROUP_BANK_BAG = 100        # [guess] group mode: a bag >= this banks at x GROUP_BANK_X x bag / GROUP_BANK_BAG (the carry
+GROUP_BANK_X = 4.0          # holds the subgroup's gems and its farm prices are unsplit; rows: 396 carried at r300)
+STACK_FOLLOW = 3.0          # in group mode FARM x this on a group a LOWER slot of my subgroup farms (w.lowsub)
+GROUP_HANDOFF = 1           # 1: capture handoff in group mode (50_exec exec_farm reward branch: one carry captures)
 FUEL_FLOOR = 400_000        # after sensing: below this skip pricing, repeat the executor step
 P_LOSE_MAX = 0.5            # [guess] FARM / BANK / KILL price 0 when the local Lanchester P(lose) exceeds this
 FARM_PLOSE = 0.99           # [tuned] off: 0.65 (2 v 1) lost corners and interlock (we must contest the centre)
@@ -1629,6 +1725,26 @@ RACE = {"race": dict(walk_w=2.0, farm_hyst=2.0, wait=30, bank_ret=2),
 RACE_RICH = 4
 
 
+def stack_mode(w, r):
+    """[user plan 15 Oct, game type] group mode: True while r < GROUP_UNTIL and the draft's solo share <= GROUP_SOLO_MAX;
+    cached per round on w, traces `stack on/off` on each change. Depends on the draft summary and r only: every
+    champion agrees."""
+    if getattr(w, "sm_r", -1) == r:
+        return w.sm
+    on = r < GROUP_UNTIL and bool(w.d) and w.d.get("solo", 1.0) <= GROUP_SOLO_MAX
+    if on != getattr(w, "sm", False):
+        trace("stack", f"on solo={w.d.get('solo', 1.0):.2f} until={GROUP_UNTIL}" if on else "off")
+    w.sm, w.sm_r = on, r
+    return on
+
+
+def sub_size(w):
+    """[user plan 15 Oct, pair/trio opener] my opening subgroup's size (30_world opening_slots: w.subs), the team if
+    unknown."""
+    sb = getattr(w, "subs", None)
+    return len(sb[w.slot]) if sb and w.slot in sb else max(1, len(w.roster))
+
+
 def race(w):
     """The RACE row for this map, from the draft summary (cached on w.race)."""
     rc = getattr(w, "race", None)
@@ -1636,7 +1752,8 @@ def race(w):
         d = w.d or {}
         g, S = d.get("regime"), max(1, d.get("S") or 1)
         rc = w.race = RACE["race" if g == 2 or (g == 1 and d.get("rich", 0) / S >= RACE_RICH) else "base"]
-        trace("race", f"regime={g} rich={d.get('rich')}/{S} -> {'race' if rc is RACE['race'] else 'base'}")
+        trace("race", f"regime={g} rich={d.get('rich')}/{S} -> {'race' if rc is RACE['race'] else 'base'} "
+                      f"solo={d.get('solo', 1.0):.2f} ggems={d.get('ggems', 0.0):.2f}")
     return rc
 
 
@@ -1828,8 +1945,11 @@ def farm_price(w, s, h, bodies, walk, c=None):
     walk *= rc["walk_w"]
     prof = ME["prof"]
     value = o.gems + g2g(s.r) * o.gold * prof["gold"]
+    sm = stack_mode(w, s.r)
+    bx = STACK_BODY_EXP if sm else BODY_EXP     # [user plan 15 Oct, stack opener] value / bodies ** bx
+    div = max(1, bodies) if bx == 1.0 else max(1, bodies) ** bx
     if o.st == "reward":
-        return value / max(1, bodies) / (walk + 5)
+        return value / div / (walk + 5)
     if o.hp is None:                            # full HP: cached per (group, bodies, my Strength)
         key = (h, bodies, s.S)
         cd = CLEAR_MEMO.get(key)
@@ -1841,19 +1961,19 @@ def farm_price(w, s, h, bodies, walk, c=None):
     else:
         mons = [m for m in o.hp if m[0] > 0]
         if not mons:
-            return value / max(1, bodies) / (walk + 5)
+            return value / div / (walk + 5)
         clear, dmg = clear_dmg(mons, s.S, bodies)
     per = dmg / bodies + s.edps * min(clear + 5, 10)    # [tuned] + visible enemies hitting me (within 4)
     if per >= s.hp:
         return 0.0                                  # [deviation] certain death is not a price
     miss = bodies - 1 - (w.claims.get(h, 0) if c is None else c)
     if miss > 0:
-        walk += rc["wait"] * miss                 # [guess] partners not committed yet
+        walk += (STACK_WAIT_PARTNER if sm else rc["wait"]) * miss                 # [guess] partners not committed yet
     risk = s.bag if s.hp - per < KEEP_HP * s.maxhp else s.P * s.bag   # [tuned] bag exposure (danger_p)
     detour = 0
     if o.near < len(w.apos):
         detour = max(0, o.anchor.chebyshev_distance(w.apos[o.near]) - s.walt)
-    return value / bodies / (walk + clear + 5 + detour) - risk
+    return value / div / (walk + clear + 5 + detour) - risk
 
 
 def need_k(w, s, h, c):
@@ -1866,6 +1986,9 @@ def need_k(w, s, h, c):
     mons = o.mons if o.hp is None else [m for m in o.hp if m[0] > 0]
     if not mons:
         return 1 + c
+    sm = stack_mode(w, s.r)
+    if sm and w.seed is not None:
+        return max(1 + c, sub_size(w))          # [user plan 15 Oct, pair/trio opener] seed: my subgroup takes it
     T = max(1, len(w.roster))
     floor = s.hp * SURVIVE                      # survival, as FARM's own zero rule (KEEP_HP stays a risk term)
     for k in range(1 + c, T + 1):
@@ -1876,7 +1999,7 @@ def need_k(w, s, h, c):
             if key:
                 CLEAR_MEMO[key] = cd
         if cd[1] / k + s.edps * min(cd[0] + 5, 10) <= floor:
-            return k
+            return min(k, max(1 + c, sub_size(w))) if sm else k   # group mode: capped at my subgroup's size
     return None
 
 
@@ -2046,6 +2169,7 @@ def price_all(w, s, cl, by):
     """[(price, option, target)] for every option this turn (multipliers: champion row x posture column)."""
     prof, r = ME["prof"], s.r
     pm = posture(w, s)
+    sm = stack_mode(w, r)
     out = []
     # WARD: on the way, not first. A pending draft ward tile prices only when its detour from my current goal is
     # <= WARD_DETOUR, or when I am idle / falling back (or already walking to it); 0 once my ward is placed
@@ -2082,11 +2206,11 @@ def price_all(w, s, cl, by):
         # WAIT_PARTNER, pulling the lower slot onto the higher slot's group every 2 rounds: a 30-round A,B,A,B swap
         # on a 40x40 ladder map). Engaged on h (a live monster of h within CAMP_R): never yield it.
         if o.need <= 1:
-            if h in w.lowcl and not (cur == ("farm", h) and engaged(s, h)):
+            if not sm and h in w.lowcl and not (cur == ("farm", h) and engaged(s, h)):   # stack mode: no yield
                 continue
             c = 0
         k = need_k(w, s, h, c)                  # bodies the live clear model needs, me + c claimants at least
-        if k is None or (c == 0 and k >= 2 and r < w.pair_until):
+        if k is None or (c == 0 and k >= 2 and r < w.pair_until and not sm):   # stack mode: k is the team
             continue
         # One claimant per SOLO group: an ally broadcasts farm on a group the draft says needs 1 body -> 0 for me
         # (user's plan, 15 Oct late). Groups needing >= 2 keep the per-body split (value / bodies). History: the gate
@@ -2108,6 +2232,8 @@ def price_all(w, s, cl, by):
         p = fp * prof["farm"] * pm["farm_their_side" if o.side == 2 else "farm"]
         if sap is not None and o.anchor.chebyshev_distance(sap) <= STACK_R:
             p *= STACK_FARM                     # the stack was just seen there
+        if sm and h in w.lowsub:
+            p *= STACK_FOLLOW                   # [user plan 15 Oct, pair/trio opener] follow my subgroup's lower slots
         out.append((p, "farm", h))
     # BANK
     if s.bag > 0 and w.apos:
@@ -2134,8 +2260,12 @@ def price_all(w, s, cl, by):
             # within 8, risk dominates and BANK wins"); subtracting it would stop every bank near an enemy.
             # BANK_NEAR_BONUS [guess]: tempo, a bag next to an altar banks now (ladder: 22 gems carried 40 rounds)
             near = 1 + BANK_NEAR_BONUS if wk <= BANK_NEAR else 1
-            out.append((s.bag * (1 + P) * near / (wk * race(w)["bank_ret"] + max(1, -(-s.bag // 10))) * prof["bank"] * pm["bank_risk"],
-                        "bank", a))
+            bp = s.bag * (1 + P) * near / (wk * race(w)["bank_ret"] + max(1, -(-s.bag // 10))) * prof["bank"] * pm["bank_risk"]
+            if sm and s.bag < STACK_BANK_MIN:
+                bp *= STACK_BANK_LOW            # [user plan 15 Oct, stack opener] bank in lumps
+            elif sm and GROUP_BANK_BAG and s.bag >= GROUP_BANK_BAG:
+                bp *= GROUP_BANK_X * s.bag / GROUP_BANK_BAG     # the carry banks its lump
+            out.append((bp, "bank", a))
     # KILL: closable targets only
     reach = ME.get("range", 1) + 1 + (2 if ME.get("has_dash") else 0)
     kmul = prof["kill"] + KILL_PER_SHARD * w.shards     # scales with shards owned (read every 20 rounds, 90_main)
@@ -2302,8 +2432,9 @@ def price_all(w, s, cl, by):
         if min(t.chebyshev_distance(s.pos) for t in o.tiles) <= 4:
             continue                            # there: FARM(g) prices itself
         b = cl.get(h, 1)
-        lo = farm_price(w, s, h, b, wk) * b if b >= o.need else 0.0
-        gain = farm_price(w, s, h, b + 1, wk) * (b + 1) - max(0.0, lo)
+        bx = STACK_BODY_EXP if sm else BODY_EXP     # [user plan 15 Oct, stack opener] same exponent as farm_price
+        lo = farm_price(w, s, h, b, wk) * (b if bx == 1.0 else b ** bx) if b >= o.need else 0.0
+        gain = farm_price(w, s, h, b + 1, wk) * ((b + 1) if bx == 1.0 else (b + 1) ** bx) - max(0.0, lo)
         if gain > 0:
             out.append((gain / max(1, wk) * prof["join"] * pm["join"], "join", k))
     return out
@@ -2339,6 +2470,9 @@ def choose(w, s):
     cl, by = claims(w, s)
     w.claims = cl
     w.lowcl = {w.idx[tg] for k, (op, tg) in by.items() if k < w.slot and op == 1 and tg in w.idx}
+    sb = getattr(w, "subs", None) or {}
+    mine = sb.get(w.slot, ())
+    w.lowsub = {w.idx[tg] for k, (op, tg) in by.items() if k < w.slot and k in mine and op == 1 and tg in w.idx}
     ps = price_all(w, s, cl, by)
     r = s.r
     ps = [t for t in ps if t[1] == "heal" or w.excl.get((t[1], t[2]), -1) <= r]
@@ -2482,7 +2616,7 @@ def _set_cur(self, new, r, s):
         mons = [m for m in (o.hp if o.hp is not None else o.mons) if m[0] > 0]
         work = (clear_dmg(mons, s.S, max(1, o.need))[0] if mons else 0) + 8
         if o.need >= 2:
-            work += 10                          # waiting for the partner
+            work += 10                          # waiting for the partner (group mode: walking to it)
     elif op in ("bank", "hold") and tg is not None and tg < len(self.ad):
         walk = self.ad[tg]
         work = max(1, -(-s.bag // 10)) + 2 if op == "bank" else 30
@@ -2513,6 +2647,8 @@ World.set_cur = _set_cur
 
 CLOSE_TTK = 3               # [user plan 15 Oct, ladder 4] close dash only when my hits to kill are <= this
 WAIT_CAP = 10               # [guess] rounds of pair waiting before the take fails ("failed partner")
+PAIR_NEAR = 6               # [user plan 15 Oct, pair/trio opener; guess] group mode: attack a pair group with an ally this close
+GROUP_SEEK_CAP = 15         # [guess] group mode: rounds stepping toward a partner at a group before the take fails
 WAIT_EXCL = 30              # [guess] rounds that (farm, group) is excluded after a failed partner wait
 RETREAT_HP = 0.6            # [guess] fallback retreats from enemies within 4 below this HP fraction
 
@@ -2592,13 +2728,56 @@ def live_ok(w, s, h, k):
     return clear_dmg(mons, s.S, k)[1] / k <= s.hp * SURVIVE
 
 
+def handoff(w, s, o):
+    """[user plan 15 Oct, pair/trio opener] True when I should leave group o's capture to an ally. Candidates: me and
+    the visible allies within 4 of the group's spawn tiles that broadcast farm on it or join; the carry is Vesper if
+    she is one of them (she took it), else the lowest slot among them. Everyone else leaves (its reward is unsplit)."""
+    ks = []
+    for c, p, _hp, _st in s.allies:
+        k = w.ally_slot(c)
+        b = s.mem[k] if k < 5 else 0
+        if ((b & 7) == 1 and (b >> 3) == o.mi or (b & 7) == 6) and min(t.chebyshev_distance(p) for t in o.tiles) <= 4:
+            ks.append(k)
+    if not ks:
+        return False
+    vs = w.roster.index(VESPER_ID) if VESPER_ID in w.roster else -1
+    carry = vs if vs == w.slot or vs in ks else min(ks + [w.slot])
+    return carry != w.slot
+
+
+def group_go(w, s, h, o):
+    """[user plan 15 Oct, pair/trio opener] group mode, a pair group I cannot solo, monsters at full HP: None = attack
+    now (an ally within PAIR_NEAR of me); else one step toward the nearest visible ally that claims this group, or
+    toward spawn (where the partners come from) when none is visible; "failed" when nobody claims it or after
+    GROUP_SEEK_CAP such rounds. Never stands still (no waiting share)."""
+    if any(p.chebyshev_distance(s.pos) <= PAIR_NEAR for _c, p, _hp, _st in s.allies):
+        return None
+    cl = [k for k in range(min(5, len(w.roster))) if k != w.slot and (s.mem[k] & 7) == 1 and (s.mem[k] >> 3) == o.mi]
+    w.waited += 1
+    if not cl or w.waited > GROUP_SEEK_CAP:
+        w.excl[("farm", h)] = s.r + WAIT_EXCL
+        trace("exec", f"farm {tname(w, 'farm', h)} failed partner seek={w.waited} claims={len(cl)}")
+        return "failed"
+    vis = sorted((p.chebyshev_distance(s.pos), p.x, p.y) for c, p, _hp, _st in s.allies if w.ally_slot(c) in cl)
+    if vis:
+        w.step_near(V(vis[0][1], vis[0][2]), 1, s)
+    else:
+        w.step_to("home", s)
+    return "going"
+
+
 def exec_farm(w, s, h):
     o = w.G[h]
     lv = s.live.get(h)
     if lv:
         tgt = [(hp, i) for i, (_c, hp, p, _st) in enumerate(lv) if p.chebyshev_distance(s.pos) <= ME.get("range", 1)]
         hurt = any(hp < w.G_maxhp(c) for c, hp, _p, _st in lv)
-        if o.need >= 2 and not hurt and not live_ok(w, s, h, 1 + partners_near(w, s, h)):
+        sm = stack_mode(w, s.r)
+        if sm and o.need >= 2 and not hurt and not live_ok(w, s, h, 1):
+            res = group_go(w, s, h, o)          # [user plan 15 Oct, pair/trio opener] no waiting at camps
+            if res is not None:
+                return res
+        elif not sm and o.need >= 2 and not hurt and not live_ok(w, s, h, 1 + partners_near(w, s, h)):
             # pair take: wait (monsters are friendly until hit) near the group for the partner
             near = min(p.chebyshev_distance(s.pos) for _c, _hp, p, _st in lv)
             if near > 4:
@@ -2642,6 +2821,14 @@ def exec_farm(w, s, h):
             return "done"
         if o.st == "reward":
             onspawn = any(t == s.pos for t in o.tiles)
+            if GROUP_HANDOFF and stack_mode(w, s.r) and handoff(w, s, o):
+                # [user plan 15 Oct, pair/trio opener] not the carry: step off the spawn tiles, leave it unsplit
+                if onspawn:
+                    w.step_away(s, o.tiles)
+                o.st, o.until = "resp", s.r + o.resp
+                w.excl[("farm", h)] = s.r + EXCL        # update_groups re-reads "reward" while it is visible
+                trace("exec", f"farm {tname(w, 'farm', h)} handoff bag={s.bag} gold={s.gold}")
+                return "done"
             if onspawn:
                 w.capt = True
                 if s.bag > w.lastbag or s.gold > w.lastgold:
@@ -3051,6 +3238,8 @@ else:
             w.build_fme(s.pos)                    # also after a recall (the jump is > 6)
         # stuck guard: same tile, last turn neither capturing, channelling, attacking nor dead
         exempt = flags[0] or flags[1] or s.recalling or s.submitting
+        if flags[2] and not exempt and stack_mode(w, r):
+            exempt = True                         # [user plan 15 Oct, stack opener] group mode never sets waiting
         if s.pos == w.pos and not exempt:
             w.same += 1
             w.stay += 1
@@ -3131,7 +3320,7 @@ else:
         w = WORLD
         w.cur, w.status, w.excl, w.sent, w.started, w.deadline = ("idle", None), "done", {}, -1, 0, 0
         w.claims, w.was_alive, w.same, w.stay, w.seed_until = {}, True, 0, 0, 0
-        w.seed, w.lowcl = None, set()                     # opening seed (40_prices seeded), lower-slot solo claims
+        w.seed, w.lowcl, w.lowsub, w.subs = None, set(), set(), {}   # opening seed (40_prices seeded), lower-slot claims, subgroups
         w.phase = None                                    # 20_champs phase index last applied
         w.attacked = w.capt = w.waiting = False
         w.bag_alive, w.hp_alive, w.ne_alive, w.kd, w.kn, w.arrived = 0, 0, 0, 99, 0, None
@@ -3166,7 +3355,11 @@ else:
                 s = sense(w)
                 w.set_cur(("farm", seed), s.r, s)
                 w.seed, w.seed_until = seed, SEED_UNTIL   # choose keeps it until then unless HEAL / retreat (seeded)
-                trace("choice", f"farm {tname(w, 'farm', seed)} seed slot={w.slot}")
+                if stack_mode(w, s.r):
+                    trace("choice", f"farm {tname(w, 'farm', seed)} group seed slot={w.slot} "
+                                    f"team={GROUP_NAMES.get(sub_size(w), '?')} with={w.subs.get(w.slot)}")
+                else:
+                    trace("choice", f"farm {tname(w, 'farm', seed)} seed slot={w.slot}")
                 broadcast(w, s, 1)
             if w.slot == 0 and TRACE:                     # the whole list (S = 5; S = 3 / 4 are its prefixes)
                 trace("choice", "seeds " + " ".join(tname(w, "farm", h) for h in opening_slots(w, 5)))

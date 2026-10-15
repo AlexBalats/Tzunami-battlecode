@@ -174,6 +174,28 @@ price  = value / rounds
 Engaged (a live monster of my group within 3) keeps ENGAGED_HYST 3.0; POSTURE defend join stays 2.0. Public maps:
 collision few (12/3, base), corners pick (21/5 = 4.2, race), expanse many (race).
 
+### Group game: the pair/trio opener (`GROUP_*` / `STACK_*` in `40_prices.py`, `PAIR_NEAR` in `50_exec.py`) [user plan 15 Oct]
+
+Game type at the draft (10_model, bytes 14-15): `solo` = groups one body can take alone / all groups; `ggems` = share of
+gems in groups needing >= 2. **Group game** when `solo <= GROUP_SOLO_MAX` 0.4 [guess, measured: 0.6 loses corners -430]
+and round < `GROUP_UNTIL` 300. Public maps: elkring 0.00, rows 0.22, packs 0.25 (on); monolith 0.55, corners 0.60,
+expanse 0.67, collision 0.70, interlock 0.75, lanes 0.86 (off, unchanged).
+
+| In group mode | number | what it does |
+| --- | --- | --- |
+| opening seed | trio + pair (5 picks), pair + pair (4), pair + solo (3) | richest group needing >= 2 by value / (d_us + clear with that many bodies); Vesper in the gold-richer subgroup |
+| FARM split | `STACK_BODY_EXP` 0.0 (1.0 outside) | value / bodies ** exp: a subgroup prices team value over team time |
+| partner penalty | `STACK_WAIT_PARTNER` 0 | no WAIT_PARTNER rounds |
+| follow | `STACK_FOLLOW` 3.0 | FARM x3 on a group a lower slot of my subgroup claims; solo-yield off |
+| need_k | subgroup size while the seed holds, then the live k capped at it | |
+| no waiting | `PAIR_NEAR` 6, `GROUP_SEEK_CAP` 15 | attack when an ally is within 6, the camp is damaged, or I can solo it; else step toward the claiming ally (toward spawn if none visible); fail after 15 rounds |
+| carry | `GROUP_HANDOFF` 1 | on a cleared group the carry (Vesper if within 4 and claiming, else the lowest slot there) captures alone; the rest step off and price the next group |
+| bank lumps | `GROUP_BANK_BAG` 100, `GROUP_BANK_X` 4.0 | bag >= 100 banks at x 4 x bag / 100 (unsplit farm prices out-priced a 396 bag) |
+
+Bench [measured, `runs/bench/open-groupG*`, variant vs today's bot, 9 maps both sides, cut at r300]: rows +242/+176,
+elkring +108/+144, packs +80/+224; the six other maps mirror (mode off). Without the handoff: elkring B 0, packs +36/+86;
+`PAIR_NEAR` 10: a wash. Rows r100: 66 (A) / 0 (B); the ladder opponents bank 66-192 by r100.
+
 ## Roles and modes are multipliers
 
 | Multiplier on | Why | Example |

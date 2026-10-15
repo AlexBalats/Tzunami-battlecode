@@ -19,6 +19,21 @@ DANGER_W = 0.2              # [guess] P(lose the bag) per unit of draft danger (
 SHOP_RETURN = True          # [deviation] SHOP rounds include the walk back from spawn to where I am
 SURVIVE = 0.6               # [tuned] k bodies are enough if the most-hit body keeps > 40 % of its current HP
 WAIT_PARTNER = 15           # [guess] rounds added to a pair take while the partner is not committed
+# Group game [user plan 15 Oct, game type + pair/trio opener; all guess]: while stack_mode() (round < GROUP_UNTIL and the
+# draft's solo share <= GROUP_SOLO_MAX) the team opens in subgroups (30_world opening_slots: trio + pair / two pairs /
+# pair + solo), prices groups for its subgroup without the per-body split, never waits at a camp (50_exec) and hands
+# captures to one carry. GROUP_UNTIL 0 = off (behaviour unchanged).
+GROUP_UNTIL = 300           # rounds; group mode is on while s.r < this (0: never) [measured 15 Oct: bench open-groupG, 6/6 group-map games won]
+GROUP_SOLO_MAX = 0.4        # [guess] group game when the draft's solo share (groups needing 1 body / all) <= this
+BODY_EXP = 1.0              # FARM value / bodies ** this outside stack mode (1.0 = per-body split, today)
+STACK_BODY_EXP = 0.0        # the same exponent in stack mode (0.0: value not split, the stack clears 5x faster)
+STACK_WAIT_PARTNER = 0      # replaces race()["wait"] (WAIT_PARTNER) in farm_price in stack mode
+STACK_BANK_MIN = 0          # in stack mode BANK with a bag below this x STACK_BANK_LOW (bank in lumps; 0 = off)
+STACK_BANK_LOW = 0.3
+GROUP_BANK_BAG = 100        # [guess] group mode: a bag >= this banks at x GROUP_BANK_X x bag / GROUP_BANK_BAG (the carry
+GROUP_BANK_X = 4.0          # holds the subgroup's gems and its farm prices are unsplit; rows: 396 carried at r300)
+STACK_FOLLOW = 3.0          # in group mode FARM x this on a group a LOWER slot of my subgroup farms (w.lowsub)
+GROUP_HANDOFF = 1           # 1: capture handoff in group mode (50_exec exec_farm reward branch: one carry captures)
 FUEL_FLOOR = 400_000        # after sensing: below this skip pricing, repeat the executor step
 P_LOSE_MAX = 0.5            # [guess] FARM / BANK / KILL price 0 when the local Lanchester P(lose) exceeds this
 FARM_PLOSE = 0.99           # [tuned] off: 0.65 (2 v 1) lost corners and interlock (we must contest the centre)
@@ -102,6 +117,26 @@ RACE = {"race": dict(walk_w=2.0, farm_hyst=2.0, wait=30, bank_ret=2),
 RACE_RICH = 4
 
 
+def stack_mode(w, r):
+    """[user plan 15 Oct, game type] group mode: True while r < GROUP_UNTIL and the draft's solo share <= GROUP_SOLO_MAX;
+    cached per round on w, traces `stack on/off` on each change. Depends on the draft summary and r only: every
+    champion agrees."""
+    if getattr(w, "sm_r", -1) == r:
+        return w.sm
+    on = r < GROUP_UNTIL and bool(w.d) and w.d.get("solo", 1.0) <= GROUP_SOLO_MAX
+    if on != getattr(w, "sm", False):
+        trace("stack", f"on solo={w.d.get('solo', 1.0):.2f} until={GROUP_UNTIL}" if on else "off")
+    w.sm, w.sm_r = on, r
+    return on
+
+
+def sub_size(w):
+    """[user plan 15 Oct, pair/trio opener] my opening subgroup's size (30_world opening_slots: w.subs), the team if
+    unknown."""
+    sb = getattr(w, "subs", None)
+    return len(sb[w.slot]) if sb and w.slot in sb else max(1, len(w.roster))
+
+
 def race(w):
     """The RACE row for this map, from the draft summary (cached on w.race)."""
     rc = getattr(w, "race", None)
@@ -109,7 +144,8 @@ def race(w):
         d = w.d or {}
         g, S = d.get("regime"), max(1, d.get("S") or 1)
         rc = w.race = RACE["race" if g == 2 or (g == 1 and d.get("rich", 0) / S >= RACE_RICH) else "base"]
-        trace("race", f"regime={g} rich={d.get('rich')}/{S} -> {'race' if rc is RACE['race'] else 'base'}")
+        trace("race", f"regime={g} rich={d.get('rich')}/{S} -> {'race' if rc is RACE['race'] else 'base'} "
+                      f"solo={d.get('solo', 1.0):.2f} ggems={d.get('ggems', 0.0):.2f}")
     return rc
 
 
@@ -301,8 +337,11 @@ def farm_price(w, s, h, bodies, walk, c=None):
     walk *= rc["walk_w"]
     prof = ME["prof"]
     value = o.gems + g2g(s.r) * o.gold * prof["gold"]
+    sm = stack_mode(w, s.r)
+    bx = STACK_BODY_EXP if sm else BODY_EXP     # [user plan 15 Oct, stack opener] value / bodies ** bx
+    div = max(1, bodies) if bx == 1.0 else max(1, bodies) ** bx
     if o.st == "reward":
-        return value / max(1, bodies) / (walk + 5)
+        return value / div / (walk + 5)
     if o.hp is None:                            # full HP: cached per (group, bodies, my Strength)
         key = (h, bodies, s.S)
         cd = CLEAR_MEMO.get(key)
@@ -314,19 +353,19 @@ def farm_price(w, s, h, bodies, walk, c=None):
     else:
         mons = [m for m in o.hp if m[0] > 0]
         if not mons:
-            return value / max(1, bodies) / (walk + 5)
+            return value / div / (walk + 5)
         clear, dmg = clear_dmg(mons, s.S, bodies)
     per = dmg / bodies + s.edps * min(clear + 5, 10)    # [tuned] + visible enemies hitting me (within 4)
     if per >= s.hp:
         return 0.0                                  # [deviation] certain death is not a price
     miss = bodies - 1 - (w.claims.get(h, 0) if c is None else c)
     if miss > 0:
-        walk += rc["wait"] * miss                 # [guess] partners not committed yet
+        walk += (STACK_WAIT_PARTNER if sm else rc["wait"]) * miss                 # [guess] partners not committed yet
     risk = s.bag if s.hp - per < KEEP_HP * s.maxhp else s.P * s.bag   # [tuned] bag exposure (danger_p)
     detour = 0
     if o.near < len(w.apos):
         detour = max(0, o.anchor.chebyshev_distance(w.apos[o.near]) - s.walt)
-    return value / bodies / (walk + clear + 5 + detour) - risk
+    return value / div / (walk + clear + 5 + detour) - risk
 
 
 def need_k(w, s, h, c):
@@ -339,6 +378,9 @@ def need_k(w, s, h, c):
     mons = o.mons if o.hp is None else [m for m in o.hp if m[0] > 0]
     if not mons:
         return 1 + c
+    sm = stack_mode(w, s.r)
+    if sm and w.seed is not None:
+        return max(1 + c, sub_size(w))          # [user plan 15 Oct, pair/trio opener] seed: my subgroup takes it
     T = max(1, len(w.roster))
     floor = s.hp * SURVIVE                      # survival, as FARM's own zero rule (KEEP_HP stays a risk term)
     for k in range(1 + c, T + 1):
@@ -349,7 +391,7 @@ def need_k(w, s, h, c):
             if key:
                 CLEAR_MEMO[key] = cd
         if cd[1] / k + s.edps * min(cd[0] + 5, 10) <= floor:
-            return k
+            return min(k, max(1 + c, sub_size(w))) if sm else k   # group mode: capped at my subgroup's size
     return None
 
 
@@ -519,6 +561,7 @@ def price_all(w, s, cl, by):
     """[(price, option, target)] for every option this turn (multipliers: champion row x posture column)."""
     prof, r = ME["prof"], s.r
     pm = posture(w, s)
+    sm = stack_mode(w, r)
     out = []
     # WARD: on the way, not first. A pending draft ward tile prices only when its detour from my current goal is
     # <= WARD_DETOUR, or when I am idle / falling back (or already walking to it); 0 once my ward is placed
@@ -555,11 +598,11 @@ def price_all(w, s, cl, by):
         # WAIT_PARTNER, pulling the lower slot onto the higher slot's group every 2 rounds: a 30-round A,B,A,B swap
         # on a 40x40 ladder map). Engaged on h (a live monster of h within CAMP_R): never yield it.
         if o.need <= 1:
-            if h in w.lowcl and not (cur == ("farm", h) and engaged(s, h)):
+            if not sm and h in w.lowcl and not (cur == ("farm", h) and engaged(s, h)):   # stack mode: no yield
                 continue
             c = 0
         k = need_k(w, s, h, c)                  # bodies the live clear model needs, me + c claimants at least
-        if k is None or (c == 0 and k >= 2 and r < w.pair_until):
+        if k is None or (c == 0 and k >= 2 and r < w.pair_until and not sm):   # stack mode: k is the team
             continue
         # One claimant per SOLO group: an ally broadcasts farm on a group the draft says needs 1 body -> 0 for me
         # (user's plan, 15 Oct late). Groups needing >= 2 keep the per-body split (value / bodies). History: the gate
@@ -581,6 +624,8 @@ def price_all(w, s, cl, by):
         p = fp * prof["farm"] * pm["farm_their_side" if o.side == 2 else "farm"]
         if sap is not None and o.anchor.chebyshev_distance(sap) <= STACK_R:
             p *= STACK_FARM                     # the stack was just seen there
+        if sm and h in w.lowsub:
+            p *= STACK_FOLLOW                   # [user plan 15 Oct, pair/trio opener] follow my subgroup's lower slots
         out.append((p, "farm", h))
     # BANK
     if s.bag > 0 and w.apos:
@@ -607,8 +652,12 @@ def price_all(w, s, cl, by):
             # within 8, risk dominates and BANK wins"); subtracting it would stop every bank near an enemy.
             # BANK_NEAR_BONUS [guess]: tempo, a bag next to an altar banks now (ladder: 22 gems carried 40 rounds)
             near = 1 + BANK_NEAR_BONUS if wk <= BANK_NEAR else 1
-            out.append((s.bag * (1 + P) * near / (wk * race(w)["bank_ret"] + max(1, -(-s.bag // 10))) * prof["bank"] * pm["bank_risk"],
-                        "bank", a))
+            bp = s.bag * (1 + P) * near / (wk * race(w)["bank_ret"] + max(1, -(-s.bag // 10))) * prof["bank"] * pm["bank_risk"]
+            if sm and s.bag < STACK_BANK_MIN:
+                bp *= STACK_BANK_LOW            # [user plan 15 Oct, stack opener] bank in lumps
+            elif sm and GROUP_BANK_BAG and s.bag >= GROUP_BANK_BAG:
+                bp *= GROUP_BANK_X * s.bag / GROUP_BANK_BAG     # the carry banks its lump
+            out.append((bp, "bank", a))
     # KILL: closable targets only
     reach = ME.get("range", 1) + 1 + (2 if ME.get("has_dash") else 0)
     kmul = prof["kill"] + KILL_PER_SHARD * w.shards     # scales with shards owned (read every 20 rounds, 90_main)
@@ -775,8 +824,9 @@ def price_all(w, s, cl, by):
         if min(t.chebyshev_distance(s.pos) for t in o.tiles) <= 4:
             continue                            # there: FARM(g) prices itself
         b = cl.get(h, 1)
-        lo = farm_price(w, s, h, b, wk) * b if b >= o.need else 0.0
-        gain = farm_price(w, s, h, b + 1, wk) * (b + 1) - max(0.0, lo)
+        bx = STACK_BODY_EXP if sm else BODY_EXP     # [user plan 15 Oct, stack opener] same exponent as farm_price
+        lo = farm_price(w, s, h, b, wk) * (b if bx == 1.0 else b ** bx) if b >= o.need else 0.0
+        gain = farm_price(w, s, h, b + 1, wk) * ((b + 1) if bx == 1.0 else (b + 1) ** bx) - max(0.0, lo)
         if gain > 0:
             out.append((gain / max(1, wk) * prof["join"] * pm["join"], "join", k))
     return out
@@ -812,6 +862,9 @@ def choose(w, s):
     cl, by = claims(w, s)
     w.claims = cl
     w.lowcl = {w.idx[tg] for k, (op, tg) in by.items() if k < w.slot and op == 1 and tg in w.idx}
+    sb = getattr(w, "subs", None) or {}
+    mine = sb.get(w.slot, ())
+    w.lowsub = {w.idx[tg] for k, (op, tg) in by.items() if k < w.slot and k in mine and op == 1 and tg in w.idx}
     ps = price_all(w, s, cl, by)
     r = s.r
     ps = [t for t in ps if t[1] == "heal" or w.excl.get((t[1], t[2]), -1) <= r]

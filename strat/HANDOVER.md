@@ -648,3 +648,78 @@ the 30x30 were lone farmers caught.
 
 **Not addressed by this:** the stack also hunts; our farmers die to it in the 27-36%-dead games. Stack mode makes
 us the hunter instead of the hunted, which is probably the only real answer.
+
+## 15 Oct (day): stack opener built and benched, loses at home (not shipped)
+
+Why: ladder game 7cd904b5 (30x30, 5 picks, L 522-972): every champion seeded onto a different group, most groups
+there need 2-3 bodies, each waited alone (WAIT_CAP 10), failed, moved on. By r50: 0 attacks, 70 champion-rounds
+waiting, score 0-0; r100 36-72. Not the ward phase (two trips, rounds 24 and 35).
+
+Built (gated, default off: `STACK_UNTIL` 0; variant keys for tools/variant.py): `STACK_UNTIL`, `STACK_REGIMES` (0, 1),
+`STACK_BODY_EXP` 0.0 (FARM divides by bodies ** exp; `BODY_EXP` 1.0 outside stack mode), `STACK_WAIT_PARTNER` 0,
+`STACK_WAIT_CAP` 25 (50_exec), `STACK_BANK_MIN` 0 / `STACK_BANK_LOW` 0.3, `STACK_FOLLOW` 3.0 (FARM x3 on the group slot 0
+claims), `STACK_HANDOFF` 0 (only the carry, Vesper else lowest slot, stands on the capture). Gated rules: shared opening
+seed (`stack_seed`), solo-yield off, `need_k` = alive team, stack waits exempt from the stuck guard. Trace tag `stack`.
+Default-constant check: collision trace identical to the pre-change bot; other maps drift from fuel timing only
+(the file is 93 lines longer). Snapshot of the old bot: `bots/_snap-strat-prestack`.
+
+Tools: `tools/bench.py --rounds N` (opening bench: games cut at N, judged on `score=` at the last tick; columns
+r100/r200/r300, atk/wait/dead shares; `results.json`); `tools/openviz.py "open-stack*"` builds `runs/openviz.html`
+(score by round, turn shares, margin heatmap by map, every game).
+
+Bench [measured, cambc 2.1.5]: variant vs today's strat, 9 maps both sides, cut at r300 (`runs/bench/open-stack{A..E}`).
+A = stack to r150 (regimes few/pick); B = to r300; C = B on every map; D = C + handoff; E = B with exp 0.5, bank lumps >= 40.
+
+| variant | ahead at r300 | mean r100 (us-them) | mean r300 | worst map | wait share |
+| --- | --- | --- | --- | --- | --- |
+| A | 8/18 | 57-81 | 332-386 | corners -528 | 7 % |
+| B | 8/18 | 57-81 | 293-400 | corners -667 | 12 % |
+| C | 6/18 | 51-81 | 294-393 | corners -438 | 12 % |
+| D | 6/18 | 21-87 | 295-393 | corners -637 | 13 % |
+| E | 8/18 | 61-77 | 314-380 | corners -331 | 10 % |
+
+Where the stack wins: rows (+44..+176 both sides), elkring (+36..+144), packs (mostly +): the pair / pack maps, i.e. the
+ladder map's shape. Where it loses: corners (0 gems by r300 in B; two champions waited 49 of 50 rounds at a group the
+rest never came to; two 48-gem bags chose bank then heal in turn and never tributed in 200 rounds), interlock,
+collision, monolith. Lanes and expanse: mode off (regime many), mirror-symmetric results as expected.
+
+Diagnosis: convergence fails. Champions price from their own position, wait at different pair groups for a team that
+is waiting elsewhere, and the wait cap only rotates them. The handoff (D) works mechanically (only the carry's bag
+grows) but costs r100 tempo (21 vs 57).
+
+Candidates (not built): F = pair opener, seed in pairs (slots 0+1, 2+3 on the two richest pair groups, slot 4 solo)
+with the stack numbers but k = 2; G = gate stack / pair mode by the draft's share of near groups needing >= 2 bodies
+instead of the regime; a wait rule "walk to where slot 0 is" instead of waiting in place.
+
+## 15 Oct (afternoon): game type at the draft + pair/trio opener (shipped: `GROUP_UNTIL` 300)
+
+User decisions: (1) the draft classifies the game by camps, not altars; (2) group games open in a trio + pair (5 picks),
+two pairs (4), pair + solo (3); (3) nobody waits at a camp: start when a partner is within `PAIR_NEAR` 6, else walk to
+the partner; (4) gold goes to the carry: Vesper captures alone when she took the group, the others step off.
+
+Draft: `solo` (groups needing 1 body / all) and `ggems` in bytes 14-15, `d["solo"]`, `d["ggems"]`, trace `game`.
+Group game when `solo <= GROUP_SOLO_MAX` 0.4 and round < `GROUP_UNTIL`. Numbers in PRICES.md ("Group game"). The
+five-stack code from the morning is reused under the group gate (`STACK_BODY_EXP`, `STACK_WAIT_PARTNER`, `STACK_FOLLOW`
+now within the subgroup only); `STACK_REGIMES`, `STACK_WAIT_CAP`, `team_alive`, `stack_seed` are gone.
+
+Bench [measured, cambc 2.1.5, cut at r300, variant vs today's bot, both sides] (`runs/bench/open-groupG*`, page
+`runs/openviz.html`):
+
+| variant | group maps (rows / elkring / packs, A then B) | corners | note |
+| --- | --- | --- | --- |
+| G (0.4, near 6, handoff) | +242 +176 / +108 +144 / +80 +224 | mode off, mirror | **shipped** |
+| G no handoff | +253 +176 / +90 0 / +36 +86 | mirror | handoff worth it on elkring / packs |
+| G near 10 | +198 +176 / +162 +144 / +124 +88 | mirror | a wash |
+| G threshold 0.6 | same as G | -430 / -156 | 0.6 turns it on for corners and monolith: wrong |
+
+Waiting share 0 % in every group-mode game (was 7-35 % with the five-stack), 0 err / osc / stay, fuel median
+1.05-1.18M, max 2.48M (the pre-change bot already peaks at 2.4M). Default-constant trace on collision identical to
+`bots/_snap-strat-prestack`. Shipped build checked: strat vs `_var-groupG` on rows 396-330 at r300 (the bench's two
+sides), 0 err.
+
+Open: subgroups drift into one Vesper-centred stack after the seed (every handoff within 4 goes to her), so non-carries
+earn no gold and stay at 45-70 Strength; rows A r200 is 66-66 (seed pair healed at r27 and r37 before its first
+capture at r68); `group_go` steps toward spawn when no claiming ally is visible (cap 15, never fired); 4-pick and
+3-pick rosters tested only on packs. `tools/assemble.py` has no `--help`: it rewrote `bots/tzu/src/main.py` (untracked,
+dropped bot). Tools: `tools/bench.py --rounds N`, `tools/openviz.py` (bench page), `tools/gameviz.py` + a per-round
+`pos` trace (our own replay page; the official one is `cambc view <bundle>`).

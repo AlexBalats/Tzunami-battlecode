@@ -122,6 +122,8 @@ else:
             w.build_fme(s.pos)                    # also after a recall (the jump is > 6)
         # stuck guard: same tile, last turn neither capturing, channelling, attacking nor dead
         exempt = flags[0] or flags[1] or s.recalling or s.submitting
+        if flags[2] and not exempt and stack_mode(w, r):
+            exempt = True                         # [user plan 15 Oct, stack opener] group mode never sets waiting
         if s.pos == w.pos and not exempt:
             w.same += 1
             w.stay += 1
@@ -202,7 +204,7 @@ else:
         w = WORLD
         w.cur, w.status, w.excl, w.sent, w.started, w.deadline = ("idle", None), "done", {}, -1, 0, 0
         w.claims, w.was_alive, w.same, w.stay, w.seed_until = {}, True, 0, 0, 0
-        w.seed, w.lowcl = None, set()                     # opening seed (40_prices seeded), lower-slot solo claims
+        w.seed, w.lowcl, w.lowsub, w.subs = None, set(), set(), {}   # opening seed (40_prices seeded), lower-slot claims, subgroups
         w.phase = None                                    # 20_champs phase index last applied
         w.attacked = w.capt = w.waiting = False
         w.bag_alive, w.hp_alive, w.ne_alive, w.kd, w.kn, w.arrived = 0, 0, 0, 99, 0, None
@@ -237,7 +239,11 @@ else:
                 s = sense(w)
                 w.set_cur(("farm", seed), s.r, s)
                 w.seed, w.seed_until = seed, SEED_UNTIL   # choose keeps it until then unless HEAL / retreat (seeded)
-                trace("choice", f"farm {tname(w, 'farm', seed)} seed slot={w.slot}")
+                if stack_mode(w, s.r):
+                    trace("choice", f"farm {tname(w, 'farm', seed)} group seed slot={w.slot} "
+                                    f"team={GROUP_NAMES.get(sub_size(w), '?')} with={w.subs.get(w.slot)}")
+                else:
+                    trace("choice", f"farm {tname(w, 'farm', seed)} seed slot={w.slot}")
                 broadcast(w, s, 1)
             if w.slot == 0 and TRACE:                     # the whole list (S = 5; S = 3 / 4 are its prefixes)
                 trace("choice", "seeds " + " ".join(tname(w, "farm", h) for h in opening_slots(w, 5)))

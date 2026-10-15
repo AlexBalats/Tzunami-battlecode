@@ -469,6 +469,68 @@ def ward_init(w):
 VESPER_ID = 1                # draft id of Vesper Vale (her slot takes a gold group first)
 
 
+def rich_group(w, m, used, tests):
+    """[user plan 15 Oct, pair/trio opener] the richest reachable group not in used for m bodies: sides 0/1 before 2,
+    then (gems + g2g(1) gold) / (d_us + clear rounds with m bodies); tests are need filters tried in order (the first
+    that matches anything wins). None if nothing is reachable."""
+    for ok in tests:
+        best = None
+        for h in w.order:
+            o = w.G[h]
+            if o.d_us >= 255 or h in used or not ok(o.need):
+                continue
+            cr = -(-sum(x[0] for x in o.mons) // (CHAMP_STR * m))
+            key = (o.side > 1, -(o.gems + g2g(1) * o.gold) / (o.d_us + cr + 1), h)
+            if best is None or key < best:
+                best = key
+        if best:
+            return best[2]
+    return None
+
+
+GROUP_NAMES = {3: "trio", 2: "pair", 1: "solo"}
+
+
+def group_slots(w):
+    """[user plan 15 Oct, pair/trio opener] group-game seeds: the roster split by size (5 -> trio + pair, 4 -> two
+    pairs, 3 -> pair + solo, <= 2 -> one subgroup). Subgroup 0 takes the richest group needing 2..its size (else >= 2,
+    else any); a pair as subgroup 1 the next richest needing exactly 2 (else >= 2, else any); a solo the best need-1
+    group (else any). Vesper's slot joins the subgroup whose group has more gold (ties: subgroup 0); the other slots
+    fill hers first, lowest slot first, then the other. Sets w.subs {slot: tuple of its subgroup's slots}; returns
+    5 entries (slot -> group). Same on every champion: draft S, roster order, draft records only."""
+    S = min(5, max(1, (w.d or {}).get("S") or len(w.roster)))
+    sizes = (3, 2) if S >= 5 else (2, 2) if S == 4 else (2, 1) if S == 3 else (S,)
+    gs, used = [], set()
+    for i, m in enumerate(sizes):
+        if m == 1:
+            tests = (lambda n: n <= 1, lambda n: True)
+        elif i == 0:
+            tests = (lambda n, m=m: 2 <= n <= m, lambda n: n >= 2, lambda n: True)
+        else:
+            tests = (lambda n: n == 2, lambda n: n >= 2, lambda n: True)
+        g = rich_group(w, m, used, tests)
+        gs.append(g)
+        if g is not None:
+            used.add(g)
+    vs = w.roster.index(VESPER_ID) if VESPER_ID in w.roster else -1
+    gold = [w.G[g].gold if g is not None else -1 for g in gs]
+    iv = gold.index(max(gold)) if 0 <= vs < S else 0
+    rest = [k for k in range(S) if k != vs] if 0 <= vs < S else list(range(S))
+    mem = [[] for _ in sizes]
+    if 0 <= vs < S:
+        mem[iv].append(vs)
+    for i in [iv] + [j for j in range(len(sizes)) if j != iv]:
+        while len(mem[i]) < sizes[i] and rest:
+            mem[i].append(rest.pop(0))
+    w.subs = {}
+    slots = [None] * 5
+    for i, ms in enumerate(mem):
+        for k in ms:
+            w.subs[k] = tuple(sorted(ms))
+            slots[k] = gs[i]
+    return slots
+
+
 def opening_slots(w, n):
     """n DISTINCT group handles (slot i takes entry i); every champion computes the same list with no comms.
     Groups on our side (0) and contested (1), ranked by the walk from our spawn (d_us; ties: higher value per round),
@@ -476,6 +538,8 @@ def opening_slots(w, n):
     group with gold > 0 (one she can take alone if any: all gold to Vesper); no group is given to two slots (the
     50x50 4-pick ladder map had one seedable group and three champions on it); when the list runs out, the
     next-nearest unused reachable group of any need and side. Seeds only the first choice."""
+    if stack_mode(w, cambc.round_number()):
+        return group_slots(w)[:n]               # [user plan 15 Oct, pair/trio opener] subgroup seeds
     solo, pair, rest = [], [], []
     for h in w.order:
         o = w.G[h]

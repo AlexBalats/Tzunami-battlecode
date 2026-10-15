@@ -2,20 +2,29 @@
 
 Usage (from the repo root):
     python -I tools/bench.py BOT [--vs OPP1,OPP2,...] [--maps m1,m2,...] [--jobs N]
-                                 [--label NAME] [--baseline RUN_DIR_OR_LABEL] [--fresh]
+                                 [--label NAME] [--baseline RUN_DIR_OR_LABEL] [--fresh] [--rounds N]
 
 Defaults: --vs starter-python,tzu; every maps/**/*.map26a; --jobs = CPU count - 1.
 BOT/OPP are folders in bots/ (or NAME@REV, as in tools/arena.py). An opponent that doesn't
 exist or doesn't build is reported and skipped.
 
 Games are deterministic [measured], so each is cached in runs/bench/cache/<key>.json, key =
-cambc version + both bots' source hashes + map file hash + side; cached games aren't replayed.
+cambc version + both bots' source hashes + map file hash + side + --rounds; cached games aren't
+replayed (capped and full games never share an entry).
 Output: runs/bench/<label or time>/<opp>/<map>-<A|B>/ (replay bundle, stats.json, cli.log),
 plus results.csv (one row per game) and summary.md in the run folder.
 
 From the stats JSON: winner, end round, gems both teams, kills, deaths, gold earned, crashes
 (botFaults). From our stdout trace (P|round|team|champ|tag|text, if present): errs (`err` lines
-+ raw Traceback lines), `death` and `stuck` lines, median/max `fuel=` on `tick` lines.
++ raw Traceback lines), `death` and `stuck` lines, median/max `fuel=` on `tick` lines; score at
+each round in SCORE_ROUNDS (`score=A-B` on `tick` lines: s<R> ours, o<R> theirs) and team shares of
+turns attacking/waiting/dead over ticks up to the last SCORE_ROUNDS round (`act=` on `tick` lines).
+Also written as results.json (list of row dicts).
+
+Opening bench: --rounds N cuts every game at round N (`cambc run --rounds N`). A capped game has
+no stats JSON, so it is judged on the trace: cap_round = last tick round <= N, cap_margin = ours -
+theirs there; res is W/L/D by the sign of cap_margin, and gems/opp_gems/margin are the scores at
+cap_round, so win counts, worst map and --baseline diffs use the capped margin.
 """
 import argparse, concurrent.futures, csv, datetime, glob, hashlib, json, os, statistics
 import re, subprocess, sys, time, zipfile
@@ -25,23 +34,34 @@ from arena import ROOT, BOTS, MAPS, find_cambc, resolve_bot, source_hash, file_h
 
 OUT = os.path.join(ROOT, "runs", "bench")
 CACHE = os.path.join(OUT, "cache")
-CACHE_VERSION = 1
+CACHE_VERSION = 2
+SCORE_ROUNDS = [100, 200, 300]  # rounds whose score is read from the tick lines (s<R>/o<R>)
+SHARES = ["atk", "wait", "dead"]  # act= index 1, 4, 6 (move/attack/capture/channel/wait/idle/dead)
+SHARE_TAG = SCORE_ROUNDS[-1]  # shares sum the ticks at rounds <= this
+SCORE_FIELDS = [k % r for r in SCORE_ROUNDS for k in ("s%d", "o%d")]
+SHARE_FIELDS = ["%s%d" % (k, SHARE_TAG) for k in SHARES]
 FIELDS = ["opp", "map", "side", "res", "round", "gems", "opp_gems", "margin", "gpr", "opp_gpr",
           "kills", "deaths", "gold", "crashes", "opp_crashes", "errs", "death_lines", "stuck_lines",
-          "fuel_med", "fuel_max", "secs", "cached", "bundle"]
+          "fuel_med", "fuel_max"] + SCORE_FIELDS + SHARE_FIELDS + ["cap_round", "cap_margin",
+          "secs", "cached", "bundle"]
 FUEL = re.compile(r"\bfuel=(\d+)")
+SCORE = re.compile(r"\bscore=(\d+)-(\d+)")
+ACT = re.compile(r"\bact=(\d+(?:/\d+){6})\b")
 
 
 def trace(bundle, team_letter):
     """Counts from our team's stdout in the replay bundle; empty values if there is none."""
     out = {"errs": 0, "death_lines": 0, "stuck_lines": 0, "fuel_med": "", "fuel_max": ""}
+    out.update({k: "" for k in SCORE_FIELDS + SHARE_FIELDS})
+    out["scores"] = {}  # round -> (ours, theirs); popped by play()
     try:
         with zipfile.ZipFile(bundle) as z:
             text = z.read("team-%s.stdout" % team_letter.lower()).decode("utf-8", "replace")
     except (OSError, KeyError, zipfile.BadZipFile):
         return out
-    fuels = []
+    fuels, acts = [], [0] * 7
     for line in text.replace("\x00", "\n").splitlines():
+        line = line.strip()
         if not line.startswith("P|"):
             out["errs"] += "Traceback" in line
             continue
@@ -57,8 +77,24 @@ def trace(bundle, team_letter):
             m = FUEL.search(line)
             if m:
                 fuels.append(int(m.group(1)))
+            try:
+                rnd = int(parts[1])
+            except ValueError:
+                continue
+            m = SCORE.search(line)
+            if m:  # the last tick line of the round wins
+                out["scores"][rnd] = (int(m.group(1)), int(m.group(2)))
+            m = ACT.search(line)
+            if m and rnd <= SHARE_TAG:
+                acts = [a + int(b) for a, b in zip(acts, m.group(1).split("/"))]
     if fuels:
         out["fuel_med"], out["fuel_max"] = int(statistics.median(fuels)), max(fuels)
+    for r in SCORE_ROUNDS:
+        if r in out["scores"]:
+            out["s%d" % r], out["o%d" % r] = out["scores"][r]
+    if sum(acts):
+        for k, i in zip(SHARES, (1, 4, 6)):
+            out["%s%d" % (k, SHARE_TAG)] = round(100 * acts[i] / sum(acts))
     return out
 
 
@@ -68,7 +104,7 @@ def play(cambc, job):
     os.makedirs(job["dir"], exist_ok=True)
     stats_path = os.path.join(job["dir"], "stats.json")
     cmd = [cambc, "run", "bots/" + job["blue"], "bots/" + job["red"], "--map", job["map_path"], "-o", job["dir"],
-           "--statistics", stats_path]
+           "--statistics", stats_path] + (["--rounds", str(job["rounds"])] if job["rounds"] else [])
     try:
         proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=job["timeout"])
         log = proc.stdout + proc.stderr
@@ -76,13 +112,40 @@ def play(cambc, job):
         log = "TIMEOUT after %ss\n%s" % (job["timeout"], e.stdout or "")
     with open(os.path.join(job["dir"], "cli.log"), "w", encoding="utf-8") as f:
         f.write(log)
+    if os.path.exists(stats_path) and os.path.getmtime(stats_path) < t0 - 1:
+        os.remove(stats_path)  # stale, from an earlier run in this folder
+    bundles = [b for b in glob.glob(os.path.join(job["dir"], "*.repl26a")) if os.path.getmtime(b) >= t0 - 1]
+    bundle = max(bundles, key=os.path.getmtime) if bundles else ""
+    us, them = job["side"], 1 - job["side"]
+    tr = trace(bundle, "AB"[us]) if bundle else {}
+    scores = tr.pop("scores", {})
+    if job["rounds"]:  # opening bench: judge on the score at the last tick round <= the cap
+        at = [r for r in scores if r <= job["rounds"]]
+        if not at:
+            return {"error": "no score= tick at or before round %d (%s)" % (
+                job["rounds"], log.strip().splitlines()[-1] if log.strip() else "no output")}
+        cap = max(at)
+        gems, opp_gems = scores[cap]
+        m = gems - opp_gems
+        row = {"res": "D" if m == 0 else "WL"[m < 0], "round": cap, "gems": gems, "opp_gems": opp_gems,
+               "margin": m, "gpr": round(gems / cap, 3), "opp_gpr": round(opp_gems / cap, 3),
+               "cap_round": cap, "cap_margin": m, "secs": round(time.time() - t0, 1),
+               "bundle": os.path.relpath(bundle, ROOT)}
+        if os.path.exists(stats_path):  # the game ended before the cap: keep the per-champion counts
+            with open(stats_path) as f:
+                s = json.load(f)
+            mine = [c for c in s["champions"] if c["team"] == us]
+            row.update(kills=sum(c["kills"] for c in mine), deaths=sum(c["deaths"] for c in mine),
+                       gold=sum(c["earnedGold"] for c in mine), crashes=s["botFaults"][us],
+                       opp_crashes=s["botFaults"][them])
+        row.update(tr)
+        with open(job["cache"], "w") as f:
+            json.dump(row, f)
+        return row
     if not os.path.exists(stats_path):
         return {"error": log.strip().splitlines()[-1] if log.strip() else "no output"}
     with open(stats_path) as f:
         s = json.load(f)
-    bundles = glob.glob(os.path.join(job["dir"], "*.repl26a"))
-    bundle = max(bundles, key=os.path.getmtime) if bundles else ""
-    us, them = job["side"], 1 - job["side"]
     teams = {t["team"]: t for t in s["teams"]}
     mine = [c for c in s["champions"] if c["team"] == us]
     winner = {"teamA": 0, "teamB": 1}.get(s["outcome"])
@@ -96,7 +159,7 @@ def play(cambc, job):
            "crashes": s["botFaults"][us], "opp_crashes": s["botFaults"][them],
            "secs": round(time.time() - t0, 1),
            "bundle": os.path.relpath(bundle, ROOT) if bundle else ""}
-    row.update(trace(bundle, "AB"[us]) if bundle else {})
+    row.update(tr)
     with open(job["cache"], "w") as f:
         json.dump(row, f)
     return row
@@ -111,19 +174,39 @@ def num(v):
     return float(v) if v not in ("", None) else 0.0
 
 
-def summary(bot, rows, skipped):
-    lines = ["# Bench: %s" % bot, ""]
+def score_str(rows, r):
+    """'ours-theirs' at round r (mean over the rows that have it), '' if none do."""
+    have = [x for x in rows if x.get("s%d" % r) not in ("", None)]
+    if not have:
+        return ""
+    if len(have) == 1:
+        return "%d-%d" % (num(have[0]["s%d" % r]), num(have[0]["o%d" % r]))
+    return "%.0f-%.0f" % (sum(num(x["s%d" % r]) for x in have) / len(have),
+                          sum(num(x["o%d" % r]) for x in have) / len(have))
+
+
+def share_str(rows, k):
+    have = [num(x[k]) for x in rows if x.get(k) not in ("", None)]
+    return "%.0f%%" % (sum(have) / len(have)) if have else ""
+
+
+def summary(bot, rows, skipped, rounds=None):
+    lines = ["# Bench: %s%s" % (bot, " (opening bench: games cut at round %d, judged on the score at "
+                                "the last tick <= %d)" % (rounds, rounds) if rounds else ""), ""]
     for opp, why in skipped:
         lines.append("- SKIPPED %s: %s" % (opp, why))
     if skipped:
         lines.append("")
-    lines += ["| opponent | wins/games | maps won both sides | gems/round us | gems/round them "
-              "| deaths | errs | crashes | worst map (mean margin) |", "|" + "---|" * 9]
+    extra = ["r%d" % r for r in SCORE_ROUNDS] + ["%s r<=%d" % (k, SHARE_TAG) for k in SHARES]
+    lines += ["| opponent | %s | maps won both sides | gems/round us | gems/round them "
+              "| deaths | errs | crashes | worst map (mean margin) | %s |" % (
+                  "ahead at cap/games" if rounds else "wins/games", " | ".join(extra)),
+              "|" + "---|" * (9 + len(extra))]
     for opp in dict.fromkeys(r["opp"] for r in rows):
         rs = [r for r in rows if r["opp"] == opp and "error" not in r]
         errored = sum(1 for r in rows if r["opp"] == opp and "error" in r)
         if not rs:
-            lines.append("| %s | no finished games (%d errored) |||||||" % (opp, errored))
+            lines.append("| %s | no finished games (%d errored) |" % (opp, errored) + "|" * (7 + len(extra)))
             continue
         per_map = {}
         for r in rs:
@@ -132,11 +215,30 @@ def summary(bot, rows, skipped):
         swept = sum(1 for v in per_map.values() if len(v) == 2 and all(r["res"] == "W" for r in v))
         worst = min(margin, key=margin.get)
         mean = lambda k: sum(num(r[k]) for r in rs) / len(rs)
-        lines.append("| %s | %d/%d%s | %d/%d | %.2f | %.2f | %d | %d | %d | %s (%+.0f) |" % (
+        lines.append("| %s | %d/%d%s | %d/%d | %.2f | %.2f | %d | %d | %d | %s (%+.0f) | %s |" % (
             opp, sum(r["res"] == "W" for r in rs), len(rs), " (%d errored)" % errored if errored else "",
-            swept, len(per_map), mean("gpr"), mean("opp_gpr"), sum(num(r["deaths"]) for r in rs),
-            sum(num(r["errs"]) for r in rs), sum(num(r["crashes"]) for r in rs), worst, margin[worst]))
+            swept, len(per_map), mean("gpr"), mean("opp_gpr"), sum(num(r.get("deaths")) for r in rs),
+            sum(num(r.get("errs")) for r in rs), sum(num(r.get("crashes")) for r in rs), worst, margin[worst],
+            " | ".join([score_str(rs, r) for r in SCORE_ROUNDS] + [share_str(rs, k) for k in SHARE_FIELDS])))
+    if rounds:
+        lines += ["", "Per game (capped at round %d):" % rounds, "",
+                  "| opponent | map | side | res | cap round | cap margin | %s |" % " | ".join(extra),
+                  "|" + "---|" * (6 + len(extra))]
+        for r in rows:
+            if "error" in r:
+                lines.append("| %s | %s | %s | error: %s |" % (r["opp"], r["map"], r["side"], r["error"]))
+                continue
+            lines.append("| %s | %s | %s | %s | %s | %+d | %s |" % (
+                r["opp"], r["map"], r["side"], r["res"], r.get("cap_round", ""), num(r["margin"]),
+                " | ".join([score_str([r], x) for x in SCORE_ROUNDS] + [share_str([r], k) for k in SHARE_FIELDS])))
     return lines
+
+
+def game_str(r):
+    """One-line console summary of a finished game."""
+    extra = " ".join("r%d=%s" % (x, score_str([r], x) or "-") for x in SCORE_ROUNDS)
+    extra += " " + " ".join("%s=%s" % (k, share_str([r], k) or "-") for k in SHARE_FIELDS)
+    return "%s %+d @%s %s (%.0fs)" % (r["res"], r["margin"], r["round"], extra, r["secs"])
 
 
 def diff(rows, base, label):
@@ -173,6 +275,8 @@ def main():
     ap.add_argument("--baseline", help="previous run folder or label to diff against")
     ap.add_argument("--timeout", type=int, default=900, help="wall-clock seconds per game")
     ap.add_argument("--fresh", action="store_true", help="ignore the cache")
+    ap.add_argument("--rounds", type=int, help="cut every game at this round (opening bench); judged on "
+                    "the score at the last tick round <= N instead of the game result")
     args = ap.parse_args()
 
     cambc = find_cambc()
@@ -221,16 +325,17 @@ def main():
             for side in (0, 1):
                 blue, red = (bot, opp) if side == 0 else (opp, bot)
                 hblue, hred = (hb, ho) if side == 0 else (ho, hb)
-                key = hashlib.sha256(("v%d|%s|%s|%s|%s|%d" % (
-                    CACHE_VERSION, version, hblue, hred, file_hash(all_maps[name]), side)).encode()).hexdigest()[:24]
+                key = hashlib.sha256(("v%d|%s|%s|%s|%s|%d|r%s" % (
+                    CACHE_VERSION, version, hblue, hred, file_hash(all_maps[name]), side,
+                    args.rounds or "full")).encode()).hexdigest()[:24]
                 jobs.append({"opp": opp, "map": name, "side": side, "blue": blue, "red": red,
                              "map_path": all_maps[name], "cache": os.path.join(CACHE, key + ".json"),
                              "dir": os.path.join(run_dir, opp, "%s-%s" % (name.replace("/", "_"), "AB"[side])),
-                             "timeout": args.timeout})
+                             "timeout": args.timeout, "rounds": args.rounds})
     todo = [j for j in jobs if args.fresh or not os.path.exists(j["cache"])]
-    print("cambc %s | %s (%s) vs %s | %d maps x 2 sides | %d to play, %d cached, %d at once"
-          % (version, bot, hb, ",".join(opps) or "nobody", len(names), len(todo), len(jobs) - len(todo), args.jobs),
-          flush=True)
+    print("cambc %s | %s (%s) vs %s | %d maps x 2 sides | %d to play, %d cached, %d at once%s"
+          % (version, bot, hb, ",".join(opps) or "nobody", len(names), len(todo), len(jobs) - len(todo), args.jobs,
+             " | capped at round %d" % args.rounds if args.rounds else ""), flush=True)
 
     t0 = time.time()
     results = {}
@@ -244,7 +349,7 @@ def main():
             j = futs[fut]
             r = results[id(j)] = dict(fut.result(), cached=0)
             print("  [%d/%d] %s %s %s: %s" % (n, len(todo), j["opp"], j["map"], "AB"[j["side"]],
-                  r.get("error") or "%s %+d (%.0fs)" % (r["res"], r["margin"], r["secs"])), flush=True)
+                  r.get("error") or game_str(r)), flush=True)
     wall = time.time() - t0
 
     rows = [dict(results[id(j)], opp=j["opp"], map=j["map"], side="AB"[j["side"]]) for j in jobs]
@@ -253,8 +358,10 @@ def main():
         w = csv.DictWriter(f, FIELDS + ["error"], extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
+    with open(os.path.join(run_dir, "results.json"), "w") as f:
+        json.dump(rows, f, indent=1)
     played = [r for r in rows if not r.get("cached") and "secs" in r]
-    lines = summary(bot, rows, skipped)
+    lines = summary(bot, rows, skipped, args.rounds)
     lines += ["", "cambc %s, %s hash %s; %d games, %d played, %d cached; wall %.0fs with %d jobs%s" % (
         version, bot, hb, len(rows), len(played), len(rows) - len(played), wall, args.jobs,
         ", %.0fs per game" % (sum(r["secs"] for r in played) / len(played)) if played else "")]

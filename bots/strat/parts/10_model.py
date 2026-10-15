@@ -206,6 +206,7 @@ class DraftModel:
         memo = {}
         cbb = Bitboard()
         S = self.S
+        n1 = gtot = g2 = 0                         # game type [user plan 15 Oct, game type]: solo share, group gems
         for g in game_map.camp_groups():           # the only call (~0.94M) [measured]
             mons = []
             cs = []
@@ -223,6 +224,14 @@ class DraftModel:
             bd = memo.get(key)
             if bd is None:
                 bd = memo[key] = bodies_needed(list(key), S)
+            try:
+                gv = int(g.gem_value())
+            except Exception:
+                gv = 0
+            n1 += bd == 1
+            gtot += gv
+            if bd >= 2:
+                g2 += gv
             if len(cs) == 1:
                 x, y = cs[0]
                 self.groups.append((int(g), x, y, x, y, cs, bd))
@@ -230,6 +239,12 @@ class DraftModel:
                 xs = [c[0] for c in cs]
                 ys = [c[1] for c in cs]
                 self.groups.append((int(g), min(xs), min(ys), max(xs), max(ys), cs, bd))
+        ng = len(self.groups)
+        # [user plan 15 Oct, game type] solo = groups needing 1 body / all groups (any side); ggems = share of all
+        # groups' gems in groups needing >= 2. Bytes 14 / 15 of the header, 0-255 (255 = 1.0, also "unknown")
+        self.solo = n1 / ng if ng else 1.0
+        self.ggems = g2 / gtot if gtot else 0.0
+        trace("game", f"solo={self.solo:.2f} ({n1}/{ng}) ggems={self.ggems:.2f} ({g2}/{gtot})")
         self.block = self.terr | cbb               # live camps block movement [sdk]
         self.free = ~self.block
 
@@ -677,7 +692,8 @@ class DraftModel:
         out = [MEM_VERSION, getattr(self, "W", 0), getattr(self, "H", 0), getattr(self, "S", 0),
                getattr(self, "regime", 3) | getattr(self, "bank", 3) << 2, getattr(self, "spawn_altar", 255), fl,
                len(A), len(G), len(B), len(Wd), min(255, getattr(self, "rich", 0)), min(255, getattr(self, "a0", 255)),
-               min(255, getattr(self, "traffic_min", 0)), 0, 0]
+               min(255, getattr(self, "traffic_min", 0)), round(255 * getattr(self, "solo", 1.0)),
+               round(255 * getattr(self, "ggems", 0.0))]
         for a, p in zip(A, self.apos):
             out += (a[SD], p.x, p.y)
         for o in G:
@@ -710,7 +726,7 @@ def decode(mem):
     if len(m) < 16 or m[0] != MEM_VERSION:
         return None
     d = dict(W=m[1], H=m[2], S=m[3], regime=m[4] & 3, bank=m[4] >> 2 & 3, bank_altar=m[5], flags=m[6],
-             rich=m[11], a0=m[12], traffic_min=m[13])
+             rich=m[11], a0=m[12], traffic_min=m[13], solo=m[14] / 255, ggems=m[15] / 255)
     k = 16
     d["altars"] = [(m[k + 3 * i], m[k + 3 * i + 1], m[k + 3 * i + 2]) for i in range(m[7])]
     k += 3 * m[7]
@@ -736,5 +752,6 @@ def summary(d):
     ba = "-" if d["bank_altar"] == 255 else f"A{d['bank_altar']}"
     return (f"SUMMARY {d['W']}x{d['H']} S={d['S']} regime={(REGIMES + ('?',))[d['regime']]} "
             f"altars={ca[0]}/{ca[1]}/{ca[2]} bank={(BANKS + ('?',))[d['bank']]} bank_altar={ba} "
-            f"rich={d['rich']}/{S}={d['rich'] / S:.2f} altar_sides={alt} groups={grp}")
+            f"rich={d['rich']}/{S}={d['rich'] / S:.2f} altar_sides={alt} groups={grp} "
+            f"solo={d.get('solo', 1.0):.2f} ggems={d.get('ggems', 0.0):.2f}")
 

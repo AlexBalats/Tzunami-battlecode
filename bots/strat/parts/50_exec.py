@@ -19,7 +19,7 @@ def _set_cur(self, new, r, s):
         mons = [m for m in (o.hp if o.hp is not None else o.mons) if m[0] > 0]
         work = (clear_dmg(mons, s.S, max(1, o.need))[0] if mons else 0) + 8
         if o.need >= 2:
-            work += 10                          # waiting for the partner
+            work += 10                          # waiting for the partner (group mode: walking to it)
     elif op in ("bank", "hold") and tg is not None and tg < len(self.ad):
         walk = self.ad[tg]
         work = max(1, -(-s.bag // 10)) + 2 if op == "bank" else 30
@@ -50,6 +50,8 @@ World.set_cur = _set_cur
 
 CLOSE_TTK = 3               # [user plan 15 Oct, ladder 4] close dash only when my hits to kill are <= this
 WAIT_CAP = 10               # [guess] rounds of pair waiting before the take fails ("failed partner")
+PAIR_NEAR = 6               # [user plan 15 Oct, pair/trio opener; guess] group mode: attack a pair group with an ally this close
+GROUP_SEEK_CAP = 15         # [guess] group mode: rounds stepping toward a partner at a group before the take fails
 WAIT_EXCL = 30              # [guess] rounds that (farm, group) is excluded after a failed partner wait
 RETREAT_HP = 0.6            # [guess] fallback retreats from enemies within 4 below this HP fraction
 
@@ -129,13 +131,56 @@ def live_ok(w, s, h, k):
     return clear_dmg(mons, s.S, k)[1] / k <= s.hp * SURVIVE
 
 
+def handoff(w, s, o):
+    """[user plan 15 Oct, pair/trio opener] True when I should leave group o's capture to an ally. Candidates: me and
+    the visible allies within 4 of the group's spawn tiles that broadcast farm on it or join; the carry is Vesper if
+    she is one of them (she took it), else the lowest slot among them. Everyone else leaves (its reward is unsplit)."""
+    ks = []
+    for c, p, _hp, _st in s.allies:
+        k = w.ally_slot(c)
+        b = s.mem[k] if k < 5 else 0
+        if ((b & 7) == 1 and (b >> 3) == o.mi or (b & 7) == 6) and min(t.chebyshev_distance(p) for t in o.tiles) <= 4:
+            ks.append(k)
+    if not ks:
+        return False
+    vs = w.roster.index(VESPER_ID) if VESPER_ID in w.roster else -1
+    carry = vs if vs == w.slot or vs in ks else min(ks + [w.slot])
+    return carry != w.slot
+
+
+def group_go(w, s, h, o):
+    """[user plan 15 Oct, pair/trio opener] group mode, a pair group I cannot solo, monsters at full HP: None = attack
+    now (an ally within PAIR_NEAR of me); else one step toward the nearest visible ally that claims this group, or
+    toward spawn (where the partners come from) when none is visible; "failed" when nobody claims it or after
+    GROUP_SEEK_CAP such rounds. Never stands still (no waiting share)."""
+    if any(p.chebyshev_distance(s.pos) <= PAIR_NEAR for _c, p, _hp, _st in s.allies):
+        return None
+    cl = [k for k in range(min(5, len(w.roster))) if k != w.slot and (s.mem[k] & 7) == 1 and (s.mem[k] >> 3) == o.mi]
+    w.waited += 1
+    if not cl or w.waited > GROUP_SEEK_CAP:
+        w.excl[("farm", h)] = s.r + WAIT_EXCL
+        trace("exec", f"farm {tname(w, 'farm', h)} failed partner seek={w.waited} claims={len(cl)}")
+        return "failed"
+    vis = sorted((p.chebyshev_distance(s.pos), p.x, p.y) for c, p, _hp, _st in s.allies if w.ally_slot(c) in cl)
+    if vis:
+        w.step_near(V(vis[0][1], vis[0][2]), 1, s)
+    else:
+        w.step_to("home", s)
+    return "going"
+
+
 def exec_farm(w, s, h):
     o = w.G[h]
     lv = s.live.get(h)
     if lv:
         tgt = [(hp, i) for i, (_c, hp, p, _st) in enumerate(lv) if p.chebyshev_distance(s.pos) <= ME.get("range", 1)]
         hurt = any(hp < w.G_maxhp(c) for c, hp, _p, _st in lv)
-        if o.need >= 2 and not hurt and not live_ok(w, s, h, 1 + partners_near(w, s, h)):
+        sm = stack_mode(w, s.r)
+        if sm and o.need >= 2 and not hurt and not live_ok(w, s, h, 1):
+            res = group_go(w, s, h, o)          # [user plan 15 Oct, pair/trio opener] no waiting at camps
+            if res is not None:
+                return res
+        elif not sm and o.need >= 2 and not hurt and not live_ok(w, s, h, 1 + partners_near(w, s, h)):
             # pair take: wait (monsters are friendly until hit) near the group for the partner
             near = min(p.chebyshev_distance(s.pos) for _c, _hp, p, _st in lv)
             if near > 4:
@@ -179,6 +224,14 @@ def exec_farm(w, s, h):
             return "done"
         if o.st == "reward":
             onspawn = any(t == s.pos for t in o.tiles)
+            if GROUP_HANDOFF and stack_mode(w, s.r) and handoff(w, s, o):
+                # [user plan 15 Oct, pair/trio opener] not the carry: step off the spawn tiles, leave it unsplit
+                if onspawn:
+                    w.step_away(s, o.tiles)
+                o.st, o.until = "resp", s.r + o.resp
+                w.excl[("farm", h)] = s.r + EXCL        # update_groups re-reads "reward" while it is visible
+                trace("exec", f"farm {tname(w, 'farm', h)} handoff bag={s.bag} gold={s.gold}")
+                return "done"
             if onspawn:
                 w.capt = True
                 if s.bag > w.lastbag or s.gold > w.lastgold:

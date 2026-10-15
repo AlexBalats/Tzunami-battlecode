@@ -1,0 +1,200 @@
+<title>Rows Opener Replay</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* layout: board left, team panels right, transport bar above; mono for every number */
+:root {
+  --bg: #f7f6f2; --panel: #fffffd; --fg: #15171a; --fg2: #585b61; --fg3: #8a8d93; --line: #e2e0d8; --grid: #ebe9e2;
+  --wall: #cfcdc4; --hole: #e9e7df; --floor: #fbfaf6; --camp: #b58a3a; --altar: #6250d6; --spawnA: #2a78d6; --spawnB: #eb6834;
+  --A: #2a78d6; --B: #eb6834; --hp: #1baf7a; --hpbg: #e2e0d8;
+  --font: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; --mono: "IBM Plex Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #17181b; --panel: #1f2024; --fg: #eeeeea; --fg2: #b9bbc0; --fg3: #83868d; --line: #33353b; --grid: #2a2c31;
+  --wall: #3a3c42; --hole: #26282d; --floor: #1c1d21; --camp: #c99a45; --altar: #9085e9; --spawnA: #3987e5; --spawnB: #d95926;
+  --A: #3987e5; --B: #d95926; --hp: #199e70; --hpbg: #33353b; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #17181b; --panel: #1f2024; --fg: #eeeeea; --fg2: #b9bbc0; --fg3: #83868d; --line: #33353b; --grid: #2a2c31;
+  --wall: #3a3c42; --hole: #26282d; --floor: #1c1d21; --camp: #c99a45; --altar: #9085e9; --spawnA: #3987e5; --spawnB: #d95926;
+  --A: #3987e5; --B: #d95926; --hp: #199e70; --hpbg: #33353b; color-scheme: dark; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 14px; line-height: 1.45;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 18px 40px; }
+main { max-width: 1180px; margin: 0 auto; display: grid; gap: 14px; }
+h1 { font-size: 20px; font-weight: 600; margin: 0; text-wrap: balance; }
+p { margin: 0; color: var(--fg2); max-width: 75ch; }
+.eyebrow { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--fg3); font-weight: 500; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; min-width: 0; }
+.bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+button { font: inherit; padding: 5px 12px; border-radius: 4px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--A); outline-offset: 2px; }
+input[type=range] { flex: 1 1 200px; min-width: 120px; accent-color: var(--fg2); }
+.round { font-family: var(--mono); font-size: 18px; font-variant-numeric: tabular-nums; min-width: 6ch; }
+.score { font-family: var(--mono); font-variant-numeric: tabular-nums; display: flex; gap: 14px; }
+.score b { font-weight: 500; }
+.score .a { color: var(--A); } .score .b { color: var(--B); }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; }
+@media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+canvas { width: 100%; height: auto; display: block; border-radius: 4px; }
+.teams { display: grid; gap: 12px; }
+.team h2 { font-size: 13px; font-weight: 600; margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
+.team h2::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--c); }
+.ch { display: grid; grid-template-columns: 2.2em 1fr; gap: 2px 8px; padding: 6px 0; border-top: 1px solid var(--grid); font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ch .n { font-weight: 500; grid-row: span 2; align-self: center; }
+.ch .hp { height: 6px; background: var(--hpbg); border-radius: 3px; overflow: hidden; }
+.ch .hp i { display: block; height: 100%; background: var(--hp); }
+.ch .l { color: var(--fg2); display: flex; gap: 10px; flex-wrap: wrap; }
+.ch.dead { opacity: .45; }
+.log { font-family: var(--mono); font-size: 11.5px; max-height: 220px; overflow-y: auto; display: grid; gap: 2px; }
+.log div { display: grid; grid-template-columns: 4ch 2ch 1fr; gap: 8px; color: var(--fg2); }
+.log .now { color: var(--fg); }
+.log .ta { border-left: 3px solid var(--A); padding-left: 6px; } .log .tb { border-left: 3px solid var(--B); padding-left: 6px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--fg2); }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--c); margin-right: 5px; vertical-align: -1px; }
+label { color: var(--fg2); font-size: 12px; display: flex; gap: 6px; align-items: center; }
+</style>
+<main>
+  <div>
+    <div class="eyebrow" id="eyebrow"></div>
+    <h1 id="title">Stack opener on rows, round by round</h1>
+    <p id="intro"></p>
+  </div>
+  <section class="panel bar">
+    <button id="play" type="button">Play</button>
+    <button id="back" type="button" aria-label="back 10 rounds">−10</button>
+    <button id="fwd" type="button" aria-label="forward 10 rounds">+10</button>
+    <input type="range" id="scrub" min="1" max="300" value="1" aria-label="round">
+    <div class="round" id="rnum">r1</div>
+    <div class="score"><span class="a"><b id="sa">0</b> A</span><span class="b"><b id="sb">0</b> B</span></div>
+    <label><input type="checkbox" id="trails" checked> trails</label>
+    <label>speed <select id="speed"><option value="120">slow</option><option value="50" selected>normal</option><option value="15">fast</option></select></label>
+  </section>
+  <div class="layout">
+    <section class="panel">
+      <canvas id="board" width="900" height="900"></canvas>
+      <div class="legend" style="margin-top:8px">
+        <span style="--c:var(--A)">team A (stack variant)</span><span style="--c:var(--B)">team B (today's bot)</span>
+        <span style="--c:var(--camp)">camp (number = gems)</span><span style="--c:var(--altar)">altar</span><span style="--c:var(--wall)">wall</span>
+      </div>
+    </section>
+    <aside class="teams">
+      <section class="panel team" style="--c:var(--A)"><h2>Team A · stack variant</h2><div id="teamA"></div></section>
+      <section class="panel team" style="--c:var(--B)"><h2>Team B · today's bot</h2><div id="teamB"></div></section>
+    </aside>
+  </div>
+  <section class="panel">
+    <div class="eyebrow" style="margin-bottom:6px">Executor events around the current round</div>
+    <div class="log" id="log"></div>
+  </section>
+</main>
+<script>
+const G = /*DATA*/{}/*END*/;
+const M = G.map, W = M.width, H = M.height;
+const NAMES = {0: "Ryth", 1: "Vesper", 2: "Vendetta", 3: "Cassi", 4: "Issac", 5: "Stellar", 6: "Marcella", 7: "Prism", 8: "Ren", 9: "Varg", 10: "Varg"};
+const TEAMS = ["a", "b"];
+const maxR = Math.max(...TEAMS.flatMap(t => Object.values(G.teams[t].champs).flatMap(c => Object.keys(c).map(Number))));
+document.getElementById("eyebrow").textContent = `bots/strat · rows ${W}×${H} · team size ${M.team_size} · cut at round ${maxR}`;
+document.getElementById("intro").textContent = "Both bots are strat; team A runs the stack numbers (shared seed, no per-body split), team B today's defaults. Positions come from each bot's own trace, one line per champion per round.";
+const scrub = document.getElementById("scrub"); scrub.max = maxR;
+// per-champion series filled forward (a dead champion keeps its last state with hp 0)
+const series = {};
+for (const t of TEAMS) {
+  series[t] = {};
+  for (const [c, rows] of Object.entries(G.teams[t].champs)) {
+    const arr = []; let last = null;
+    for (let r = 1; r <= maxR; r++) { if (rows[r]) last = rows[r]; arr[r] = last; }
+    series[t][c] = arr;
+  }
+}
+const cv = document.getElementById("board"), ctx = cv.getContext("2d");
+const S = 900 / Math.max(W, H);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const campTiles = {}; for (const g of M.groups) for (const c of g.camps) campTiles[c.x + "," + c.y] = g;
+function drawBoard() {
+  const wall = css("--wall"), hole = css("--hole"), floor = css("--floor");
+  ctx.fillStyle = floor; ctx.fillRect(0, 0, 900, 900);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const ch = M.rows[y][x];
+    if (ch === "#") { ctx.fillStyle = wall; ctx.fillRect(x * S, y * S, S, S); }
+    else if (ch !== ".") { ctx.fillStyle = hole; ctx.fillRect(x * S, y * S, S, S); }
+  }
+  ctx.strokeStyle = css("--grid"); ctx.lineWidth = .5;
+  for (let i = 0; i <= Math.max(W, H); i += 5) { ctx.beginPath(); ctx.moveTo(i * S, 0); ctx.lineTo(i * S, H * S); ctx.moveTo(0, i * S); ctx.lineTo(W * S, i * S); ctx.stroke(); }
+  for (const [k, sp, col] of [["our_spawn", M.our_spawn, "--spawnA"], ["enemy_spawn", M.enemy_spawn, "--spawnB"]]) {
+    ctx.fillStyle = css(col); ctx.globalAlpha = .25; for (const [x, y] of sp) ctx.fillRect(x * S, y * S, S, S); ctx.globalAlpha = 1;
+  }
+  ctx.fillStyle = css("--altar");
+  for (const [x, y] of M.altars) { ctx.beginPath(); ctx.moveTo(x * S + S / 2, y * S - 2); ctx.lineTo(x * S + S + 2, y * S + S / 2); ctx.lineTo(x * S + S / 2, y * S + S + 2); ctx.lineTo(x * S - 2, y * S + S / 2); ctx.closePath(); ctx.fill(); }
+  ctx.font = `${Math.max(9, S * .75)}px ${css("--mono")}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (const g of M.groups) {
+    ctx.fillStyle = css("--camp");
+    for (const c of g.camps) ctx.fillRect(c.x * S + 1, c.y * S + 1, S - 2, S - 2);
+    const ax = g.camps.reduce((a, c) => a + c.x, 0) / g.camps.length, ay = g.camps.reduce((a, c) => a + c.y, 0) / g.camps.length;
+    ctx.fillStyle = css("--fg"); ctx.fillText(g.gems, ax * S + S / 2, (ay - 1) * S + S / 2);
+  }
+}
+function drawRound(r) {
+  drawBoard();
+  const trails = document.getElementById("trails").checked;
+  for (const t of TEAMS) {
+    const col = css(t === "a" ? "--A" : "--B");
+    for (const [c, arr] of Object.entries(series[t])) {
+      if (trails) {
+        ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.globalAlpha = .35; ctx.beginPath(); let started = false;
+        for (let k = Math.max(1, r - 12); k <= r; k++) { const s = arr[k]; if (!s || s[2] <= 0) { started = false; continue; } const px = s[0] * S + S / 2, py = s[1] * S + S / 2; if (!started) { ctx.moveTo(px, py); started = true; } else ctx.lineTo(px, py); }
+        ctx.stroke(); ctx.globalAlpha = 1;
+      }
+      const s = arr[r]; if (!s) continue;
+      const px = s[0] * S + S / 2, py = s[1] * S + S / 2, dead = s[2] <= 0;
+      ctx.beginPath(); ctx.arc(px, py, S * .55, 0, Math.PI * 2);
+      ctx.fillStyle = dead ? css("--fg3") : col; ctx.fill(); ctx.strokeStyle = css("--panel"); ctx.lineWidth = 2; ctx.stroke();
+      if (s[3] > 0) { ctx.beginPath(); ctx.arc(px + S * .45, py - S * .45, S * .28, 0, Math.PI * 2); ctx.fillStyle = css("--altar"); ctx.fill(); }
+      ctx.fillStyle = css("--panel"); ctx.font = `bold ${Math.max(8, S * .6)}px ${css("--mono")}`; ctx.fillText(initial(t, c), px, py + 0.5);
+    }
+  }
+}
+function initial(t, c) { const id = G.teams[t].ids[c]; return (NAMES[id ? id.draft : -1] || c)[0]; }
+function panel(t, r) {
+  const el = document.getElementById(t === "a" ? "teamA" : "teamB"); el.innerHTML = "";
+  for (const [c, arr] of Object.entries(series[t])) {
+    const s = arr[r]; if (!s) continue;
+    const id = G.teams[t].ids[c]; const name = NAMES[id ? id.draft : -1] || ("#" + c);
+    const d = document.createElement("div"); d.className = "ch" + (s[2] <= 0 ? " dead" : "");
+    d.innerHTML = `<div class="n">${name.slice(0, 3)}</div><div class="hp"><i style="width:${Math.min(100, s[2] / 12)}%"></i></div>` +
+      `<div class="l"><span>hp ${s[2]}</span><span>bag ${s[3]}</span><span>gold ${s[4]}</span><span>str ${s[8]}</span><span>${s[5]}${s[6] !== "None" ? " " + s[6] : ""}</span></div>`;
+    el.appendChild(d);
+  }
+}
+function logAt(r) {
+  const el = document.getElementById("log"); el.innerHTML = "";
+  const ev = TEAMS.flatMap(t => G.teams[t].events.map(e => [e[0], t, e[1], e[2], e[3]])).filter(e => Math.abs(e[0] - r) <= 25).sort((a, b) => a[0] - b[0]);
+  for (const [er, t, c, tag, txt] of ev.slice(0, 60)) {
+    const d = document.createElement("div"); d.className = (t === "a" ? "ta" : "tb") + (er === r ? " now" : "");
+    d.innerHTML = `<span>r${er}</span><span>${initial(t, c)}</span><span>${tag} ${txt}</span>`; el.appendChild(d);
+  }
+  if (!ev.length) el.innerHTML = '<div><span></span><span></span><span>no executor events within 25 rounds</span></div>';
+}
+function scoreAt(r) { let a = "0", b = "0"; for (const t of TEAMS) for (const arr of Object.values(series[t])) { const s = arr[r]; if (s) { const [x, y] = s[7].split("-"); if (t === "a") { a = x; b = y; } } } return [a, b]; }
+let cur = 1, timer = null;
+function show(r) {
+  cur = Math.max(1, Math.min(maxR, r)); scrub.value = cur;
+  document.getElementById("rnum").textContent = "r" + cur;
+  const [a, b] = scoreAt(cur); document.getElementById("sa").textContent = a; document.getElementById("sb").textContent = b;
+  drawRound(cur); panel("a", cur); panel("b", cur); logAt(cur);
+}
+scrub.addEventListener("input", () => show(+scrub.value));
+document.getElementById("back").addEventListener("click", () => show(cur - 10));
+document.getElementById("fwd").addEventListener("click", () => show(cur + 10));
+document.getElementById("trails").addEventListener("change", () => show(cur));
+const playBtn = document.getElementById("play");
+function stop() { clearInterval(timer); timer = null; playBtn.textContent = "Play"; }
+playBtn.addEventListener("click", () => {
+  if (timer) return stop();
+  if (cur >= maxR) cur = 0;
+  playBtn.textContent = "Pause";
+  timer = setInterval(() => { if (cur >= maxR) return stop(); show(cur + 1); }, +document.getElementById("speed").value);
+});
+document.getElementById("speed").addEventListener("change", () => { if (timer) { stop(); playBtn.click(); } });
+document.addEventListener("keydown", e => { if (e.key === "ArrowRight") show(cur + (e.shiftKey ? 10 : 1)); else if (e.key === "ArrowLeft") show(cur - (e.shiftKey ? 10 : 1)); else if (e.key === " " && e.target === document.body) { e.preventDefault(); playBtn.click(); } });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => show(cur));
+show(1);
+</script>
