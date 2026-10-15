@@ -1840,6 +1840,13 @@ HEAL_LOW = 0.3              # [guess] below this HP fraction with an enemy withi
 HEAL_FLOOR = 0.8            # [guess] whatever plose says (ladder: farm 3.34 beat heal 2.96 at 10 HP, 44 bag, 2 enemies)
 HEAL_WB = 15                # [guess] HEAL divisor uses min(walk back, this): far from spawn must not zero the heal
 ENGAGED_HYST = 3.0          # [guess] farm -> another farm while a live monster of mine is within CAMP_R: needs 3x
+                            # (SUNK_ON 1 replaces it: engaged ~ prog >= 0.5)
+# [IMPROVEMENTS 2, 15 Oct night] sunk progress: the current job's price in the switch test is curp x max(hy, 1 + SUNK_K
+# x w.prog) (w.prog 0..1 from 90_main prog_update), except against HEAL or under retreat_now. 0: behaviour as before.
+SUNK_ON = 1
+SUNK_K = 2.0                # [guess] a job 80 % done needs a 2.6x better alternative
+PROG_STALL = 8              # [guess] rounds without a rise of w.prog (going, not attacking / capturing / waiting /
+                            # recalling / channelling) -> the choice fails like the stuck guard (`failed stall`)
 HUNT_BAG = 30               # [guess] expected bag of a sighted enemy (sighting hunt value)
 HUNT_REVISIT = 150          # [guess; 60 -> 150 user plan 15 Oct, ladder 5: chain patrol] rounds before a patrol hunt goes back to an enemy altar I reached
 ROAM_STACK = 60             # [guess] rounds a >= 3-enemy sighting halves the no-sighting hunt
@@ -2710,7 +2717,9 @@ def choose(w, s):
         held = True
     hy = HYST
     if cur[0] == "farm" and best[1] == "farm" and best[2] != cur[1]:
-        hy = ENGAGED_HYST if engaged(s, cur[1]) else race(w)["farm_hyst"]
+        hy = race(w)["farm_hyst"] if SUNK_ON or not engaged(s, cur[1]) else ENGAGED_HYST
+    if SUNK_ON and best[1] != "heal" and not retreat_now(s):
+        hy = max(hy, 1.0 + SUNK_K * w.prog)     # [IMPROVEMENTS 2] sunk progress; HYST / farm_hyst stay the floor
     keep = held or (going and best[0] <= curp * hy) or \
            (cur[0] == "fall" and best[1] == "fall" and w.status == "going")
     if keep:
@@ -2718,7 +2727,7 @@ def choose(w, s):
     new = (best[1], best[2])
     if new == cur and w.status == "going":
         return False
-    hit = w.hit
+    hit, pg = w.hit, w.prog
     w.set_cur(new, r, s)
     if TRACE:
         t2 = ps[1] if len(ps) > 1 else (0.0, "-", None)
@@ -2728,7 +2737,7 @@ def choose(w, s):
                         f"{t2[0]:.2f} cur={curp if curp is None else round(curp, 2)} bag={s.bag} "
                         f"hp={s.hp / s.maxhp:.2f} fight={bfi:.2f} dcost={s.dcost:.0f} pl={getattr(s, 'plose', 0):.2f} ne={s.near_e} "
                         f"d={w.G[new[1]].anchor.chebyshev_distance(s.pos) if new[0] == 'farm' and new[1] in w.G else '-'} "
-                        f"from={cur[0]}:{cur[1]} hit={int(hit)}"
+                        f"from={cur[0]}:{cur[1]} hit={int(hit)} prog={pg:.2f}"
                         + (f" roam={w.roam:.2f}" if new[0] == "hunt" and new[1] != s.sa else "")
                         + "".join(f" tp={e[1].x},{e[1].y} desp={min(e[1].chebyshev_distance(q) for q in w.esp.positions())}"
                                   for e in s.enemies if new[0] == "kill" and int(e[0]) == new[1]))
@@ -2862,9 +2871,94 @@ def _set_cur(self, new, r, s):
             walk = 2 * s.pos.chebyshev_distance(t)
         work = 3
     self.deadline = r + min(walk, 150) + 10 + work
+    # [IMPROVEMENTS 2] sunk progress (prog_update): budget, walk estimate, start distance (chebyshev, set lazily)
+    self.budget, self.walk0, self.prog = self.deadline - r, walk, 0.0
+    self.d0, self.pbest, self.pstall, self.chan, self.chanlen, self.khits, self.pw = None, 0.0, 0, 0, 1, 0, 0
+    self.hp0, self.ttk0 = None, None
+    if op == "farm" and tg in self.G:
+        self.hp0 = sum(m[0] for m in mons) if self.G[tg].st == "alive" else 0.0
+    if op == "kill":
+        e = find_enemy(s, tg)
+        if e is not None:
+            self.ttk0 = max(1, -(-int(e[2]) // int(s.S)))
 
 
 World.set_cur = _set_cur
+
+
+def prog_target(w, s):
+    """The current choice's target tile for the walk fraction (None: no walk target)."""
+    op, tg = w.cur
+    if tg is None:
+        return None
+    if op == "farm":
+        return w.G[tg].anchor if tg in w.G else None
+    if op in ("bank", "hold"):
+        return w.apos[tg] if tg < len(w.apos) else None
+    if op == "ward":
+        return w.wtiles[tg] if tg < len(w.wtiles) else None
+    if op == "hunt":
+        return w.G[tg - 100].anchor if tg >= 100 else (w.apos[tg] if tg < len(w.apos) else None)
+    if op == "kill":
+        e = find_enemy(s, tg)
+        return e[1] if e is not None else None
+    if op == "join":
+        b = s.mem[tg] if tg < 5 else 0
+        if (b & 7) == 3:
+            return next((a[1] for a in s.allies if w.ally_slot(a[0]) == tg), None)
+        if (b & 7) == 1 and (b >> 3) in w.idx:
+            return w.G[w.idx[b >> 3]].anchor
+    return None
+
+
+def prog_update(w, s, hit):
+    """[IMPROVEMENTS 2, 15 Oct night] w.prog in [0, 1] for the current choice from values already at hand (chebyshev
+    to the target, s.live / o.hp, s.submitting, last turn's attack): farm = walk x 0.5 before my first hit, then 0.5
+    + 0.5 x group HP removed / group HP at the first hit; bank = walk x 0.5, then 0.5 + 0.5 x channel turns / ceil(bag
+    / 10); kill = hits / ttk (walk without a ttk); ward, join, hunt = walk; shop, heal, fall, hold = 0."""
+    op, tg = w.cur
+    p = 0.0
+    if op in ("farm", "bank", "ward", "join", "hunt", "kill"):
+        t = prog_target(w, s)
+        wf = 0.0
+        if t is not None:
+            d = t.chebyshev_distance(s.pos)
+            if w.d0 is None:
+                w.d0 = d
+            wf = 1.0 - d / w.d0 if w.d0 > 0 else 1.0
+        if op == "farm" and tg in w.G:
+            o = w.G[tg]
+            lv = s.live.get(tg)
+            if lv:
+                ghp = sum(max(0.0, hp) for _c, hp, _p, _st in lv)
+            else:
+                ghp = sum(m[0] for m in (o.hp if o.hp is not None else o.mons) if m[0] > 0) if o.st == "alive" else 0.0
+            if not w.hit:
+                w.hp0 = ghp                     # the latest group HP seen before my first hit
+                p = 0.5 * wf
+            else:
+                p = 0.5 + 0.5 * (1.0 - ghp / w.hp0) if w.hp0 else 1.0
+            if w.hp0 is not None and w.hp0 <= 0 and not w.hit:
+                p = wf                          # a cleared group: the walk (then the capture) is the job
+        elif op == "bank":
+            if s.submitting:
+                if w.chan == 0:
+                    w.chanlen = max(1, -(-s.bag // 10))
+                w.chan += 1
+                p = 0.5 + 0.5 * w.chan / w.chanlen
+            else:
+                p = 0.5 * wf
+        elif op == "kill":
+            if hit:
+                w.khits += 1
+            p = w.khits / w.ttk0 if w.ttk0 else wf
+        else:
+            p = wf
+    w.prog = min(1.0, max(0.0, p))
+    if w.prog > w.pbest + 1e-6:
+        w.pbest, w.pstall = w.prog, 0
+    else:
+        w.pstall += 1
 
 
 CLOSE_TTK = 3               # [user plan 15 Oct, ladder 4] close dash only when my hits to kill are <= this
@@ -3594,6 +3688,20 @@ else:
                 w.pair_until = r + 2 * EXCL       # no partner came: no un-partnered pair takes for a while
             w.status = "failed"
             w.same = 0
+        if SUNK_ON and w.status == "going":
+            # [IMPROVEMENTS 2] stall guard: w.prog has not risen for PROG_STALL rounds -> failed like `stuck`. Exempt:
+            # attacking / capturing / waiting last turn, recalling, channelling, a pair seek (group_go: own 10-15 round
+            # fail), and kill / shop / heal / fall / hold (own chase and timeout rules)
+            prog_update(w, s, flags[0])
+            seek = w.waited != w.pw
+            w.pw = w.waited
+            if exempt or flags[2] or seek or w.cur[0] not in ("farm", "bank", "ward", "join", "hunt"):
+                w.pstall = 0
+            elif w.pstall >= PROG_STALL:
+                trace("exec", f"{w.cur[0]} {tname(w, w.cur[0], w.cur[1])} failed stall prog={w.prog:.2f}")
+                w.excl[w.cur] = r + EXCL
+                w.status = "failed"
+                w.pstall = 0
         if w.status == "going" and r > w.deadline and not (s.recalling or s.submitting):
             trace("exec", f"{w.cur[0]} {tname(w, w.cur[0], w.cur[1])} failed timeout")
             w.excl[w.cur] = r + (KFAIL_ROUNDS if w.cur[0] == "kill" else EXCL)
@@ -3644,6 +3752,7 @@ else:
         w = WORLD
         w.cur, w.status, w.excl, w.sent, w.started, w.deadline = ("idle", None), "done", {}, -1, 0, 0
         w.claims, w.was_alive, w.same, w.stay, w.seed_until = {}, True, 0, 0, 0
+        w.prog, w.pbest, w.pstall, w.pw, w.waited = 0.0, 0.0, 0, 0, 0     # [IMPROVEMENTS 2] sunk progress (50_exec prog_update)
         w.seed, w.lowcl, w.lowsub, w.subs = None, set(), set(), {}   # opening seed (40_prices seeded), lower-slot claims, subgroups
         w.phase = None                                    # 20_champs (phase index, spike) last applied
         w.spike = False                                   # spike shift on (20_champs SPIKE_*)
