@@ -577,6 +577,11 @@ Commits of this cycle, oldest first (each message says what was a number and wha
   HEAL's (1 + enemies within 8) factor is 1 when P(lose) < 0.3.
 - ATTACKER_BONUS 1.5 on KILL of the enemy that just hit me; trapped (attacker within 2, spawn > 6, no ally within 6,
   no dash) -> no HEAL / retreat, fight it, unless HP < retreat_hp and P(lose) > 0.7.
+- Ladder 6 (after r300 everyone moved ~70 % and attacked 7-14 %; joins priced like the kill; heal at 64 % HP with
+  nobody in sight; Vesper's KILL gate blocked 4-enemy fights): JOIN a fight value = (P(win) with me - without me) x
+  fight value, only when the ally's P(lose) without me > JOIN_NEED 0.3; HEAL with no enemy within 8 is 0 at hp >= 0.5,
+  below that death cost capped at HEAL_NOENEMY_CAP 150; POSTURE economy heal 0.7 (regime many only); profile / phase
+  keys `kill_plose` (default 0.6) and `dcost_fight` (default 150), Vesper's >= 15 phase 0.95 / 30.
 
 ### What had to be code (something the price list could not express)
 - The HEAL option itself (recall priced by the death it avoids) and, after the ladder, "never recall with an
@@ -605,3 +610,41 @@ Commits of this cycle, oldest first (each message says what was a number and wha
 - The reset is cast on targets the first hit already killed (6/95): skip when target HP <= my strength.
 - The stack mode still kills us; convergence exists but nobody arrives in time. Untested idea: in defend
   posture on few maps, farm in pairs by default (join 2.0 is not enough).
+
+## 15 Oct (night): what the ladder opponents do, and the stack-farming plan (not built)
+
+Evidence from our own ladder logs (we never see their logs; only their score, our sightings and our deaths).
+
+**Their score arrives in lumps, per 50 rounds:** 0, 0, 66, 0, 66, 66 (50x50 e7f6bec9); 36, 108, 108, 0, 108 (30x30
+89889184); 66, 0, 132, 264, 198, 132 (50x50 941561fe, zero contact all game, 858-198). 66 = three wolves, 108 =
+three elks, 264 = twelve wolves: they clear a whole region and bank it in one trip. On the 71x71 (09dedc54) the first
+sighting was 5 enemies together at round 20 and all 33 stack sightings were in one altar region. All 8 of our deaths on
+the 30x30 were lone farmers caught.
+
+**Why the 5-stack beats five solo farmers** [rules numbers, docs/ECONOMY.md]:
+- Wolf 1,350 HP: one champion at 50 Str takes 27 rounds and ~530 damage (recall every two camps); five take 6 rounds
+  and ~100 damage spread, never recall.
+- Elks (36 gems / 160 gold) and packs (66 / 270) are off limits solo and trivial for five: they take the richest camps,
+  we take 22-gem wolves.
+- Nothing hunts a 5-stack; the stack hunts anything it meets.
+- Gold concentrates: one champion captures (reward split only among allies present [rules]) while the others walk to
+  the next camp, so the gold lands on the carry. That is the Vesper plan executed by five bodies.
+- Their only costs: 5 capture rounds per camp and one long bank walk, and the lumps say they pipeline it (capturer
+  stays, four start the next pull).
+
+**Our version, mostly numbers (not built):**
+- FARM price stops dividing value by bodies for the first ~150 rounds (value per body is the wrong currency when the
+  stack clears 5x faster); join 3.0 for any group an ally is already on; camps needing 2-5 bodies priced by the
+  stack's clear time (clear_damage with k = bodies present), not a solo's; bank only above ~100 gems or at the end
+  of a block. Vesper's gold multiplier already puts her on the capture tile.
+- One executor (code): capture handoff. When the last monster dies, the designated carry (Vesper, else the lowest
+  slot) stands on the spawn tile for 5 rounds; everyone else steps off the spawn tiles and starts the next camp.
+  Today every body stands on the capture, which is where a stack wastes time and why the per-body split looked right.
+- Route: the draft's blocks table ranks groups by richness per altar; raid block by block, nearest first.
+- Switch: regime few/pick -> stack; regime many with richness >= 4 groups per body -> the solo spread may still
+  out-farm it (untested). The opening seed becomes "everyone to the richest near block" in stack mode.
+- Measure first: play strat vs strat with the stack numbers on collision and corners; the win is the score at r100
+  (theirs: 66-192 by r100; ours today: 0-144).
+
+**Not addressed by this:** the stack also hunts; our farmers die to it in the 27-36%-dead games. Stack mode makes
+us the hunter instead of the hunted, which is probably the only real answer.
