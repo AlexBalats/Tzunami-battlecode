@@ -71,12 +71,15 @@ PROFILES = {
     # target that does not get closer); she also hunts fresh sightings (40_prices). Keys hunt / chase: default 0 / 3.
     # [user plan 15 Oct, ladder 5; guess] hunt phase: gold 3.0 (was 1.0), shop 0.5 (was 1.0: fewer shard trips home
     # between patrol altars), hunt 20 (was 12), heal 0.5 (HEAL price), retreat_hp 0.3 (retreat_now; default 0.6).
+    # [user plan 15 Oct, ladder 6; guess] hunt phase: kill_plose 0.95 (her KILL / HUNT gate; default KILL_PLOSE 0.6: at
+    # the enemy base with 4 enemies she read 0.9+ and dithered: take those fights), dcost_fight 30 (fight risk cap;
+    # default DCOST_FIGHT_CAP 150). Her HEAL cap and retreat_hp 0.3 stay.
     # shop 2.0 below 10 shards [user plan 15 Oct, ladder 2; guess]: she buys instead of hoarding (sat on 170-276
     # gold for 50-150 rounds with gold 3.0 out-pricing SHOP); 1.0 from 10 shards.
     1: _row(1.2, 1.6, 1.1, 0.9, 0.0, 1.0, 1.0, _TS, 0.17, 1.0, (_TS, _MS, _PS),
             ((0, {"farm": 1.5, "gold": 3.0, "kill": 0.9, "bank": 1.1, "shop": 2.0}),
              (15, {"farm": 0.4, "gold": 3.0, "kill": 2.5, "bank": 1.5, "shop": 0.5, "hunt": 20, "chase": 8,
-                   "heal": 0.5, "retreat_hp": 0.3})),
+                   "heal": 0.5, "retreat_hp": 0.3, "kill_plose": 0.95, "dcost_fight": 30})),
             alt=(_DH, _PS)),   # [user decision 15 Oct] after Treasure/Monster/Power: alternate Durability Health and Power
     # Stellar [guess all]: farm 1.5 spells deal ~77/turn vs 35 Str (2.2x), cut for cast-only-standing and 2 casts per
     # 8; bank 1.2 750 HP, fragile carrier; kill 1.2 235 burst at range 4 finishes carriers; hold 0.5 no stun;

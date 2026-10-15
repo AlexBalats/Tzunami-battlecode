@@ -24,6 +24,7 @@ P_LOSE_MAX = 0.5            # [guess] FARM / BANK / KILL price 0 when the local 
 FARM_PLOSE = 0.99           # [tuned] off: 0.65 (2 v 1) lost corners and interlock (we must contest the centre)
 HOLD_PLOSE = 0.3            # [guess] HOLD needs a clearly safe altar
 KILL_PLOSE = 0.6            # [user plan 15 Oct, ladder 2; was 0.45 tuned] fight even and slightly worse local fights
+                            # [user plan 15 Oct, ladder 6] default of the profile / phase key `kill_plose` (Vesper hunt phase 0.95)
                             # (ladder: nobody fought back; 0.5 = even; 0.99 lost 9 champions in kills)
 DEATH_EXCL = 100            # rounds a death excludes its (option, target), and kill/hold after a kill/hold death
 DEATH_MARK = 100            # rounds the team avoids a group an ally died farming (byte 7)
@@ -32,6 +33,9 @@ MY_RATE = 0.4               # [guess] floor of my gems per round in death_cost (
 DEATH_OUT = 60              # [rules] rounds out after a death
 DCOST_CAP = 300             # [guess] cap on death_cost before the bag (heal ~12 at low HP: 0.8 x 300 / 20)
 DCOST_FIGHT_CAP = 150       # [guess, user plan 15 Oct ladder 5] death cost in fight risk terms (KILL/JOIN/HUNT); HEAL keeps DCOST_CAP
+                            # [user plan 15 Oct, ladder 6] default of the profile / phase key `dcost_fight` (Vesper hunt phase 30)
+HEAL_NOENEMY_CAP = 150      # [user plan 15 Oct, ladder 6; guess] HEAL with no enemy within 8 and hp < HEAL_NOENEMY_HP: death cost cap
+HEAL_NOENEMY_HP = 0.5       # [user plan 15 Oct, ladder 6; guess] HEAL with no enemy within 8 prices 0 at hp >= this x maxhp
 ATTACKER_BONUS = 1.5        # [guess, user plan 15 Oct ladder 5] KILL multiplier on the enemy that just hit me (s.attacker)
 HOLD_TURNS = 2              # a new (option, target) is kept this many turns (unless done/failed, HEAL, retreat)
 WARD_VALUE = 4.0            # [guess] g/r of a ward placed at once (8 -> 4: at 8 it outranked every farm, 1-5 g/r)
@@ -55,6 +59,7 @@ STACK_HEAL = 0.6            # [guess] HEAL P(die) floor with >= 3 enemies within
 HEAL_PLOSE = 0.5            # [user plan 15 Oct, ladder 2] HEAL prices 0 with an enemy within 8 while my local plose <= this
 JOIN_FIGHT_R = 10           # [user plan 15 Oct, ladder 2] allies within this of a fighting ally price JOIN on its fight
 JOIN_TTK = 3                # [guess] my hits to finish a fight target I cannot see (JOIN on a fight)
+JOIN_NEED = 0.3             # [user plan 15 Oct, ladder 6; guess] JOIN a fight only when the ally's P(lose) without me > this
 LANCH_R = 8                 # [rule, 15 Oct ladder 3] Lanchester bodies: everyone within this of ME (was: within 5 of
                             # the target; kills were approved, then 3 enemies arrived from 6-8 tiles)
 HEAL_LOW = 0.3              # [guess] below this HP fraction with an enemy within 8, HEAL P(die) >= HEAL_FLOOR
@@ -69,7 +74,7 @@ HUNT_MAX = 40               # rounds a sighting hunt walks before it gives up
 # Selection (posture(), every champion locally, same inputs, no byte): draft regime few -> defend, pick / many /
 # unknown -> economy; a fresh sighting (<= SIGHT_FRESH rounds) of >= STACK_N enemies -> defend; a fresh one of <= 2
 # while we lead by > PUNISH_LEAD -> punish. Our side of an enemy: its nearest altar has draft side 0 or 1; theirs: 2.
-_PK = ("farm", "farm_their_side", "bank_risk", "kill_our_side", "kill_their_side", "hold", "shop", "join", "ward")
+_PK = ("farm", "farm_their_side", "bank_risk", "kill_our_side", "kill_their_side", "hold", "shop", "join", "ward", "heal")
 
 
 def _col(**kw):
@@ -79,7 +84,8 @@ def _col(**kw):
 
 
 POSTURE = {
-    "economy": _col(),                          # open maps: the baseline prices as they are
+    # heal 0.7 [user plan 15 Oct, ladder 6; guess]: applied on regime many only (HEAL in price_all), x the profile heal
+    "economy": _col(heal=0.7),                  # open maps: the baseline prices as they are
     # defend [guess all]: farm_their_side 0.3 their half is where the stack lives; bank_risk 1.5 cash the bag before
     # it is caught; kill_our_side 1.3 intruders on our half are near help; kill_their_side 0.5 no dives into them;
     # hold 1.3 deny tributes at contested altars; join 1.3 move in pairs.
@@ -610,6 +616,7 @@ def price_all(w, s, cl, by):
     # it into KILL, JOIN a fight and the sighting hunt alike (checked 15 Oct, ladder 4: all three multiply by kmul)
     kmul *= min(1.0, s.hp / s.maxhp / 0.6) * max(0.5, 1 - s.bag / 200)   # bag term [ladder 5: was max(0.3, 1 - bag/100)]
     fights = []                                 # (value, rounds, multiplier, P(lose), option, target): risk added below
+    kp = prof.get("kill_plose", KILL_PLOSE)     # [user plan 15 Oct, ladder 6] per-champion / phase kill gate
     for c, p, hp, bag, dd, st in s.enemies:
         ttk = -(-int(hp) // int(s.S))
         fin = ttk <= 2                          # finisher: dies in <= 2 of my hits
@@ -631,7 +638,7 @@ def price_all(w, s, cl, by):
         value = bag + 50 * g2g(r) + DENIAL
         rounds = max(0, dd - ME.get("range", 1)) + ttk
         pl = s.plose
-        if pl > KILL_PLOSE:                     # tried 15 Oct: x min(1, hp/maxhp/0.5), x0.67 carrying > 40 [measured: worse]
+        if pl > kp:                             # tried 15 Oct: x min(1, hp/maxhp/0.5), x0.67 carrying > 40 [measured: worse]
             continue
         if fin:
             w.excl.pop(("kill", int(c)), None)  # finishers ignore the kill exclusion (P(lose) vs ~0 HP is ~0)
@@ -650,7 +657,7 @@ def price_all(w, s, cl, by):
         us = s.hp * s.S + sum(x[2] * x[3] for x in s.allies if x[1].chebyshev_distance(s.pos) <= LANCH_R)
         th = s.sc * ME.get("hp", s.maxhp) * ME.get("strength", s.S)
         pl = th / max(1.0, us + th)
-        if pl <= KILL_PLOSE:                    # risk P(lose) x death_cost [user plan 15 Oct, ladder 4]
+        if pl <= kp:                            # risk P(lose) x death_cost [user plan 15 Oct, ladder 4]
             fights.append((HUNT_BAG + 50 * g2g(r) + DENIAL, wk + 5, kmul, pl, "hunt", a))
     if s.sc >= 3 and s.sage < SIGHT_LIVE:
         w.big3 = max(w.big3, r - s.sage)
@@ -669,7 +676,7 @@ def price_all(w, s, cl, by):
             # roam only with a strength lead [user plan 15 Oct; guess]: x clamp(S / 100 - 1, 0, 2); x 0.5 while a
             # sighting of >= 3 enemies is <= ROAM_STACK rounds old (a hunting team: don't wander)
             w.roam = min(2.0, max(0.0, s.S / 100 - 1)) * (0.5 if r - w.big3 <= ROAM_STACK else 1.0)
-            if pl <= KILL_PLOSE and w.roam > 0:
+            if pl <= kp and w.roam > 0:
                 fights.append((HUNT_BAG + 50 * g2g(r) + DENIAL, wk + 10, kmul * w.roam, pl, "hunt", tgt[1]))
     # HOLD: contested altar, stun or lock gold, a fresh sighting there
     if s.sc and s.sage < SIGHT_LIVE:
@@ -691,10 +698,15 @@ def price_all(w, s, cl, by):
         e = next((x for x in s.enemies if int(x[0]) & 31 == tg), None)
         ep, eb, ttk = (e[1], e[3], -(-int(e[2]) // int(s.S))) if e else (p, 0, JOIN_TTK)
         th = sum(x[2] * x[5] for x in s.enemies if x[1].chebyshev_distance(ep) <= 5)
-        us = s.hp * s.S + sum(a[2] * a[3] for a in s.allies if a[0] == c or a[1].chebyshev_distance(ep) <= 5)
-        pl = th / max(1.0, us + th)
-        if pl <= KILL_PLOSE:
-            fights.append((eb + 50 * g2g(r) + DENIAL, max(1, max(0, s.pos.chebyshev_distance(ep) - ME.get("range", 1)) + ttk),
+        uo = sum(a[2] * a[3] for a in s.allies if a[0] == c or a[1].chebyshev_distance(ep) <= 5)
+        pl0 = th / max(1.0, uo + th)            # the ally's P(lose) without me
+        pl = th / max(1.0, s.hp * s.S + uo + th)
+        # [user plan 15 Oct, ladder 6] only when the ally needs me (P(lose) without me > JOIN_NEED), and the value is
+        # marginal: (P(win) with me - P(win) without me) x the fight value (ladder: joins priced like the kill itself,
+        # ~30, so three champions ran to fights Vesper already won alone). Rounds and the join multiplier unchanged.
+        if pl0 > JOIN_NEED and pl <= kp:
+            fights.append(((pl0 - pl) * (eb + 50 * g2g(r) + DENIAL),
+                           max(1, max(0, s.pos.chebyshev_distance(ep) - ME.get("range", 1)) + ttk),
                            kmul * POSTURE["defend"]["join"], pl, "join", k))
     # [user plan 15 Oct, ladder 4] one currency for a death: death_cost = min(DCOST_CAP, 60 rounds x max(MY_RATE, my
     # best raw price this turn among FARM, KILL, JOIN a fight and HUNT)) + my bag. Raw = value / rounds, no multipliers
@@ -704,7 +716,7 @@ def price_all(w, s, cl, by):
         if v / rd > bf:
             bf = v / rd
     s.dcost = dcost = min(DCOST_CAP, DEATH_OUT * max(MY_RATE, bf)) + s.bag
-    fcost = min(DCOST_FIGHT_CAP, dcost)         # [user plan 15 Oct, ladder 5] fights risk at most 150; HEAL keeps dcost
+    fcost = min(prof.get("dcost_fight", DCOST_FIGHT_CAP), dcost)   # [user plan 15 Oct, ladder 5/6] fights risk at most 150 (key dcost_fight); HEAL keeps dcost
     for v, rd, m, pl, o, tg in fights:
         out.append(((v - pl * fcost) / rd * m, o, tg))
     # HEAL: what a death costs (death_cost: bag + 60 rounds of my best farm price) x P(die), over a recall (5) + the walk back out.
@@ -725,9 +737,18 @@ def price_all(w, s, cl, by):
         pdie = 0
     if ne8 and s.hp < HEAL_LOW * s.maxhp:
         pdie = max(pdie, HEAL_FLOOR)            # [rule, 15 Oct ladder 3] low HP near an enemy: whatever plose says
+    hc = dcost
+    if not ne8:
+        # [user plan 15 Oct, ladder 6] no enemy within 8: HEAL 0 at hp >= HEAL_NOENEMY_HP, below that the death cost
+        # is capped at HEAL_NOENEMY_CAP (ladder: 64 % HP and nobody in sight chose heal 15 over farm 10)
+        if s.hp >= HEAL_NOENEMY_HP * s.maxhp:
+            pdie = 0
+        hc = min(HEAL_NOENEMY_CAP, dcost)
     if pdie > 0 and flee_ok(s):
         wb = fget(w.F_home, s.pos) if w.F_home is not None else s.pos.chebyshev_distance(w.sp0)
-        out.append((pdie * dcost / (5 + min(wb, HEAL_WB)) * prof.get("heal", 1.0), "heal", 0))
+        # posture heal (economy 0.7) on regime many only [user plan 15 Oct, ladder 6]
+        hm = pm["heal"] if w.d and w.d.get("regime") == 2 else 1.0
+        out.append((pdie * hc / (5 + min(wb, HEAL_WB)) * prof.get("heal", 1.0) * hm, "heal", 0))
     # SHOP
     item = ME.get("target") or prof["item"]      # current build target (set by buy_all), else the first entry
     try:
