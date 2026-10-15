@@ -145,7 +145,8 @@ def prog_update(w, s, hit):
         w.pstall += 1
 
 
-CLOSE_TTK = 3               # [user plan 15 Oct, ladder 4] close dash only when my hits to kill are <= this
+CLOSE_TTK = 3               # [user plan 15 Oct, ladder 4] close dash only when my hits to kill are <= this (ranged)
+CLOSE_TTK_MELEE = 6         # [user decision 15 Oct night] melee dashers (Vale): ladder showed 0 close dashes in 5 games with 3
 WAIT_CAP = 10               # [guess] rounds of pair waiting before the take fails ("failed partner")
 PAIR_NEAR = 6               # [user plan 15 Oct, pair/trio opener; guess] group mode: attack a pair group with an ally this close
 GROUP_SEEK_CAP = 15         # [guess] group mode: rounds stepping toward a partner at a group before the take fails
@@ -454,6 +455,15 @@ def find_enemy(s, hd):
     return None
 
 
+def kban(w, hd, r):
+    """Ban target hd after a failed chase: KFAIL_ROUNDS x 2^(consecutive failures - 1), capped KFAIL_MAX; a landed hit resets."""
+    n = w.kfn.get(hd, 0) + 1
+    w.kfn[hd] = n
+    w.kfail[hd] = r + min(KFAIL_MAX, KFAIL_ROUNDS * (1 << (n - 1)))
+    if n > 1:
+        trace("exec", f"kill {hd} ban x{n} until r{w.kfail[hd]}")
+
+
 def exec_kill(w, s, hd):
     e = find_enemy(s, hd)
     if e is None:
@@ -472,6 +482,7 @@ def exec_kill(w, s, hd):
         if s.can_attack:
             try:
                 w.me.attack(c)
+                w.kfn[hd] = 0                   # a landed hit resets the failure backoff
                 w.reset_attack(c, hp)
             except Exception:
                 pass
@@ -483,7 +494,7 @@ def exec_kill(w, s, hd):
         ttk = -(-int(hp) // int(s.S))
         # a finisher chase gets 2 ttk + 2 rounds (pinned / 1 tile/turn); else the phase's `chase` (default 3)
         if w.kn >= (2 * ttk + 2 if ttk <= 2 else ME["prof"].get("chase", 3)):
-            w.kfail[hd] = s.r + KFAIL_ROUNDS    # [bug fix 15 Oct, ladder 4] finishers too; [15 Oct afternoon] 6 rounds
+            kban(w, hd, s.r)                    # [bug fix 15 Oct, ladder 4] finishers too; [15 Oct afternoon] 6 rounds; [night] backoff
             return "failed"
     else:
         w.kn = 0
@@ -492,7 +503,7 @@ def exec_kill(w, s, hd):
     # [user plan 15 Oct, ladder 4] only onto a target I kill in <= CLOSE_TTK hits, and with enemies within 8 of me
     # <= allies within 8 + 1 (ladder: dashes onto 750-HP targets, 5 hits, with 4 enemies in sight); else walk
     z = camp_zone(w, s) if kz else None         # [user decision 15 Oct] never step within KILL_CAMP_R of other camps
-    if rng < dd <= rng + 2 and -(-int(hp) // int(s.S)) <= CLOSE_TTK             and sum(1 for x in s.enemies if x[4] <= 8) <= sum(1 for a in s.allies if a[1].chebyshev_distance(s.pos) <= 8) + 1             and w.dash_to(s, lambda q: -q.chebyshev_distance(p) if q.chebyshev_distance(p) <= rng and (z is None or not z.is_set(q)) else None, "close"):
+    if rng < dd <= rng + 2 and -(-int(hp) // int(s.S)) <= (CLOSE_TTK_MELEE if rng <= 1 else CLOSE_TTK)             and sum(1 for x in s.enemies if x[4] <= 8) <= sum(1 for a in s.allies if a[1].chebyshev_distance(s.pos) <= 8) + 1             and w.dash_to(s, lambda q: -q.chebyshev_distance(p) if q.chebyshev_distance(p) <= rng and (z is None or not z.is_set(q)) else None, "close"):
         res = "no-attack"
         try:
             w.me.attack(c)
@@ -504,7 +515,7 @@ def exec_kill(w, s, hd):
     if s.st & 0x800:
         w.cast(c, False)                        # dashes and ranged spells close the gap
     if w.step_near(p, rng, s, z) == "nopath":
-        w.kfail[hd] = s.r + KFAIL_ROUNDS
+        kban(w, hd, s.r)
         trace("exec", f"kill {hd} failed camp tp={p.x},{p.y}")
         return "failed"
     return "going"

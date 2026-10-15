@@ -185,9 +185,11 @@ else:
                 w.pstall = 0
         if w.status == "going" and r > w.deadline and not (s.recalling or s.submitting):
             trace("exec", f"{w.cur[0]} {tname(w, w.cur[0], w.cur[1])} failed timeout")
-            w.excl[w.cur] = r + (KFAIL_ROUNDS if w.cur[0] == "kill" else EXCL)
             if w.cur[0] == "kill":
-                w.kfail[w.cur[1]] = r + KFAIL_ROUNDS    # a timed-out kill: finishers excluded too (40_prices KILL)
+                kban(w, w.cur[1], r)                    # a timed-out kill: finishers excluded too (40_prices KILL); backoff
+                w.excl[w.cur] = w.kfail[w.cur[1]]
+            else:
+                w.excl[w.cur] = r + EXCL
             w.status = "failed"
         for _k in range(2):
             if not (s.recalling or s.submitting) and fuel() > FUEL_FLOOR:
@@ -206,7 +208,7 @@ else:
                 break
             trace("exec", f"{op} {tname(w, op, tg)} {st}")
             if st == "failed":
-                w.excl[w.cur] = max(w.excl.get(w.cur, 0), r + (KFAIL_ROUNDS if op == "kill" else EXCL))   # keeps a longer one
+                w.excl[w.cur] = max(w.excl.get(w.cur, 0), w.kfail.get(tg, 0) if op == "kill" else r + EXCL)   # keeps a longer one
             w.status = st
             if fuel() < 900_000:
                 break
@@ -250,7 +252,7 @@ else:
         w.hit = False
         w.hvis, w.roam, w.big3 = {}, 0.0, -999                                       # hunt patrol: altar (or 100 + group) -> round I reached it
         w.lastfarm = None                                 # last farm group (50_exec camp_zone: its monsters are not avoided)
-        w.kfail = {}                                      # enemy handle -> round a chased-out kill stays excluded to
+        w.kfail, w.kfn = {}, {}                           # enemy handle -> round a chased-out kill stays excluded to; consecutive fails
         w.score = (0, 0)
         w.post = None                                     # posture column last traced
         w.ward_done, w.ward_fails = False, {}
