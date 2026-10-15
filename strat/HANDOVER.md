@@ -755,3 +755,12 @@ off, rows 0.22 on.
 
 Open: peek untested; the hunt patrol unchanged (user wants hold-and-deny from bushes instead: bush tile per altar at
 the draft, hold-from-bush executor, flee into bushes); subgroup sizes from camps off; interlock r300.
+
+## 15 Oct (night): strat2 attempt and the plans on paper
+
+`bots/strat2` (layered choice: plan by altar region, duties, danger, hot regions, commit-until-breakpoint) built in a
+20-minute box, three fix loops: clean, 3/18 vs today's bot at r300, corners 228-586, rows 198-594. Commit over
+executors without progress signals walked champions 250 turns; altar regions are 17-vs-2 groups. Not shipped; the
+shipped bot stays `2b8ec86`. Redesign in `strat/STRAT2.md` (danger, duties, commitment budget, lead + block spread,
+hot regions; one layer per commit). Pricing work for the shipped bot, to do first: `strat/IMPROVEMENTS.md` (smooth
+factors instead of gates, sunk progress in the switch, farm + carry + bank priced as one chain).
