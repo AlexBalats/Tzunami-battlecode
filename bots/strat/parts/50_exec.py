@@ -55,9 +55,94 @@ def _set_cur(self, new, r, s):
             walk = 2 * s.pos.chebyshev_distance(t)
         work = 3
     self.deadline = r + min(walk, 150) + 10 + work
+    # [IMPROVEMENTS 2] sunk progress (prog_update): budget, walk estimate, start distance (chebyshev, set lazily)
+    self.budget, self.walk0, self.prog = self.deadline - r, walk, 0.0
+    self.d0, self.pbest, self.pstall, self.chan, self.chanlen, self.khits, self.pw = None, 0.0, 0, 0, 1, 0, 0
+    self.hp0, self.ttk0 = None, None
+    if op == "farm" and tg in self.G:
+        self.hp0 = sum(m[0] for m in mons) if self.G[tg].st == "alive" else 0.0
+    if op == "kill":
+        e = find_enemy(s, tg)
+        if e is not None:
+            self.ttk0 = max(1, -(-int(e[2]) // int(s.S)))
 
 
 World.set_cur = _set_cur
+
+
+def prog_target(w, s):
+    """The current choice's target tile for the walk fraction (None: no walk target)."""
+    op, tg = w.cur
+    if tg is None:
+        return None
+    if op == "farm":
+        return w.G[tg].anchor if tg in w.G else None
+    if op in ("bank", "hold"):
+        return w.apos[tg] if tg < len(w.apos) else None
+    if op == "ward":
+        return w.wtiles[tg] if tg < len(w.wtiles) else None
+    if op == "hunt":
+        return w.G[tg - 100].anchor if tg >= 100 else (w.apos[tg] if tg < len(w.apos) else None)
+    if op == "kill":
+        e = find_enemy(s, tg)
+        return e[1] if e is not None else None
+    if op == "join":
+        b = s.mem[tg] if tg < 5 else 0
+        if (b & 7) == 3:
+            return next((a[1] for a in s.allies if w.ally_slot(a[0]) == tg), None)
+        if (b & 7) == 1 and (b >> 3) in w.idx:
+            return w.G[w.idx[b >> 3]].anchor
+    return None
+
+
+def prog_update(w, s, hit):
+    """[IMPROVEMENTS 2, 15 Oct night] w.prog in [0, 1] for the current choice from values already at hand (chebyshev
+    to the target, s.live / o.hp, s.submitting, last turn's attack): farm = walk x 0.5 before my first hit, then 0.5
+    + 0.5 x group HP removed / group HP at the first hit; bank = walk x 0.5, then 0.5 + 0.5 x channel turns / ceil(bag
+    / 10); kill = hits / ttk (walk without a ttk); ward, join, hunt = walk; shop, heal, fall, hold = 0."""
+    op, tg = w.cur
+    p = 0.0
+    if op in ("farm", "bank", "ward", "join", "hunt", "kill"):
+        t = prog_target(w, s)
+        wf = 0.0
+        if t is not None:
+            d = t.chebyshev_distance(s.pos)
+            if w.d0 is None:
+                w.d0 = d
+            wf = 1.0 - d / w.d0 if w.d0 > 0 else 1.0
+        if op == "farm" and tg in w.G:
+            o = w.G[tg]
+            lv = s.live.get(tg)
+            if lv:
+                ghp = sum(max(0.0, hp) for _c, hp, _p, _st in lv)
+            else:
+                ghp = sum(m[0] for m in (o.hp if o.hp is not None else o.mons) if m[0] > 0) if o.st == "alive" else 0.0
+            if not w.hit:
+                w.hp0 = ghp                     # the latest group HP seen before my first hit
+                p = 0.5 * wf
+            else:
+                p = 0.5 + 0.5 * (1.0 - ghp / w.hp0) if w.hp0 else 1.0
+            if w.hp0 is not None and w.hp0 <= 0 and not w.hit:
+                p = wf                          # a cleared group: the walk (then the capture) is the job
+        elif op == "bank":
+            if s.submitting:
+                if w.chan == 0:
+                    w.chanlen = max(1, -(-s.bag // 10))
+                w.chan += 1
+                p = 0.5 + 0.5 * w.chan / w.chanlen
+            else:
+                p = 0.5 * wf
+        elif op == "kill":
+            if hit:
+                w.khits += 1
+            p = w.khits / w.ttk0 if w.ttk0 else wf
+        else:
+            p = wf
+    w.prog = min(1.0, max(0.0, p))
+    if w.prog > w.pbest + 1e-6:
+        w.pbest, w.pstall = w.prog, 0
+    else:
+        w.pstall += 1
 
 
 CLOSE_TTK = 3               # [user plan 15 Oct, ladder 4] close dash only when my hits to kill are <= this

@@ -169,6 +169,20 @@ else:
                 w.pair_until = r + 2 * EXCL       # no partner came: no un-partnered pair takes for a while
             w.status = "failed"
             w.same = 0
+        if SUNK_ON and w.status == "going":
+            # [IMPROVEMENTS 2] stall guard: w.prog has not risen for PROG_STALL rounds -> failed like `stuck`. Exempt:
+            # attacking / capturing / waiting last turn, recalling, channelling, a pair seek (group_go: own 10-15 round
+            # fail), and kill / shop / heal / fall / hold (own chase and timeout rules)
+            prog_update(w, s, flags[0])
+            seek = w.waited != w.pw
+            w.pw = w.waited
+            if exempt or flags[2] or seek or w.cur[0] not in ("farm", "bank", "ward", "join", "hunt"):
+                w.pstall = 0
+            elif w.pstall >= PROG_STALL:
+                trace("exec", f"{w.cur[0]} {tname(w, w.cur[0], w.cur[1])} failed stall prog={w.prog:.2f}")
+                w.excl[w.cur] = r + EXCL
+                w.status = "failed"
+                w.pstall = 0
         if w.status == "going" and r > w.deadline and not (s.recalling or s.submitting):
             trace("exec", f"{w.cur[0]} {tname(w, w.cur[0], w.cur[1])} failed timeout")
             w.excl[w.cur] = r + (KFAIL_ROUNDS if w.cur[0] == "kill" else EXCL)
@@ -219,6 +233,7 @@ else:
         w = WORLD
         w.cur, w.status, w.excl, w.sent, w.started, w.deadline = ("idle", None), "done", {}, -1, 0, 0
         w.claims, w.was_alive, w.same, w.stay, w.seed_until = {}, True, 0, 0, 0
+        w.prog, w.pbest, w.pstall, w.pw, w.waited = 0.0, 0.0, 0, 0, 0     # [IMPROVEMENTS 2] sunk progress (50_exec prog_update)
         w.seed, w.lowcl, w.lowsub, w.subs = None, set(), set(), {}   # opening seed (40_prices seeded), lower-slot claims, subgroups
         w.phase = None                                    # 20_champs (phase index, spike) last applied
         w.spike = False                                   # spike shift on (20_champs SPIKE_*)

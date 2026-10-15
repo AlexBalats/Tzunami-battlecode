@@ -96,6 +96,13 @@ HEAL_LOW = 0.3              # [guess] below this HP fraction with an enemy withi
 HEAL_FLOOR = 0.8            # [guess] whatever plose says (ladder: farm 3.34 beat heal 2.96 at 10 HP, 44 bag, 2 enemies)
 HEAL_WB = 15                # [guess] HEAL divisor uses min(walk back, this): far from spawn must not zero the heal
 ENGAGED_HYST = 3.0          # [guess] farm -> another farm while a live monster of mine is within CAMP_R: needs 3x
+                            # (SUNK_ON 1 replaces it: engaged ~ prog >= 0.5)
+# [IMPROVEMENTS 2, 15 Oct night] sunk progress: the current job's price in the switch test is curp x max(hy, 1 + SUNK_K
+# x w.prog) (w.prog 0..1 from 90_main prog_update), except against HEAL or under retreat_now. 0: behaviour as before.
+SUNK_ON = 1
+SUNK_K = 2.0                # [guess] a job 80 % done needs a 2.6x better alternative
+PROG_STALL = 8              # [guess] rounds without a rise of w.prog (going, not attacking / capturing / waiting /
+                            # recalling / channelling) -> the choice fails like the stuck guard (`failed stall`)
 HUNT_BAG = 30               # [guess] expected bag of a sighted enemy (sighting hunt value)
 HUNT_REVISIT = 150          # [guess; 60 -> 150 user plan 15 Oct, ladder 5: chain patrol] rounds before a patrol hunt goes back to an enemy altar I reached
 ROAM_STACK = 60             # [guess] rounds a >= 3-enemy sighting halves the no-sighting hunt
@@ -966,7 +973,9 @@ def choose(w, s):
         held = True
     hy = HYST
     if cur[0] == "farm" and best[1] == "farm" and best[2] != cur[1]:
-        hy = ENGAGED_HYST if engaged(s, cur[1]) else race(w)["farm_hyst"]
+        hy = race(w)["farm_hyst"] if SUNK_ON or not engaged(s, cur[1]) else ENGAGED_HYST
+    if SUNK_ON and best[1] != "heal" and not retreat_now(s):
+        hy = max(hy, 1.0 + SUNK_K * w.prog)     # [IMPROVEMENTS 2] sunk progress; HYST / farm_hyst stay the floor
     keep = held or (going and best[0] <= curp * hy) or \
            (cur[0] == "fall" and best[1] == "fall" and w.status == "going")
     if keep:
@@ -974,7 +983,7 @@ def choose(w, s):
     new = (best[1], best[2])
     if new == cur and w.status == "going":
         return False
-    hit = w.hit
+    hit, pg = w.hit, w.prog
     w.set_cur(new, r, s)
     if TRACE:
         t2 = ps[1] if len(ps) > 1 else (0.0, "-", None)
@@ -984,7 +993,7 @@ def choose(w, s):
                         f"{t2[0]:.2f} cur={curp if curp is None else round(curp, 2)} bag={s.bag} "
                         f"hp={s.hp / s.maxhp:.2f} fight={bfi:.2f} dcost={s.dcost:.0f} pl={getattr(s, 'plose', 0):.2f} ne={s.near_e} "
                         f"d={w.G[new[1]].anchor.chebyshev_distance(s.pos) if new[0] == 'farm' and new[1] in w.G else '-'} "
-                        f"from={cur[0]}:{cur[1]} hit={int(hit)}"
+                        f"from={cur[0]}:{cur[1]} hit={int(hit)} prog={pg:.2f}"
                         + (f" roam={w.roam:.2f}" if new[0] == "hunt" and new[1] != s.sa else "")
                         + "".join(f" tp={e[1].x},{e[1].y} desp={min(e[1].chebyshev_distance(q) for q in w.esp.positions())}"
                                   for e in s.enemies if new[0] == "kill" and int(e[0]) == new[1]))

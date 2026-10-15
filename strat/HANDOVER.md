@@ -764,3 +764,35 @@ executors without progress signals walked champions 250 turns; altar regions are
 shipped bot stays `2b8ec86`. Redesign in `strat/STRAT2.md` (danger, duties, commitment budget, lead + block spread,
 hot regions; one layer per commit). Pricing work for the shipped bot, to do first: `strat/IMPROVEMENTS.md` (smooth
 factors instead of gates, sunk progress in the switch, farm + carry + bank priced as one chain).
+
+## 15 Oct (night): change 2 sunk progress (`SUNK_ON` 1, strat/IMPROVEMENTS.md section 2)
+
+What was a number (40_prices): `SUNK_ON` 1 (0 = the old behaviour; checked: identical r300 games on 4/6, the other
+two drift from file length / fuel timing only), `SUNK_K` 2.0, `PROG_STALL` 8. ENGAGED_HYST 3.0 is unused while SUNK_ON.
+
+What was a rule (code):
+- `set_cur` (50_exec) records `w.budget` (deadline - start), `w.walk0` (its walk estimate), `w.prog` 0 and the
+  progress counters; `prog_update` (50_exec, called from 90_main before `choose` each turn while going) sets `w.prog`
+  in [0, 1] from values already at hand, no path calls: walk fraction = 1 - chebyshev(target) / chebyshev at the
+  first update; farm = 0.5 x walk before my first hit, then 0.5 + 0.5 x group HP removed / group HP at the first hit
+  (`s.live`, else `o.hp`); a group already cleared: the walk alone; bank = 0.5 x walk, then 0.5 + 0.5 x channel turns
+  / ceil(bag / 10) (turns counted while `s.submitting`); kill = hits / ttk at the choice; ward, join, hunt = walk;
+  shop, heal, fall, hold = 0.
+- `choose`: hysteresis = max(hy, 1 + SUNK_K x prog) unless the best option is HEAL or `retreat_now`; hy = HYST, or
+  the race row's farm_hyst for farm -> farm (the floor). HOLD_TURNS, the kill chase hold, the seed hold and the flip
+  lock are untouched.
+- Stall guard (90_main): prog not risen for PROG_STALL rounds while going -> failed, excluded EXCL (trace
+  `failed stall prog=`). Exempt: attacked / captured / waited last turn, recalling, channelling, a pair seek
+  (`w.waited` moved: group_go has its own fail), and kill / shop / heal / fall / hold (own chase / timeout rules).
+  The `same >= 20` stuck guard stays as a backstop.
+- Trace: `prog=` (the old choice's progress at the switch) on every `choice` line.
+
+Check [measured, cambc 2.1.5, vs tzunami444]: r300 bench 6/6 ahead (base 5/6), worst map corners +222 mean (base
+packs +182); per game base -> sunk: collision A +242 -> +330, B +198 -> +220; corners A +154 -> +154, B +380 -> +290;
+packs A +368 -> +236 (SUNK_ON 0 gives the same +236: fuel timing, not the rule), B -4 -> +224. 0 err lines; fuel
+median 1.13-1.35M, max 2.37M. Full games: collision W 1118-524 at r847 (base W 1044-482 at r884); packs W 1004-316
+at r622 (base W 1000-88 at r562). Trace (full games, base -> sunk): farm -> farm before a hit collision 22 -> 15, packs
+17 -> 15; choices per 100 rounds per champion collision 17.0/12.8/10.5 -> 12.2/19.5/10.9, packs 9.1/14.8/12.1 ->
+8.7/19.5/12.7 (Vesper's rise is the pre-existing hunt/farm alternation when a hunt stops pricing on sight, cur=None);
+failed stuck 0+1 -> 0+0, failed stall 2 (collision, farm g14 one tile short) + 4 (packs, Vesper's patrol hunt g5
+idling 4 tiles out: caught in 8 rounds instead of HUNT_MAX 40).
