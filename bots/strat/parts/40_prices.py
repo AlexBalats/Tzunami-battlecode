@@ -132,7 +132,7 @@ HUNT_MAX = 40               # rounds a sighting hunt walks before it gives up
 # [user plan 15 Oct night, ladder 1a406974] converge-or-leave: a fresh stack sighting at an altar on our side or
 # contested -> every champion computes one team decision from the shared bytes (centre()): CONVERGE (all to a rally
 # tile on our side, wait for the team, step in) or LEAVE (that region's farm / hold / ward / bank priced 0). 0 = off.
-CENTRE_ON = 1
+CENTRE_ON = 0
 CENTRE_MIN_SC = 3           # [measured 15 Oct night, deviation] the trigger needs >= this many enemies seen together even
                             # where STACK_N_FEW makes a pair "the stack" (collision S=3: pair sightings fired converge
                             # every ~30 rounds, full game B +810 -> +124 vs tzunami444); 0 = stack_n() only (the spec)
