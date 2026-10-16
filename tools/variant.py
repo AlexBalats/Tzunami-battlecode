@@ -2,7 +2,7 @@
 
 Usage (from the repo root):
     python -I tools/variant.py SRC_BOT NAME KEY=VALUE [KEY=VALUE ...]
-    python -I tools/variant.py --from-snapshot bots/_snap-tzu-pre NAME KEY=VALUE [...]
+    python -I tools/variant.py --from-snapshot bots/_snap-strat-2b8ec86 NAME KEY=VALUE [...]
 
 Copies bots/SRC_BOT/src/main.py (and pyrightconfig.json) to bots/_var-NAME/ (git-ignored) and
 rewrites assignments in that one file. Then: python -I tools/arena.py _var-NAME OTHER_BOT
@@ -104,7 +104,7 @@ def set_entry(src, key, entry, value):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--from-snapshot", metavar="DIR", help="source bot folder (e.g. bots/_snap-tzu-pre) instead of SRC_BOT")
+    ap.add_argument("--from-snapshot", metavar="DIR", help="source bot folder (e.g. bots/_snap-strat-2b8ec86) instead of SRC_BOT")
     ap.add_argument("args", nargs="+", help="[SRC_BOT] NAME KEY=VALUE ...")
     a = ap.parse_args()
     args = list(a.args)

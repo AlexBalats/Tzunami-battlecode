@@ -1,6 +1,6 @@
 # Lessons: what works, what it costs, what to reuse
 
-General findings from building tzunami, the probe and v2 (S0–S3), written 13 Oct 2026 on cambc 2.1.4. Use it when starting any new bot version or a big rewrite. Tags as in `CLAUDE.md`: **[rules]** handbook, **[sdk]** SDK code, **[measured]** our matches. Step-by-step status lives in `docs/V2_PLAN.md`; this file keeps only what outlives a step.
+General findings from building tzunami, the probe and v2 (S0–S3), written 13 Oct 2026 on cambc 2.1.4. Use it when starting any new bot version or a big rewrite. Tags as in `CLAUDE.md`: **[rules]** handbook, **[sdk]** SDK code, **[measured]** our matches. Step-by-step status lives in `docs/archive/V2_PLAN.md`; this file keeps only what outlives a step.
 
 ## 1. Fuel: the constraint behind every design choice
 
@@ -66,7 +66,7 @@ General findings from building tzunami, the probe and v2 (S0–S3), written 13 O
 - **Value casts in one currency:** damage-equivalent HP (a stun is worth the stunned monster's next hit, a shield what it soaks). Then the best cast is a max over the slots.
 - **Cheap pessimistic estimate first, exact one in the background:** `quick_clear` gates decisions until `sim_clear` has run. Skip hopeless cases (monolith) outright.
 - **Shared-fight detection for free:** if a monster's HP dropped between our turns, someone else is hitting it.
-- **Every bug becomes a trace column first.** Fix it, then re-run all 9 maps × 2 sides.
+- **Every bug becomes a trace column first.** Fix it, then re-run every map × 2 sides.
 
 ## 5. Reusable components (all in `bots/v2/src/main.py`)
 
@@ -87,6 +87,6 @@ General findings from building tzunami, the probe and v2 (S0–S3), written 13 O
 
 - Matches are deterministic: one run per (map, side) is enough. Re-run only after a code change.
 - **Isolate first** (vs `null`), then against `starter-python`, then the mirror (`v2` vs `v2`), then the arena.
-- **Judge on all 9 maps from both sides, worst map first.** Tournament maps are unseen: no map names or coordinates in code.
+- **Judge on every map from both sides, worst map first.** Tournament maps are unseen: no map names or coordinates in code.
 - **Read the trace of one game before believing a table.** Every S3 table anomaly turned out to be one specific turn: a skipped turn, a self-cast built as a `Vec2(None)`, or splash geometry.
 - **Watch it.** `cambc run A B --map M --view` serves the replay at `http://127.0.0.1:7026`. The score alone hides behaviour: e.g. v2 "lost" 0–0 to null only on the tiebreak.

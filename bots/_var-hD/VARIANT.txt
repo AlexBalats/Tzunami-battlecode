@@ -1,2 +1,0 @@
-from bots\strat
-GROUP_CAMP_SIZES=0

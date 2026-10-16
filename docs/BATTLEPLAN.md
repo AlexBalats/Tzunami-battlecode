@@ -1,6 +1,6 @@
 # Battle plan: the five pillars
 
-The master plan for our bot (`bots/tzunami444`), written 13 Oct 2026. It turns the five pillars agreed with the team into rules we can build and test:
+The master plan for our bot, written 13 Oct 2026 for `bots/tzunami444`. **Since 14 Oct the plan of record is the v2 section just below** (`bots/tzunami-lite`); the five pillars after it are the background it draws on. It turns the five pillars agreed with the team into rules we can build and test:
 
 1. draft and opening;
 2. general behaviour rules;
@@ -11,6 +11,76 @@ The master plan for our bot (`bots/tzunami444`), written 13 Oct 2026. It turns t
 `STRATEGY.md` holds the game model and the principle table. This file is the **plan of record for what we build, in what order, and how each piece is tested**.
 
 Tags as everywhere: **[rules]**, **[sdk]**, **[measured]**, **[provisional A#]**. Principles are cited as P# (`ART_OF_WAR.md`). Every rule below is a config switch and gets an arena A/B: all maps, both sides, worst map included.
+
+---
+
+## v2: `bots/tzunami-lite` (agreed 14 Oct; ship candidate since 14 Oct late)
+
+**Why a v2.** tzunami444 beats the starter 18W/0L, but it did poorly on the ladder (no numbers to hand, so the reasons below are judgement, not measurements). The ladder map pool is byte-identical to our 9 local maps (sha256, 14 Oct), so the losses come from opponents, not maps. tzunami444 is ~1,100 lines of special cases, and every fix interacts with the others (only 10W/8L vs its own no-take version). v2 is a **rewrite from a simple core, built up one measured layer at a time**. It reuses the proven parts of tzunami444 (cached distance fields, `seen_champions`, `reachable`, spawn-tile and contested-capture lessons). tzunami444 stays as the sparring partner.
+
+**HFT framing.** Latency is rounds: every round a body stands still or walks without purpose is money lost. Hot path (walk, hit, capture) is tiny and fixed-cost. Cold path (fights, endgame) is small. Precompute in the draft (24.6M fuel on turn 1 [measured]). Measure boot round, fuel per turn, idle rounds and walking rounds.
+
+**2.1.6 changed the boot cost (A48).** The engine now pre-loads every module except `main.py` before the game starts, so tzunami444 boots inside round 1 instead of round 57 [measured locally, 14 Oct]. Code size no longer costs boot. It still costs reading and bugs, so v2 stays small, but per-turn fuel is now what counts. Module top-level code runs at build time: no game calls at import, and `main.py` holds only the entry loop.
+
+### The layers (each one kept only if it beats the previous one in the arena)
+
+| Layer | Rule | Principle |
+| --- | --- | --- |
+| **L0 core** | Each body goes to its best camp by gems per round (gems ÷ (walk + clear + capture rounds)). Gem clusters first (500 HP, 0 damage), soloable wolves second, never elk or monolith alone. Cached distance fields | P2 speed, P9 easy targets |
+| **L1 spread + swarm** | One claim byte per body splits bodies over different camps. If a live camp is within a few tiles of several allies, they all hit it; the body on the spawn tile captures and the others leave the moment it dies (the reward is split among those present, so staying wastes 5 rounds) | P10 concentrate, P13 |
+| **L2 banking** | No fixed bag size. Bank when the detour via the altar (me → altar → next target, minus me → next target) is ≤ ~6–7 tiles. Always bank when carried + tributed ≥ 1,000 (instant win), when carrying a big bag and an enemy was seen recently, and in the endgame before round 2,000 | P2, P11 |
+| **L3 recall, never walk home** | Threat radius is **7**, not 3: spells reach 4 (Cassi, Stellar, Marcella, Tavi, Prism, Ren, Ryth's stun) plus 1 walk plus a 2-tile dash. Start a recall when no enemy is within 7 and no awake camp within 3; `cancel_recall()` if an enemy comes within 7. Walk home only if spawn is ≤ 5 tiles away. Triggers: low HP, gold ≥ one item, a big bag with an altar next to spawn | P4 make yourself invincible first |
+| **L4 shop** | Buy whenever at spawn or dead and gold allows. One stat per champion: farmers Strength (camp damage), tanks Health, Cassi Focus. **Measured 14 Oct: one DUAL build (5 Monster Strength + 5 Jungle Health, then Power Strength) on every body but Cassi beats the per-role builds** (A14) | P2 |
+| **L5 fight** | Fight an enemy at ≤ 70% HP. Guards: always take a kill we can finish this turn; never fight outnumbered in view; fight back against a melee champion that is hitting us (walking away from melee fails) | P8 strike the weak, P4 |
+
+**Status (14 Oct): L0–L5 all built**, each a switch in `config.py`. Measured changes to the plan above: L5 fights at any HP within 6 tiles when we win the race (≤ 70% HP and radius 4 were worse), we **flee** when outnumbered, and we do **not** fight back at adjacent melee (+6 deaths/game). Hot-camp memory keeps a healing body out of an awake camp's range. Results: vs starter 18W/0L; vs tzunami444 9W/9L. The remaining gap is farming speed on elk maps (`HANDOFF.md`).
+
+**Status (14 Oct, night): new ship candidate** with the `stand_tile` fuel fix and `TAKE_OVER_TRIPS` on: vs tzunami444 **62W/10L, +335 ± 34**, worst map expanse +103; vs the starter 72W/0L (`HANDOFF.md` → 14 Oct (night)). **Status (14 Oct, late): ship candidate.** Pairs are built (`SQUADS`, `LAYOUT = "pairs"`), pairs capture together and split the reward (`SQUAD_SPLIT`, A53), and L4 is now one build for every body but Cassi (`DUAL`, A14). Over 4 salts (`tools/seeds.py`, 72 games): vs tzunami444 **61W/11L, +297 ± 32**, worst map elkring +27 (it was 9W/9L in one arena run this morning, 53W/19L +100 seeded before DUAL). Measured worse and switched off: `ENGAGE` (A54), `ESCAPE` (A56), trios on CONTEST maps, a draft opening per squad. Full table: `HANDOFF.md` → 14 Oct (late).
+
+**Death is the costliest event** [rules]: 60 rounds out, the killer takes every carried gem + 50 gold. Every layer is judged on deaths and gems lost as well as gems per round.
+
+### Draft (1,024 bytes) and the three opening strategies
+
+The draft instance picks **first** on every draft turn (a draft that runs out of fuel before picking gets random picks), then plans with what fuel is left. The plan module must not be named `draft` (A27).
+
+**Picks.** Cassi & Issac are in every comp (user's call, 14 Oct). Rules arithmetic per body on a gem cluster: Vendetta ~79 camp DPS, 12 rounds clear + capture, 2.0 gems/round; Cassi ~47, 16 rounds, 1.5; Issac ~45, 17 rounds, 1.4. Split, the pair makes ~2.9 gems/round on clusters; together they take wolves (Cassi alone on a wolf ends at ~140 of 700 HP, and their deaths are linked), Issac tanks. Default comps, to A/B:
+- size 3: Cassi & Issac, Vendetta, Ryth;
+- size 4: + Varg;
+- size 5: + Stellar or Marcella.
+
+**Map strategy, one byte, chosen from map features in the draft** (user's design, 14 Oct). Each strategy is a parameter set in `config.py` keyed by the strategy id:
+- **FARM:** an altar is close to our spawn and clearly nearer us than them, with camps near it. Spread out, farm our side first (P9), bank at the home altar.
+- **CONTEST:** the only altars are central or equidistant (e.g. one altar in the middle). Move in pairs, farm near the centre, bank together, looser fight threshold around the altar; altar locks later (P10, P11).
+- **ROAM:** altars and camps are scattered or far (big maps where every group is far from spawn). Maximum spread, bank at any altar en route with a bigger detour allowance, recall-heavy.
+
+The thresholds come from dumping the features of all 9 maps; then each strategy is forced on all maps in the arena to check the classifier picks the best one. No map names or coordinates in code (rule 8): only features.
+
+**Draft memory layout (1,024 bytes, read-only after the draft).** Header: version, number of bodies, picks, strategy id. Per camp group (~8 bytes): anchor tile, gems, gold, HP, walking distance from our spawn, nearest altar and its distance, which side it's on. Opening targets per body: the first 2–3 groups, no overlap, our side first. **As built (14 Oct, `plan.py`):** version, group count, strategy, n, sorted body types, one opening group per body. Each draft turn calls `submit()` **before** `pick()`: submit after pick raises *"Memory access requires the owning team's input boundary"* [measured, 2.1.6].
+
+### Shared memory (8 bytes, live)
+
+- Bytes 0–5: one per body: 6-bit target group + 2-bit status (farm / home / fight / dead).
+- Bytes 6–7: one beacon: 2-bit kind (SOS / prey / danger), 2-bit round stamp, 12-bit cell (x//2 + (y//2)×50).
+
+### Testing
+
+Arena vs `starter-python`, vs `tzunami444`, and later a small "hunter" sparring bot that chases carriers. Old versions via `NAME@REV`. Metrics: boot round, gems by round 300, deaths, gems lost, and the worst map. Each layer stays only if it beats the previous one.
+
+### Build order
+
+1. L0 core + picks + strategy byte (strategy not yet used): beat the starter on 9/9 maps, both sides.
+2. L1, L2, L3, L4 one at a time, each A/B'd.
+3. L5 fights. Then comp A/B and strategy thresholds. Done 14 Oct (1–3 built; comp and strategy A/B still to do).
+4. **Pairs and engagement (agreed 14 Oct, next).** See below.
+
+### Pairs and engagement (agreed 14 Oct)
+
+**Status (14 Oct, late):** pairs built and kept, with the pair capturing together (`SQUAD_SPLIT`). Engagement as built (`ENGAGE`: fight or retreat to the team by a strength comparison) lost badly (salt 0: 5W/13L, −164) and is off; it needs a new design, ideally after watching the ladder's best teams fight. The draft still picks FARM/CONTEST/ROAM; a separate opening per pair was worse (45W/27L vs 53W/19L) and was dropped. Trios on CONTEST maps (`STRAT_LAYOUT`) were worse too.
+
+
+- **Pairs are the basic unit.** Cassi & Issac always together (Issac tanks, Cassi hits from range; they die together [rules]). Other bodies pair as tank + damage; an odd body plays solo. The tank leads: it chooses the target with the pair's combined dps and its own HP; the partner reads the tank's claim byte and follows. Group takes (`take()`, tank pulls, stand tiles) become the pair's normal way of clearing. If the partner is dead or home, play solo. **Elks are team jobs**, never solo grinds with heal trips (on elkring a half-cleared solo elk gets finished and captured by the enemy).
+- **Engagement.** 1v1: the stronger side fights, the weaker retreats. If they are grouped and we are solo, retreat **towards our team**, then re-evaluate together: fight, or at least trade deaths (a kill pays their bag + 50 gold [rules]). A side's strength is to be defined from what a body sees (e.g. sum of dps x sum of HP, Lanchester-style) plus the value of the bags at stake: provisional, A/B it.
+- **Draft.** FARM/CONTEST/ROAM is still chosen per map; the draft also plans the pairs and an opening per pair.
 
 ---
 
@@ -228,6 +298,7 @@ Generic ability use:
 - Tanks: Jungle emblem (−30% camp damage), then Health; Ryth gains Strength from Health anyway.
 - After that, Power shards (6 shards' stats for 5).
 - A/B against the current build (5 Monster Strength + 5 Jungle Health) per role.
+- **Measured 14 Oct (tzunami-lite, 4 salts vs tzunami444):** the DUAL build (5 Monster Strength + 5 Jungle Health, then Power Strength) on every body but Cassi (Focus) took the record from 53W/19L, +100 to 60W/12L, +241. The per-role build left the tanks with no extra damage. Shipped: `BUILD_DEFAULT = DUAL`.
 
 **Test:** per-champion gems per round and deaths across comps. Each special is a switch.
 
@@ -316,7 +387,7 @@ Nine tiles × a few units should be cheap; measure it with `TRACE`.
 
 ## Fuel: how we stay inside 2.5M per turn
 
-Facts **[measured]** (cambc 2.1.5, `ARCHITECTURE.md`):
+Facts **[measured]** (cambc 2.1.5, `ARCHITECTURE.md`; 2.1.6 moved the boot cost out of the game, A48):
 
 | Cost | Fuel |
 | --- | --- |

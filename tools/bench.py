@@ -4,7 +4,7 @@ Usage (from the repo root):
     python -I tools/bench.py BOT [--vs OPP1,OPP2,...] [--maps m1,m2,...] [--jobs N]
                                  [--label NAME] [--baseline RUN_DIR_OR_LABEL] [--fresh] [--rounds N]
 
-Defaults: --vs starter-python,tzu; every maps/**/*.map26a; --jobs = CPU count - 1.
+Defaults: --vs starter-python,tzunami444; every maps/**/*.map26a; --jobs = CPU count - 1.
 BOT/OPP are folders in bots/ (or NAME@REV, as in tools/arena.py). An opponent that doesn't
 exist or doesn't build is reported and skipped.
 
@@ -30,7 +30,7 @@ import argparse, concurrent.futures, csv, datetime, glob, hashlib, json, os, sta
 import re, subprocess, sys, time, zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from arena import ROOT, BOTS, MAPS, find_cambc, resolve_bot, source_hash, file_hash  # noqa: E402
+from arena import ROOT, BOTS, MAPS, RUN_FLAGS, find_cambc, load_stats, resolve_bot, source_hash, file_hash  # noqa: E402
 
 OUT = os.path.join(ROOT, "runs", "bench")
 CACHE = os.path.join(OUT, "cache")
@@ -104,7 +104,7 @@ def play(cambc, job):
     os.makedirs(job["dir"], exist_ok=True)
     stats_path = os.path.join(job["dir"], "stats.json")
     cmd = [cambc, "run", "bots/" + job["blue"], "bots/" + job["red"], "--map", job["map_path"], "-o", job["dir"],
-           "--statistics", stats_path] + (["--rounds", str(job["rounds"])] if job["rounds"] else [])
+           "--statistics", stats_path] + RUN_FLAGS + (["--rounds", str(job["rounds"])] if job["rounds"] else [])
     try:
         proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=job["timeout"])
         log = proc.stdout + proc.stderr
@@ -132,8 +132,7 @@ def play(cambc, job):
                "cap_round": cap, "cap_margin": m, "secs": round(time.time() - t0, 1),
                "bundle": os.path.relpath(bundle, ROOT)}
         if os.path.exists(stats_path):  # the game ended before the cap: keep the per-champion counts
-            with open(stats_path) as f:
-                s = json.load(f)
+            s = load_stats(stats_path)
             mine = [c for c in s["champions"] if c["team"] == us]
             row.update(kills=sum(c["kills"] for c in mine), deaths=sum(c["deaths"] for c in mine),
                        gold=sum(c["earnedGold"] for c in mine), crashes=s["botFaults"][us],
@@ -144,8 +143,7 @@ def play(cambc, job):
         return row
     if not os.path.exists(stats_path):
         return {"error": log.strip().splitlines()[-1] if log.strip() else "no output"}
-    with open(stats_path) as f:
-        s = json.load(f)
+    s = load_stats(stats_path)
     teams = {t["team"]: t for t in s["teams"]}
     mine = [c for c in s["champions"] if c["team"] == us]
     winner = {"teamA": 0, "teamB": 1}.get(s["outcome"])
@@ -268,7 +266,7 @@ def diff(rows, base, label):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("bot")
-    ap.add_argument("--vs", default="starter-python,tzu")
+    ap.add_argument("--vs", default="starter-python,tzunami444")
     ap.add_argument("--maps", help="comma-separated map names (default: all in maps/)")
     ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) - 1))
     ap.add_argument("--label", help="run folder name under runs/bench/ (default: timestamp)")
@@ -290,7 +288,7 @@ def main():
                                                     ", ".join(all_maps)))
 
     def build(name):
-        b = subprocess.run([cambc, "build", "bots/" + name], cwd=ROOT, capture_output=True, text=True)
+        b = subprocess.run([cambc, "build", "--release", "bots/" + name], cwd=ROOT, capture_output=True, text=True)
         return None if b.returncode == 0 else (b.stdout + b.stderr).strip().splitlines()[-1:] or ["build failed"]
 
     err = build(bot)

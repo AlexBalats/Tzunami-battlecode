@@ -1,3 +1,0 @@
-from bots\_snap-tzu-pre
-INT_ON.HUNT=True
-INT_ON.JOIN=True

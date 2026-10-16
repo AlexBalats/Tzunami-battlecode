@@ -4778,7 +4778,7 @@ result = bc.game_map.camp(position)
 def camp_groups() -> tuple[CampGroup, ...]
 ```
 
-Camp groups (empty during the draft).
+Camp groups, also available during the draft.
 
 Inspect map geometry when choosing a route or objective.
 

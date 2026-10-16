@@ -1,3 +1,0 @@
-from bots\strat
-GROUP_BANK_X=4.0
-GROUP_SHOP_GOLD=0

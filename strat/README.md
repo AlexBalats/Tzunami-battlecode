@@ -4,8 +4,10 @@
 
 **The bot that is on the ladder is `bots/strat`.** `bots/strat-imp` is a frozen copy of the build uploaded on
 15 Oct evening as the ladder entry "strat imp" (`submissions/strat-imp.zip`): only `src/main.py`, no parts, do not
-edit it; rebuild it from `bots/strat` when the next version goes up. Everything older (`bots/tzunami444`, `tzu`,
-`core`, `v2`, `strat2`) is kept for history and is not developed (`docs/HANDOFF.md`, 14 Oct entries, say why).
+edit it; rebuild it from `bots/strat` when the next version goes up. `bots/tzunami444` is kept as a
+sparring partner. `tzu`, `core`, `v2`, `strat2` and the committed scratch copies (`_var-*`, `_snap-*`, ...) were
+removed from the tree on 16 Oct and live in git history (`bots/README.md` says how to bring one back; why each was
+dropped: `docs/HANDOFF.md`, 14 Oct entries). Since 16 Oct the workspace is on cambc 2.2.2 (`docs/HANDOFF.md` top).
 
 | what | where |
 | --- | --- |

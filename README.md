@@ -29,8 +29,8 @@ Our bots are built around Sun Tzu's *Art of War*. Each principle has to earn its
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install cambc==2.1.5      # SDK version pinned in cambc.toml
-.venv/bin/cambc run starter-python starter-python --map expanse --statistics replays/stats.json
+.venv/bin/python -m pip install cambc==2.2.2      # SDK version pinned in cambc.toml
+.venv/bin/cambc run starter-python starter-python --map expanse --statistics replays/stats.json --json --release
 .venv/bin/cambc view                              # opens the most recent replay
 ```
 

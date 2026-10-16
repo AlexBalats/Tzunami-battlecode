@@ -1,4 +1,4 @@
-"""Count invariant violations (docs/design/INVARIANTS.md, I1..I18) in replay bundles.
+"""Count invariant violations (docs/archive/design/INVARIANTS.md, I1..I18) in replay bundles.
 
 Usage: python -I tools/invariants.py RUN_DIR_OR_BUNDLE [more...] [--team A|B|both] [--only I1,I9]
                                      [--verbose] [--strict]

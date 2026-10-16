@@ -36,7 +36,7 @@ Each phase has a "done when" so we know when to stop polishing and move on.
 
 ### Phase 0: Tools (13–14 Oct)
 
-- Install the `cambc` CLI in a venv (`pip install cambc`; we're on 2.1.5 since 13 Oct, pinned in `cambc.toml`).
+- Install the `cambc` CLI in a venv (`pip install cambc`; pinned in `cambc.toml`: 2.1.5 on 13 Oct, 2.1.6 on 14 Oct, 2.2.2 on 16 Oct).
 - Run `starter-python` vs itself on a couple of maps and watch one replay (`--view`).
 
 **Done when:** both of us can run a match and open a replay.

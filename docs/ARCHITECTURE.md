@@ -77,6 +77,8 @@ bots/tzunami444/
 
 ## The turn pipeline
 
+v2 (`bots/tzunami-lite/src/`: `main.py`, `core.py`, `world.py`, `plan.py`, `config.py`) runs a simpler fixed order in `core.play()`: sense → shop on spawn → fight → flee → survive (out of camp range, mode 1) → bank → heal → farm. The steps below are the general design.
+
 1. **Sense.** Update `world`: our state, visible champions (position, HP, gems, last seen), visible camp states, altar locks, score.
 2. **Read comms.** Decode the 8 shared bytes (sightings, claims, rally).
 3. **Channels.** If tributing, recalling or teleporting, decide whether to keep going or cancel (e.g. a recall that will be interrupted anyway).

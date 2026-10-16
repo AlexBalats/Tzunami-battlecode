@@ -17,3 +17,10 @@ runs/
 submissions/*.zip
 !submissions/strat.zip
 !submissions/strat-imp.zip
+
+# local scratch (16 Oct): every bots/_* folder is a generated copy (arena NAME@REV snapshots, seeds.py
+# salts, variant.py variants, bench copies), rebuilt on demand and never committed; map generator cache;
+# other teams' downloaded replays
+bots/_*/
+tools/mapgen/.cache/
+replays_from_others/

@@ -22,6 +22,8 @@ ended "full" or "stuck", and back-and-forth steps (osc). Then these tables:
 --summary prints one line per (map, side) instead: g/r, deaths, gems lost, captures, banks, suspended
 and error turns, and the invariants (tools/invariants.py) with the most violations.
 Matches are deterministic, so one run per (map, side) is enough. --no-run re-scores runs/<keep>/ as is.
+Needs a bot that prints a `t` line every turn (the retired tzu/v2 format). strat and tzunami-lite don't, so they show
+"NO TRACE" [measured 16 Oct]: use tools/bench.py and tools/plog.py for them.
 """
 import argparse
 import importlib.util
@@ -502,8 +504,10 @@ def main():
                     rep = f"{m}-{side}.repl26a"
                     f.write(f"../../bots/{first} ../../bots/{second} ../../maps/{m}.map26a {rep}\n")
                     games.append((m, side, os.path.join(out, rep)))
-        r = subprocess.run(["cambc", "run-batch", os.path.join(out, "matches.txt"), "--jobs", a.jobs,
-                            "--timeout", "900"], capture_output=True, text=True)
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from arena import find_cambc
+        r = subprocess.run([find_cambc(), "run-batch", os.path.join(out, "matches.txt"), "--jobs", a.jobs,
+                            "--timeout", "900", "--release"], capture_output=True, text=True)
         if r.returncode != 0:
             print(r.stdout[-2000:], r.stderr[-2000:])
 

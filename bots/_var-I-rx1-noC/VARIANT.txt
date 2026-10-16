@@ -1,4 +1,0 @@
-from bots\strat
-REWARD_X=1.0
-ONEWAY_PARTNERS=0
-FLIP_WINDOW=-1

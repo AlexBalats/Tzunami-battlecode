@@ -1,3 +1,0 @@
-from bots\strat
-STACK_UNTIL=300
-STACK_REGIMES=(0, 1, 2)

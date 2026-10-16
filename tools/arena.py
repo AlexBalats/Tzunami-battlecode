@@ -12,7 +12,7 @@ the hash of both bots' sources, the map file and the side, and is only replayed 
 those changes (or with --fresh). Set CAMBC=/path/to/cambc to use another engine version. Replays, stats JSON and a summary.json land in runs/arena/<A>-vs-<B>-<time>/.
 
 Columns (all from A's point of view):
-    res     W / L / D (D: equal gems at round 2,000)
+    res     W / L / D from the engine's outcome (a tie on gems at round 2,000 still gets a winner on 2.2.x)
     round   round the game ended
     gems    gems A tributed; opp = gems B tributed; margin = gems - opp
     g/r     A's tributed gems per round
@@ -41,6 +41,9 @@ MAPS = os.path.join(ROOT, "maps")
 OUT = os.path.join(ROOT, "runs", "arena")
 CACHE = os.path.join(OUT, "cache")
 CACHE_VERSION = 1  # bump when the stored record format changes
+# --json: since cambc 2.2.0 --statistics writes binary without it. --release: run as on the platform
+# (debug_block skipped, fuel pause imports not linked); same games as debug mode for our bots [measured 16 Oct].
+RUN_FLAGS = ["--json", "--release"]
 
 
 def find_cambc():
@@ -94,6 +97,28 @@ def file_hash(path):
         return hashlib.sha256(f.read()).hexdigest()[:16]
 
 
+def load_stats(path):
+    """Read a --statistics --json file in the flat pre-2.2 shape every tool uses: outcome, round,
+    botFaults [A, B], teams [{team, submittedGems}], champions [{team, name, kills, deaths, ...}]
+    (team as 0/1, counts as ints). cambc 2.2.x nests these under match/diagnostics/metrics."""
+    with open(path) as f:
+        s = json.load(f)
+    if "match" not in s:  # written by cambc 2.1.x
+        return s
+    side = {"teamA": 0, "teamB": 1}
+    num = lambda v: float(v) if isinstance(v, float) else int(v)
+    champs = []
+    for c in s["champions"]:
+        row = {k: num(v) for k, v in c["metrics"].items()}
+        row.update(team=side[c["team"]], name=c["name"])
+        champs.append(row)
+    faults = s["diagnostics"]["botFaults"]
+    return {"outcome": s["match"]["outcome"], "round": s["match"]["roundsStarted"],
+            "botFaults": [faults["teamA"], faults["teamB"]],
+            "teams": [{"team": side[t["team"]], "submittedGems": int(t["submittedGems"])} for t in s["teams"]],
+            "champions": champs}
+
+
 DRAFT_LINE = re.compile(r"^\s+([AB])\s+\S+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+(.+?)\s*$")
 
 
@@ -101,7 +126,7 @@ def play(cambc, job):
     """Run one match with --statistics and return the raw record (or an error record)."""
     os.makedirs(job["dir"], exist_ok=True)
     stats_path = os.path.join(job["dir"], "stats.json")
-    cmd = [cambc, "run", "bots/" + job["blue"], "bots/" + job["red"], "--map", job["map_path"], "-o", job["dir"], "--statistics", stats_path]
+    cmd = [cambc, "run", "bots/" + job["blue"], "bots/" + job["red"], "--map", job["map_path"], "-o", job["dir"], "--statistics", stats_path] + RUN_FLAGS
     try:
         proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=job["timeout"])
         log = proc.stdout + proc.stderr
@@ -111,8 +136,7 @@ def play(cambc, job):
         f.write(log)
     if not os.path.exists(stats_path):
         return {"error": log.strip().splitlines()[-1] if log.strip() else "no output"}
-    with open(stats_path) as f:
-        stats = json.load(f)
+    stats = load_stats(stats_path)
     drafts = {m.group(1): m.group(2) for m in map(DRAFT_LINE.match, log.splitlines()) if m}
     return {"stats": stats, "drafts": drafts}
 
@@ -170,7 +194,7 @@ def main():
 
     # Build each bot once up front, so parallel matches don't race to rebuild it.
     for bot in dict.fromkeys((a, b)):
-        built = subprocess.run([cambc, "build", "bots/" + bot], cwd=ROOT, capture_output=True, text=True)
+        built = subprocess.run([cambc, "build", "--release", "bots/" + bot], cwd=ROOT, capture_output=True, text=True)
         if built.returncode:
             sys.exit("build failed for %s:\n%s%s" % (bot, built.stdout, built.stderr))
 

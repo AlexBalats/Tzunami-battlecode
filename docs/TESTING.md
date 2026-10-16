@@ -51,7 +51,7 @@ Look for idle turns, failed paths, unfinished captures and lost gems.
 Compare the bot's logged decisions with what its champion could see at that moment.
 Export final statistics
 cambc run my-bot starter-python --statistics replays/stats.json
---statistics writes final game statistics as JSON and requires the game to finish; a shortened match may not have a final result.
+--statistics writes final game statistics as JSON and requires the game to finish; a shortened match may not have a final result. (Our note, cambc 2.2.x: add `--json`, or the file is binary; `docs/QUICKSTART_MATCHES.md` has the format and `load_stats`.)
 
 Run several matches#
 Create matches.txt in your workspace. Each line has four paths: first bot directory, second bot directory, map, and output replay. Paths are relative to that file; quote paths containing spaces. Replace the example map filenames with real ones.

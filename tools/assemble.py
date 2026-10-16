@@ -1,6 +1,6 @@
 """Assemble bots/<bot>/src/main.py from bots/<bot>/parts/*.py (sorted by name).
 
-Usage: python -I tools/assemble.py [--bot NAME] [--check]      (NAME defaults to tzu; e.g. --bot core)
+Usage: python -I tools/assemble.py [--bot NAME] [--check]      (NAME defaults to strat)
 
 The bot ships as ONE file with `import cambc` only (docs/LESSONS.md section 2: every extra
 module freezes the champion for rounds on first import). Development happens in numbered parts
@@ -54,7 +54,7 @@ def wrap(src, n):
 
 def main():
     check = "--check" in sys.argv
-    bot = "tzu"
+    bot = "strat"
     if "--bot" in sys.argv:
         i = sys.argv.index("--bot")
         if i + 1 >= len(sys.argv):

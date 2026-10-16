@@ -1,2 +1,0 @@
-from bots\tzu
-DEF_ON.PASSIVE=False
