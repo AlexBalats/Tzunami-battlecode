@@ -13,6 +13,8 @@ def _set_cur(self, new, r, s):
     self.hit = False                            # trace only: attacked since this choice (choice `hit=`)
     self.lastbag, self.lastgold = s.bag, s.gold
     self.peekn, self.peeked = 0, False          # dead-camp pickup (exec_farm): rounds near the group seeing nothing
+    self.gathered, self.gmates = False, 0       # [T5] this take's gather is over; most mates seen at the rally
+    self.contest = 0                            # rounds on the spawn with an enemy on the group's tiles (exec_farm)
     walk, work = 0, 0
     if op == "farm" and tg in self.G:
         # [user decision 15 Oct afternoon, ladder cd737718] backstop: farm target A -> B -> A within FLIP_WINDOW rounds
@@ -24,14 +26,15 @@ def _set_cur(self, new, r, s):
             self.tflip = (fh[1][1], tg)
             trace("choice", f"flip lock {tname(self, 'farm', tg)} excl={tname(self, 'farm', fh[1][1])} in={r - fh[0][0]}")
             self.fh = []
-        self.lastfarm = tg                      # kill exclusions: this group's monsters are not avoided (camp_zone)
         walk = self.gd.get(tg, 40)
         o = self.G[tg]
-        mons = [m for m in (o.hp if o.hp is not None else o.mons) if m[0] > 0]
-        k = max(1, o.need)
+        mons = [m for m in (o.mons if o.hp is None else o.hp) if m[0] > 0]
+        k = self.ncrew = crew(self, s, tg)     # [T2] the crew this take is priced for
         work = (clear_dmg(mons, s_eff(self, s, tg, k), k)[0] if mons else 0) + 8
-        if o.need >= 2:
-            work += 10                          # waiting for the partner (group mode: walking to it)
+        if k >= 2:
+            work += GATHER_MAX + 2              # [T5] gathering the crew
+        if o.st == "resp":
+            walk = max(walk, o.until - r)       # [T6] waiting for the respawn
     elif op in ("bank", "hold") and tg is not None and tg < len(self.ad):
         walk = self.ad[tg]
         work = max(1, -(-s.bag // 10)) + 2 if op == "bank" else 30
@@ -41,12 +44,6 @@ def _set_cur(self, new, r, s):
         walk = 20
     elif op == "kill":
         walk = 6 + ME["prof"].get("hunt", 0)
-    elif op == "hunt" and tg is not None and tg >= CONV_T:
-        rt = self.rally.get(tg - CONV_T)        # [CENTRE_ON] converge: walk to the rally + the wait + the step in
-        walk = fget(self.F_me, rt) if rt is not None else FAR
-        if walk >= FAR:
-            walk = 2 * s.pos.chebyshev_distance(rt) if rt is not None else HUNT_MAX
-        work = RALLY_WAIT + RALLY_D + 5
     elif op == "hunt":
         walk = HUNT_MAX
     elif op == "fall":
@@ -61,8 +58,8 @@ def _set_cur(self, new, r, s):
             walk = 2 * s.pos.chebyshev_distance(t)
         work = 3
     self.deadline = r + min(walk, 150) + 10 + work
-    # [IMPROVEMENTS 2] sunk progress (prog_update): budget, walk estimate, start distance (chebyshev, set lazily)
-    self.budget, self.walk0, self.prog = self.deadline - r, walk, 0.0
+    # [IMPROVEMENTS 2] sunk progress (prog_update): start distance (chebyshev, set lazily)
+    self.prog = 0.0
     self.d0, self.pbest, self.pstall, self.chan, self.chanlen, self.khits, self.pw = None, 0.0, 0, 0, 1, 0, 0
     self.hp0, self.ttk0 = None, None
     if op == "farm" and tg in self.G:
@@ -87,11 +84,6 @@ def prog_target(w, s):
         return w.apos[tg] if tg < len(w.apos) else None
     if op == "ward":
         return w.wtiles[tg] if tg < len(w.wtiles) else None
-    if op == "hunt" and tg >= CONV_T:          # [CENTRE_ON] the rally tile, then (released) the altar
-        a = tg - CONV_T
-        if a >= len(w.apos):
-            return None
-        return w.apos[a] if w.rgo == (a, w.started) else w.rally.get(a)
     if op == "hunt":
         return w.G[tg - 100].anchor if tg >= 100 else (w.apos[tg] if tg < len(w.apos) else None)
     if op == "kill":
@@ -107,17 +99,23 @@ def prog_target(w, s):
 
 
 def prog_update(w, s, hit):
-    """[IMPROVEMENTS 2, 15 Oct night] w.prog in [0, 1] for the current choice from values already at hand (chebyshev
-    to the target, s.live / o.hp, s.submitting, last turn's attack): farm = walk x 0.5 before my first hit, then 0.5
-    + 0.5 x group HP removed / group HP at the first hit; bank = walk x 0.5, then 0.5 + 0.5 x channel turns / ceil(bag
-    / 10); kill = hits / ttk (walk without a ttk); ward, join, hunt = walk; shop, heal, fall, hold = 0."""
+    """[IMPROVEMENTS 2, 15 Oct night] w.prog in [0, 1] for the current choice from values already at hand (the walk
+    on the goal field for farm / bank, else chebyshev to the target; s.live / o.hp, s.submitting, last turn's attack):
+    farm = walk x 0.5 before my first hit, then 0.5 + 0.5 x group HP removed / group HP at the first hit; bank = walk
+    x 0.5, then 0.5 + 0.5 x channel turns / ceil(bag / 10); kill = hits / ttk (walk without a ttk); ward, join, hunt =
+    walk; shop, heal, fall, hold = 0."""
     op, tg = w.cur
     p = 0.0
     if op in ("farm", "bank", "ward", "join", "hunt", "kill"):
         t = prog_target(w, s)
         wf = 0.0
         if t is not None:
-            d = t.chebyshev_distance(s.pos)
+            # farm / bank: the walk left on the goal field I step down; the chebyshev distance stalls while the path
+            # leads round a wall (rows / ambush 19 Oct: 29 and 60 stall failures a game on bodies that were walking)
+            key = f"g{tg}" if op == "farm" and tg in w.G else (f"a{tg}" if op == "bank" and tg < len(w.apos) else None)
+            d = fget(w.goal(key), s.pos) if key else FAR
+            if d >= FAR:
+                d = t.chebyshev_distance(s.pos)
             if w.d0 is None:
                 w.d0 = d
             wf = 1.0 - d / w.d0 if w.d0 > 0 else 1.0
@@ -158,18 +156,16 @@ def prog_update(w, s, hit):
 
 CLOSE_TTK = 3               # [user plan 15 Oct, ladder 4] close dash only when my hits to kill are <= this (ranged)
 CLOSE_TTK_MELEE = 6         # [user decision 15 Oct night] melee dashers (Vale): ladder showed 0 close dashes in 5 games with 3
-WAIT_CAP = 10               # [guess] rounds of pair waiting before the take fails ("failed partner")
-PAIR_NEAR = 6               # [user plan 15 Oct, pair/trio opener; guess] group mode: attack a pair group with an ally this close
-GROUP_SEEK_CAP = 15         # [guess] group mode: rounds stepping toward a partner at a group before the take fails
-WAIT_EXCL = 30              # [guess] rounds that (farm, group) is excluded after a failed partner wait
+GATHER_MAX = 8              # PROVISIONAL A77 [T5] rounds a crew body waits at the rally for the next mate
+GATHER_R = 6                # PROVISIONAL A77 [T5] claimants within this of the group's camps count as gathered
+RALLY_D = 4                 # [T5] the rally: this far from the group's nearest camp (camps have range 3 [measured A31])
+WAIT_EXCL = 30              # [guess] rounds that (farm, group) is excluded after a failed gather
+CONTEST_MAX = 5             # PROVISIONAL A79 rounds on the spawn with an enemy on the group's tiles before I leave
 RETREAT_HP = 0.6            # [guess] fallback retreats from enemies within 4 below this HP fraction
 PEEK_ON = 1                 # [user decision 15 Oct afternoon] dead-camp pickup: step onto a spawn tile of an unseen group at the goal
 PEEK_ROUNDS = 3             # ... within 2 of its tiles this many rounds with nothing seen: remembered as a waiting reward
 SPLASH_ON = 1               # [user decision 15 Oct] splash champions (profile `splash`): target / walk to the monster with the
                             # most live neighbours within 1 (0: lowest HP in range, the old rule; the `splash` trace stays)
-KILL_CAMP_R = -1            # [user decision 15 Oct] kill / hunt never step within this of a live monster of a group I do
-                            # not farm (camp_zone); no such path: the kill / hunt fails (-1: off)
-                            # [user decision 15 Oct afternoon] off by default (3 blocked most melee kills); code kept
 
 
 def in_camp_range(s, w):
@@ -211,7 +207,6 @@ def safe_recall(w, s):
         return "going"
     try:
         w.me.recall()
-        w.recall_r = s.r
     except Exception:
         w.step_to("home", s)
     return "going"
@@ -226,14 +221,14 @@ def dash_escape(w, s, ne):
 
 
 def partners_near(w, s, h):
-    """Visible allies within 4 of the group's camps that broadcast farm on it, or join."""
+    """Visible allies within GATHER_R of the group's camps that broadcast farm on it."""
     n = 0
     o = w.G[h]
     for c, p, _hp, _st in s.allies:
-        if min(t.chebyshev_distance(p) for t in o.tiles) <= 4:
+        if min(t.chebyshev_distance(p) for t in o.tiles) <= GATHER_R:
             k = w.ally_slot(c)
             b = s.mem[k] if k < 5 else 0
-            if ((b & 7) == 1 and (b >> 3) == o.mi) or (b & 7) == 6:
+            if (b & 7) == 1 and (b >> 3) == o.mi:
                 n += 1
     return n
 
@@ -244,45 +239,29 @@ def live_ok(w, s, h, k):
     mons = [m for m in (o.hp if o.hp is not None else o.mons) if m[0] > 0]
     if not mons:
         return True
-    return clear_dmg(mons, s_eff(w, s, h, k), k)[1] * tank(k) <= s.hp * SURVIVE     # TANK_SHARE
+    cd = clear_dmg(mons, s_eff(w, s, h, k), k)
+    return my_dmg(cd[1], k, cd[0]) <= s.hp * SURVIVE     # TANK_SHARE; [K3] mitigation
 
 
 def handoff(w, s, o):
-    """[user plan 15 Oct, pair/trio opener] True when I should leave group o's capture to an ally. Candidates: me and
-    the visible allies within 4 of the group's spawn tiles that broadcast farm on it or join; the carry is Vesper if
-    she is one of them (she took it), else the lowest slot among them. Everyone else leaves (its reward is unsplit)."""
+    """[T7, from the pair/trio opener] True when I should leave group o's capture to an ally. Candidates: me and the
+    visible allies within 4 of the group's spawn tiles that broadcast farm on it; the carry is Vesper if she is one of
+    them (she took it), else the lowest slot among them. Everyone else leaves (its reward is unsplit) and re-prices."""
     ks = []
     for c, p, _hp, _st in s.allies:
         k = w.ally_slot(c)
         b = s.mem[k] if k < 5 else 0
-        if ((b & 7) == 1 and (b >> 3) == o.mi or (b & 7) == 6) and min(t.chebyshev_distance(p) for t in o.tiles) <= 4:
+        if (b & 7) == 1 and (b >> 3) == o.mi and min(t.chebyshev_distance(p) for t in o.tiles) <= 4:
             ks.append(k)
     if not ks:
         return False
     vs = w.roster.index(VESPER_ID) if VESPER_ID in w.roster else -1
-    carry = vs if vs == w.slot or vs in ks else min(ks + [w.slot])
-    return carry != w.slot
-
-
-def group_go(w, s, h, o):
-    """[user plan 15 Oct, pair/trio opener] group mode, a pair group I cannot solo, monsters at full HP: None = attack
-    now (an ally within PAIR_NEAR of me); else one step toward the nearest visible ally that claims this group, or
-    toward spawn (where the partners come from) when none is visible; "failed" when nobody claims it or after
-    GROUP_SEEK_CAP such rounds. Never stands still (no waiting share)."""
-    if any(p.chebyshev_distance(s.pos) <= PAIR_NEAR for _c, p, _hp, _st in s.allies):
-        return None
-    cl = [k for k in range(min(5, len(w.roster))) if k != w.slot and (s.mem[k] & 7) == 1 and (s.mem[k] >> 3) == o.mi]
-    w.waited += 1
-    if not cl or w.waited > GROUP_SEEK_CAP:
-        w.excl[("farm", h)] = s.r + WAIT_EXCL
-        trace("exec", f"farm {tname(w, 'farm', h)} failed partner seek={w.waited} claims={len(cl)}")
-        return "failed"
-    vis = sorted((p.chebyshev_distance(s.pos), p.x, p.y) for c, p, _hp, _st in s.allies if w.ally_slot(c) in cl)
-    if vis:
-        w.step_near(V(vis[0][1], vis[0][2]), 1, s)
+    ks.append(w.slot)
+    if vs in ks:
+        carry = vs
     else:
-        w.step_to("home", s)
-    return "going"
+        carry = min(ks)
+    return carry != w.slot
 
 
 def splash_nb(lv, i):
@@ -295,50 +274,40 @@ def splash_nb(lv, i):
     return n
 
 
-def camp_zone(w, s, skip=None):
-    """[user decision 15 Oct, kill exclusions] tiles within KILL_CAMP_R of the visible live monsters (s.live) of every
-    group but my last farm group (w.lastfarm) and skip; None when there are none (or KILL_CAMP_R < 0)."""
-    if KILL_CAMP_R < 0:
-        return None
-    z = None
-    for h, lv in s.live.items():
-        if h == w.lastfarm or h == skip:
-            continue
-        for _c, hp, p, _st in lv:
-            if hp > 0:
-                if z is None:
-                    z = Bitboard()
-                z.draw_chebyshev(p, KILL_CAMP_R)
-    return z
-
-
 def exec_farm(w, s, h):
     o = w.G[h]
     lv = s.live.get(h)
     if lv:
         tgt = [(hp, i) for i, (_c, hp, p, _st) in enumerate(lv) if p.chebyshev_distance(s.pos) <= ME.get("range", 1)]
         hurt = any(hp < w.G_maxhp(c) for c, hp, _p, _st in lv)
-        sm = stack_mode(w, s.r)
-        if sm and o.need >= 2 and not hurt and not live_ok(w, s, h, 1):
-            res = group_go(w, s, h, o)          # [user plan 15 Oct, pair/trio opener] no waiting at camps
-            if res is not None:
-                return res
-        elif not sm and o.need >= 2 and not hurt and not live_ok(w, s, h, 1 + partners_near(w, s, h)):
-            # pair take: wait (monsters are friendly until hit) near the group for the partner
-            near = min(p.chebyshev_distance(s.pos) for _c, _hp, p, _st in lv)
-            if near > 4:
-                w.step_to(f"g{h}", s)
-            else:
-                w.waited += 1                   # counts rounds waiting at the group, not walking to it
-                if w.waited >= WAIT_CAP:
-                    # no partner in WAIT_CAP rounds: give the pair up for WAIT_EXCL rounds and no un-partnered pair
-                    # takes for as long (40_prices pair_until), so the next choice is the best solo group
-                    w.excl[("farm", h)] = s.r + WAIT_EXCL
-                    w.pair_until = max(w.pair_until, s.r + WAIT_EXCL)
-                    trace("exec", f"farm {tname(w, 'farm', h)} failed partner waited={w.waited}")
-                    return "failed"
-            w.waiting = True
-            return "going"
+        if w.ncrew >= 2 and not hurt and not w.gathered:
+            # [T5] P19 gather before the first hit (monsters are friendly until hit [rules]): hit once the bodies at
+            # the group are enough, the draft need (the number every body counts; the crew's extra body joins the take
+            # under way) or my live clear model says they survive it. Short: wait at the rally while the crew is
+            # coming, i.e. enough bodies still claim the group and a mate arrived within the last GATHER_MAX rounds.
+            # (19 Oct: waiting for all of need + 1 with one timer per body failed 28-47 times a game on elkring: the
+            # early bodies gave up as the late ones arrived, and each failure dropped the others below the crew.)
+            mates = partners_near(w, s, h)
+            need = min(w.ncrew, max(1, o.need))
+            if 1 + mates < need and not live_ok(w, s, h, 1 + mates):
+                if min(p.chebyshev_distance(s.pos) for _c, _hp, p, _st in lv) > RALLY_D:
+                    w.step_to(f"g{h}", s)
+                    w.waiting = True
+                    return "going"
+                if mates > w.gmates:
+                    w.gmates, w.waited = mates, 0      # a mate arrived: the crew is coming, the clock restarts
+                w.waited += 1                   # counts rounds at the rally, not walking to it
+                # the bodies on it: my byte goes out at the end of this turn, so count me in place of it
+                ncl = claimants(w, s, o.mi) + (s.mem[w.slot] != 1 | o.mi << 3)
+                if w.waited < GATHER_MAX and ncl >= need:
+                    w.waiting = True
+                    return "going"
+                w.excl[("farm", h)] = s.r + WAIT_EXCL
+                trace("exec", f"farm {tname(w, 'farm', h)} failed gather waited={w.waited} mates={mates} "
+                              f"cl={ncl}/{need}")
+                return "failed"
+            w.gathered = True
+            trace("gather", f"g{h} waited={w.waited} mates={mates}/{need - 1}")
         spl = ME["prof"].get("splash")
         if spl and SPLASH_ON and not hurt and len(lv) >= 2:
             # [user decision 15 Oct, Varg's splash] before the first hit: stand next to the monster with the most live
@@ -359,18 +328,29 @@ def exec_farm(w, s, h):
             c = lv[tgt[0][1]][0]
             if spl and TRACE:
                 trace("splash", f"nb={splash_nb(lv, tgt[0][1])} live={sum(1 for x in lv if x[1] > 0)} hp={tgt[0][0]:.0f} g{h}")
+            alts = [lv[i][0] for _hp, i in tgt[1:]]
+            kit = KIT_ON and s.st & 0x800 and (w.kit_shield(s, False, c) or w.kit_stun(s, h, c))  # [K1] the turn's cast
             try:
                 w.me.attack(c)
                 w.attacked = True
-                w.reset_attack(c, tgt[0][0])
+                if not kit:
+                    w.reset_attack(c, tgt[0][0], alts)
             except Exception:
                 pass
-            if s.st & 0x800:                     # CAN_CAST
+            if s.st & 0x800 and not kit:         # CAN_CAST
+                if KIT_ON and _dead(c):
+                    c = next((u for u in alts if not _dead(u)), c)     # [K1] not on the monster my hits just killed
                 w.cast(c, True)
             return "going"
         if tgt:
             w.attacked = True                   # in range, attack spent this turn
             return "going"
+        if LIVE_STEP and hurt:
+            # [LIVE_STEP] the take is under way: towards a free tile in range of a live monster (no dead camp's tile)
+            live = [p for _c, hp, p, _st in lv if hp > 0]
+            if live and min(p.chebyshev_distance(s.pos) for p in live) <= 6:
+                w.step_near(live, ME.get("range", 1), s)
+                return "going"
         if len(lv) < len(o.tiles) and w.walk_to(f"g{h}", s.pos) == 0:
             w.step_near([p for _c, _hp, p, _st in lv], ME.get("range", 1), s)    # next to a dead camp only
         else:
@@ -382,11 +362,17 @@ def exec_farm(w, s, h):
         if o.seen != s.r:
             update_groups(w, s, [h])
         if o.st == "resp":
-            return "done"
+            if w.capt or o.until - s.r > RESP_LOOK:
+                return "done"                   # my capture came in, or it respawns too late to wait for
+            # [T6] at the respawn early: wait out of camp range for it (and the crew)
+            if min(t.chebyshev_distance(s.pos) for t in o.tiles) > RALLY_D:
+                w.step_to(f"g{h}", s)
+            w.waiting = True
+            return "going"
         if o.st == "reward":
             onspawn = any(t == s.pos for t in o.tiles)
-            if GROUP_HANDOFF and stack_mode(w, s.r) and handoff(w, s, o):
-                # [user plan 15 Oct, pair/trio opener] not the carry: step off the spawn tiles, leave it unsplit
+            if handoff(w, s, o):
+                # [T7] not the carry: step off the spawn tiles, leave it unsplit, re-price at once
                 if onspawn:
                     w.step_away(s, o.tiles)
                 o.st, o.until = "resp", s.r + o.resp
@@ -398,6 +384,16 @@ def exec_farm(w, s, h):
                 if s.bag > w.lastbag or s.gold > w.lastgold:
                     o.st, o.until = "resp", s.r + o.resp
                     return "done"
+                # P17 "on contentious ground, attack not" / P11: an enemy on the group's spawn tiles resets the capture
+                # [rules; region = spawn tiles, A79]. Past one capture timer the take is over: re-price (kill if the
+                # fight pays, else elsewhere). (packs 19 Oct: Vesper and theirs stood on one gold group r44-r92, no
+                # capture, no blow, until their Varg and Ryth came and killed ours.)
+                if any(e[1] in o.tiles for e in s.enemies):
+                    w.contest += 1
+                    if w.contest > CONTEST_MAX:
+                        w.excl[("farm", h)] = s.r + EXCL
+                        trace("exec", f"farm {tname(w, 'farm', h)} contested n={w.contest}")
+                        return "failed"
                 return "going"
             if w.step_to(f"c{h}", s) == "blocked" and s.can_move:
                 w.step_near(o.anchor, 0, s)
@@ -513,8 +509,7 @@ def exec_kill(w, s, hd):
     # CLOSE [user plan 15 Oct]: 1-2 tiles beyond range -> dash into range (farthest such tile), then try the attack.
     # [user plan 15 Oct, ladder 4] only onto a target I kill in <= CLOSE_TTK hits, and with enemies within 8 of me
     # <= allies within 8 + 1 (ladder: dashes onto 750-HP targets, 5 hits, with 4 enemies in sight); else walk
-    z = camp_zone(w, s) if kz else None         # [user decision 15 Oct] never step within KILL_CAMP_R of other camps
-    if rng < dd <= rng + 2 and -(-int(hp) // int(s.S)) <= (CLOSE_TTK_MELEE if rng <= 1 else CLOSE_TTK)             and sum(1 for x in s.enemies if x[4] <= 8) <= sum(1 for a in s.allies if a[1].chebyshev_distance(s.pos) <= 8) + 1             and w.dash_to(s, lambda q: -q.chebyshev_distance(p) if q.chebyshev_distance(p) <= rng and (z is None or not z.is_set(q)) else None, "close"):
+    if rng < dd <= rng + 2 and -(-int(hp) // int(s.S)) <= (CLOSE_TTK_MELEE if rng <= 1 else CLOSE_TTK)             and sum(1 for x in s.enemies if x[4] <= 8) <= sum(1 for a in s.allies if a[1].chebyshev_distance(s.pos) <= 8) + 1             and w.dash_to(s, lambda q: -q.chebyshev_distance(p) if q.chebyshev_distance(p) <= rng else None, "close"):
         res = "no-attack"
         try:
             w.me.attack(c)
@@ -525,18 +520,13 @@ def exec_kill(w, s, hd):
         return "going"
     if s.st & 0x800:
         w.cast(c, False)                        # dashes and ranged spells close the gap
-    if w.step_near(p, rng, s, z) == "nopath":
-        kban(w, hd, s.r)
-        trace("exec", f"kill {hd} failed camp tp={p.x},{p.y}")
-        return "failed"
+    w.step_near(p, rng, s)
     return "going"
 
 
 def exec_hunt(w, s, a):
     """Walk toward the sighting's altar a; done once an enemy is visible (KILL prices it); failed (excluded EXCL
     rounds) on arrival with nobody there or after HUNT_MAX rounds."""
-    if a >= CONV_T:
-        return exec_conv(w, s, a - CONV_T)
     if s.enemies:
         return "done"
     key, t = (f"g{a - 100}", w.G[a - 100].anchor) if a >= 100 else (f"a{a}", w.apos[a])
@@ -546,53 +536,7 @@ def exec_hunt(w, s, a):
         return "done"
     if s.r - w.started >= HUNT_MAX or s.pos.chebyshev_distance(t) <= 2:
         return "failed"
-    z = camp_zone(w, s, a - 100 if a >= 100 else None)     # [user decision 15 Oct] kill exclusions (target group exempt)
-    if z is None:
-        w.step_to(key, s)
-    elif w.step_avoid(key, s, z) == "nopath":
-        trace("exec", f"hunt {tname(w, 'hunt', a)} failed camp")
-        return "failed"
-    return "going"
-
-
-def exec_conv(w, s, a):
-    """[CENTRE_ON] converge on altar a: walk to its rally tile (40_prices rally_tile), wait there (w.waiting) until
-    conv_count >= min(alive roster, s.sc + 1), then step in toward the altar (released: w.crel). Enemies in sight on
-    the way to the rally: keep walking (fall back); at the rally an enemy within RALLY_ENGAGE, or any enemy after the
-    release: done (KILL / JOIN take over).
-    After RALLY_WAIT rounds at the rally with the count unmet: failed, and my decision for a is LEAVE for
-    RALLY_FAIL_ROUNDS (w.cfail; trace `failed rally`). At the altar with nobody seen: failed (EXCL)."""
-    rt = w.rally.get(a) if a < len(w.apos) else None
-    if rt is None:
-        return "failed"
-    if w.rgo != (a, w.started):
-        if s.pos.chebyshev_distance(rt) > 2:
-            w.step_to(f"r{a}", s)
-            return "going"
-        if w.arrived is None:
-            w.arrived = s.r
-        if s.near_e <= RALLY_ENGAGE:
-            w.crel[a] = s.r                     # they came to the rally: fight here (KILL / JOIN)
-            trace("exec", f"hunt C{a} rally enemies n={conv_count(w, s, a)} ne={s.near_e} waited={s.r - w.arrived}")
-            return "done"
-        n, need = conv_count(w, s, a), min(max(1, getattr(w, "cnus", 1)), s.sc + 1)
-        if n < need:
-            if s.r - w.arrived >= RALLY_WAIT:
-                w.cfail[a] = s.r + RALLY_FAIL_ROUNDS
-                trace("exec", f"hunt C{a} failed rally n={n}/{need} waited={s.r - w.arrived}")
-                return "failed"
-            w.waiting = True
-            return "going"
-        w.rgo = (a, w.started)
-        w.crel[a] = s.r
-        w.d0, w.pbest = None, 0.0               # sunk progress restarts toward the altar
-        trace("exec", f"hunt C{a} rally go n={n}/{need} waited={s.r - w.arrived}")
-    if s.enemies:
-        return "done"
-    if s.pos.chebyshev_distance(w.apos[a]) <= 2:
-        trace("exec", f"hunt C{a} empty")
-        return "failed"
-    w.step_to(f"a{a}", s)
+    w.step_to(key, s)
     return "going"
 
 
@@ -632,6 +576,9 @@ def buy_all(w, s):
     """Buy shards along the profile's build: each buy goes to the first entry whose emblem is not complete
     (build_target, re-read after every buy so a finished emblem moves on to the next family). Trace per buy."""
     build = ME["prof"].get("build") or (ME["prof"]["item"],)
+    me_id = w.roster[w.slot] if w.slot < len(w.roster) else -1
+    if ROLE_BUILD and (me_id in TANK_IDS if ROLE_BUILD == 1 else me_id != VESPER_ID):
+        build = (cambc.ItemType.JUNGLE_SHARD_OF_STRENGTH,) + tuple(build)     # [K2] the tanks take camp hits
     n = 0
     try:
         while n < 10:
@@ -644,6 +591,8 @@ def buy_all(w, s):
             trace("shop", f"buy {item.name} gold={w.me.gold_count()}")
     except Exception as e:
         trace("err", "shop " + err_text(e))
+    if n:
+        mit_refresh(w)                          # [K3] a new Jungle emblem counts at once
     return n
 
 
@@ -662,13 +611,7 @@ def exec_join(w, s, k):
             return "done"
         w.step_near(p, 1, s)
         return "going"
-    if (b & 7) != 1 or (b >> 3) not in w.idx:
-        return "failed"
-    h = w.idx[b >> 3]
-    if min(t.chebyshev_distance(s.pos) for t in w.G[h].tiles) <= 4:
-        return "done"
-    w.step_to(f"g{h}", s)
-    return "going"
+    return "failed"
 
 
 def retreat_now(s):
@@ -704,8 +647,9 @@ def exec_fall(w, s, _t):
     if near and not s.spawn:
         if retreat_now(s):
             if s.near_e <= 3:                   # retreat: out of their reach first, recall once clear
-                dash_escape(w, s, [e[1] for e in near])
-                w.step_away(s, [e[1] for e in near])
+                ne = [e[1] for e in near]
+                dash_escape(w, s, ne)
+                w.step_away(s, ne)
                 return "going"
             return safe_recall(w, s)
     if (s.bag > 0 or s.hp < KEEP_HP * s.maxhp) and not s.spawn:
@@ -760,6 +704,66 @@ def exec_ward(w, s, j):
         trace("ward", f"skip W{j}@{t.x},{t.y} failed tiles={len(ps)}")
         return "done"
     return "going"
+
+
+def scan_goal(w):
+    """[SCAN_WARD] the tile my executor is heading for (group anchor, altar, spawn), or None."""
+    op, tg = w.cur
+    if op == "farm" and tg in w.G:
+        return w.G[tg].anchor
+    if op in ("bank", "hold") and tg is not None and tg < len(w.apos):
+        return w.apos[tg]
+    if op in ("shop", "heal"):
+        return w.sp0
+    return None
+
+
+def scan_ward(w, s):
+    """[B1 SCAN_WARD] P6 foreknowledge, P17 know the ground: after my move, my free ward (cooldown 1 [measured A10],
+    one active, re-placed once a round, within 2, sees 6 [rules]) goes on a bush tile within 2 that my own sight does
+    not cover. A ward on a bush tile sees its cluster [measured A60]; from outside nobody sees in [rules]. Among those,
+    the one nearest my goal tile (none: farthest from spawn). My current ward's tile stays a candidate, so the ward
+    moves only when a better tile comes into reach; no unseen bush within 2: it stays where it is. Counts placements
+    (w.swn) and enemies first seen through it (trace `sward spot`)."""
+    if w.bush is None:
+        w.bush = game_map.bushes()
+    if w.bush.is_empty():
+        return
+    me = w.me
+    if me.ward_cooldown() > 0:
+        return
+    p = me.position()
+    c = me.ward_placement_tiles() & w.bush
+    if not c.is_empty():
+        aw = vision.ward_tiles(Team.ALLY)      # an ally's ward tile raises [measured]; my own stays a candidate
+        if w.sw_pos is not None:
+            aw.set(w.sw_pos, False)
+        c = c & ~me.visible_tiles_from(p) & ~aw
+    if not c.is_empty():
+        gt = scan_goal(w)
+        fh = w.F_home
+        best, bk = None, None
+        for q in c.positions():
+            k = (q.chebyshev_distance(gt) if gt is not None else 0, -(fget(fh, q) if fh is not None else 0), q.x, q.y)
+            if bk is None or k < bk:
+                best, bk = q, k
+        if best != w.sw_pos and not int(me.state()) & 6:   # a recall / tribute started this turn: no acting [sdk]
+            try:
+                ok = me.place_ward(best)
+            except Exception as e:
+                ok = False
+                trace("sward", f"err {best.x},{best.y} {err_text(e)}")
+            if ok:
+                w.sw_pos = best
+                w.swn += 1
+    if s.enemies and w.sw_pos is not None:
+        sv = me.visible_tiles_from(s.pos)       # my own sight when the enemies were sensed (before my move)
+        for e in s.enemies:
+            ep, k = e[1], int(e[0])
+            if w.bush.is_set(ep) and not sv.is_set(ep):
+                if w.sw_seen.get(k, -99) < s.r - 10:    # a new sighting after 10 rounds unseen
+                    trace("sward", f"spot e{k} {ep.x},{ep.y} d={e[4]} ward={w.sw_pos.x},{w.sw_pos.y} {w.cur[0]}")
+                w.sw_seen[k] = s.r
 
 
 EXEC = {"farm": exec_farm, "bank": exec_bank, "kill": exec_kill, "hold": exec_hold, "shop": exec_shop,

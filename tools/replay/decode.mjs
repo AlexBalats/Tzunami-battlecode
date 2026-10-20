@@ -4,7 +4,8 @@
 //
 // REPLAY is the inner replay.repl26a (raw, starts with "a62per"). OUT defaults to stdout.
 // The engine is picked from the replay's version byte: tools/mapgen/.cache/engine.wasm for cambc 2.1.x replays
-// (tools/mapgen/fetch.mjs), engine-v0_0_2.wasm for 2.2.x; tools/replay/fetch-engine.sh saves both.
+// (tools/mapgen/fetch.mjs), engine-v0_0_2.wasm for 2.2.0-2.2.2, engine-v0_0_3.wasm for 2.2.4 (ladder, 16 Oct);
+// tools/replay/fetch-engine.sh saves every engine the installed cambc's visualiser ships.
 // The map is matched against maps/*.map26a by size and camp layout (else "unknown").
 //
 // Layouts are copied from the visualiser bundle (cambc 2.1.6, timeline snapshot 40152 bytes).
@@ -31,9 +32,12 @@ const mapsDir = opt('--maps', path.join(ROOT, 'maps'));
 const [replayPath, outPath] = argv;
 // Byte 10 of a raw replay is the engine's minor version: 1 = cambc 2.1.x (engine 0.0.1, tools/mapgen/fetch.mjs
 // saves it as engine.wasm), 2 = cambc 2.2.x (engine 0.0.2, engine-v0_0_2.wasm from the 2.2.2 visualiser).
-const engineMinor = fs.readFileSync(replayPath).subarray(0, 16)[10];
-const enginePath = engineOpt || path.join(ROOT, 'tools/mapgen/.cache', engineMinor === 1 ? 'engine.wasm' : `engine-v0_0_${engineMinor}.wasm`);
-if (!fs.existsSync(enginePath)) throw new Error(`no ${enginePath} for engine 0.0.${engineMinor}: run sh tools/replay/fetch-engine.sh`);
+// Bytes 8-10 are the engine version major.minor.patch: cambc 3.0.1 replays are engine 1.0.0 (engine-v1_0_0.wasm).
+const ev = fs.readFileSync(replayPath).subarray(8, 11);
+const engineMinor = ev[2];
+const engineName = ev.join('_') === '0_0_1' ? 'engine.wasm' : `engine-v${ev.join('_')}.wasm`;
+const enginePath = engineOpt || path.join(ROOT, 'tools/mapgen/.cache', engineName);
+if (!fs.existsSync(enginePath)) throw new Error(`no ${enginePath} for engine ${ev.join('.')}: run sh tools/replay/fetch-engine.sh`);
 if (!replayPath) { console.error('usage: node tools/replay/decode.mjs REPLAY [OUT.json]'); process.exit(2); }
 
 export const CHAMP = ['Ryth', 'VesperVale', 'Vendetta', 'Cassi', 'Issac', 'Stellar', 'Prism', 'Marcella', 'Willow', 'Ren', 'Varg', 'Tavi', 'HeartOfRuin'];

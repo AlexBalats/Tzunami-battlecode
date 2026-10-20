@@ -1,6 +1,7 @@
 #!/bin/sh
-# Save the visualiser's engine for the installed cambc into tools/mapgen/.cache/engine-v0_0_N.wasm,
-# the file tools/replay/decode.mjs uses for that version's replays (2.2.x replays need engine 0.0.2).
+# Save the visualiser's engine for the installed cambc into tools/mapgen/.cache/engine-vA_B_C.wasm,
+# the file tools/replay/decode.mjs uses for that version's replays (2.2.0-2.2.2 replays need engine 0.0.2,
+# 2.2.4 replays 0.0.3: run it with CAMBC pointing at a 2.2.4 binary if the venv is older).
 # The engine ships inside the cambc binary's visualiser, so this starts `cambc view` on a replay bundle,
 # downloads every engine wasm the page references, and stops the server. It may open a browser tab.
 #
@@ -25,9 +26,9 @@ until curl -sf "$URL/" >/dev/null; do
 done
 found=0
 for js in $(curl -s "$URL/" | grep -o 'assets/[^"]*\.js' | sort -u); do
-  for wasm in $(curl -s "$URL/$js" | grep -o 'v0_0_[0-9]*-[A-Za-z0-9_-]*\.wasm' | sort -u); do
-    minor=$(echo "$wasm" | sed 's/^v0_0_\([0-9]*\)-.*/\1/')
-    [ "$minor" = 1 ] && name=engine.wasm || name="engine-v0_0_$minor.wasm"
+  for wasm in $(curl -s "$URL/$js" | grep -o 'v[0-9]*_[0-9]*_[0-9]*-[A-Za-z0-9_-]*\.wasm' | sort -u); do
+    ver=$(echo "$wasm" | sed 's/^v\([0-9]*_[0-9]*_[0-9]*\)-.*/\1/')     # cambc 3.0.1 replays: 1_0_0
+    [ "$ver" = 0_0_1 ] && name=engine.wasm || name="engine-v$ver.wasm"
     curl -sf -o "$OUT/$name" "$URL/assets/$wasm" && echo "saved $OUT/$name ($wasm)" && found=1
   done
 done

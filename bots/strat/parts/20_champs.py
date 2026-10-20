@@ -110,7 +110,12 @@ SPIKE_STR = 120            # [user decision 15 Oct afternoon; guess] an ally Ves
 SPIKE_ROUND = 300          # ... or this round: the spike shift (non-Vesper rows' gold / shop below; w.spike)
 SPIKE_GOLD = 1.0           # non-Vesper `gold` after the spike (was 0.05: all gold to Vesper until she spikes)
 SPIKE_SHOP = 1.5           # non-Vesper `shop` after the spike
-BASE_STATS = {9: (1000, 50), 1: (900, 45), 0: (1200, 50), 2: (800, 70), 6: (1200, 45)}   # draft id -> (HP, Str) [docs/Champions]
+# [portfolio Layer A] opponent proxies for tools/field.py: PERSONA_OV overrides every champion's row in every phase
+# (a variant sets it, e.g. tools/variant.py strat hunt 'PERSONA_OV={"kill": 3.0, ...}'); {} = the real bot.
+# strat/PORTFOLIO.md lists the proxies and their settings.
+PERSONA_OV = {}
+BASE_STATS = {9: (1000, 50), 1: (900, 45), 0: (1200, 50), 2: (800, 70), 6: (1200, 45),   # draft id -> (HP, Str) [docs/Champions]
+              4: (750, 35), 10: (750, 35), 3: (700, 30)}     # [B6] Stellar, Tavi, Cassi [rules]
 _SHARD_W = []               # item_count() index -> shards it stands for (shard 1, emblem its combine_count, else 0)
 
 
@@ -197,7 +202,7 @@ def apply_phase(w):
             i = j
     if (i, spk) == w.phase:
         return
-    if not ph and not spk:
+    if not ph and not spk and not PERSONA_OV:
         ME["prof"] = base
         w.phase = (i, spk)
         return
@@ -206,6 +211,7 @@ def apply_phase(w):
         p.update(ph[i][1])
     if spk:
         p["gold"], p["shop"] = SPIKE_GOLD, SPIKE_SHOP
+    p.update(PERSONA_OV)                    # [portfolio Layer A] opponent proxy ({} = no change)
     ME["prof"] = p
     w.phase = (i, spk)
     trace("phase", f"{i} shards={w.shards} " + (" ".join(f"{k}={v}" for k, v in ph[i][1].items()) if ph else "")
@@ -241,6 +247,8 @@ def me_init():
                 spell_range = r
         ME.update(flags)
         ME["base"] = PROFILES.get(d, NEUTRAL)
+        if PERSONA_OV:
+            ME["base"] = dict(ME["base"], **PERSONA_OV)     # [portfolio Layer A] opponent proxy
         ME.update({"id": d, "type": t, "prof": ME["base"], "strength": c.strength(),
                    "hp": c.max_health(), "range": c.attack_range(), "focus": c.focus(),
                    "spell_range": spell_range, "passive": int(c.passive())})

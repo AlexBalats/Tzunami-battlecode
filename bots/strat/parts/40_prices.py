@@ -5,7 +5,8 @@ index + 1, so a byte of 8/16/24 is "walking to place ward 0/1/2"), 1 farm, 2 ban
 7 dead; target in the high 5 bits (group index in draft-memory order, altar index, enemy handle & 31, ally slot for join).
 Byte 5: enemy sighting, high 3 bits = enemies seen together (within SIGHT_R of one of them, capped 7; 0 = none), low
 5 bits = (round // 4) & 31 when seen. Byte 6: the sighting's region, index of the altar nearest the cluster.
-A reader treats age >= SIGHT_LIVE rounds as stale and clears byte 5. Byte 7: group death marker (90_main).
+A reader treats age >= SIGHT_LIVE rounds as stale and clears byte 5. Byte 7: the crew call, (caller slot + 1) << 5 |
+group index (0 = none; call_of). A dead body's slot byte is code 7 with target = the group it died on (31: none).
 Layout: strat/MEMORY_LAYOUT.md, "Shared 8 bytes".
 """
 
@@ -15,10 +16,6 @@ SMOOTH_ON = 1               # [user plan 15 Oct night, IMPROVEMENTS change 1] sm
                             # BANK near-enemy and STACK_R cliffs (0: the old gates exactly)
 KILL_PL_POWS = {0.6: 0.756, 0.95: 0.231}    # KILL value x (1 - pl) ** pow, pow = ln(0.5) / ln(1 - kill_plose): the factor
 KILL_PL_POW = 0.756                         # is 0.5 at pl = kill_plose (no math module: precomputed; other kp -> this)
-SMOOTH_CHASE = 0            # [measured 15 Oct night] smooth closable (FAR_CHASE) off: on, full games to 1,000 took 4,645
-                            # rounds summed vs 4,033 base (6/6 slower, chases); off 3,917 (bench below, HANDOVER)
-FAR_CHASE = 2               # [guess] KILL: rounds added per tile beyond reach + hunt (smooth closable)
-FAR_CHASE_MAX = 8           # [fuel] KILL targets beyond reach + hunt + this are still skipped (not the whole map)
 EXCL = 20                   # rounds an (option, target) is excluded after a timeout / failure
 DENIAL = 24                 # default of the profile key `denial` (Vesper 60, 20_champs); [measured-ish] their farm rate 0.4 g/r x 60 rounds out (PRICES KILL)
 THEIR_RATE = 0.4            # [guess] their gems per round per body (HOLD value 30 x 0.4)
@@ -26,38 +23,24 @@ P_NEAR = 0.5                # [guess] P(lose the bag) with an enemy within 8
 DANGER_W = 0.2              # [guess] P(lose the bag) per unit of draft danger (cell value / 14)
 SHOP_RETURN = True          # [deviation] SHOP rounds include the walk back from spawn to where I am
 SURVIVE = 0.6               # [tuned] k bodies are enough if the most-hit body keeps > 40 % of its current HP
-WAIT_PARTNER = 15           # [guess] rounds added to a pair take while the partner is not committed
-# Group game [user plan 15 Oct, game type + pair/trio opener; all guess]: while stack_mode() (round < GROUP_UNTIL and the
-# draft's solo share <= GROUP_SOLO_MAX) the team opens in subgroups (30_world opening_slots: trio + pair / two pairs /
-# pair + solo), prices groups for its subgroup without the per-body split, never waits at a camp (50_exec) and hands
-# captures to one carry. GROUP_UNTIL 0 = off (behaviour unchanged).
-GROUP_UNTIL = 300           # rounds; group mode is on while s.r < this (0: never) [measured 15 Oct: bench open-groupG, 6/6 group-map games won]
-GROUP_SOLO_MAX = 0.4        # [guess] group game when the draft's solo share (groups needing 1 body / all) <= this
-GROUP_GEMS_MIN = 0.7        # [user decision 15 Oct; guess] ... or when the share of gems in groups needing >= 2 >= this (> 1: off)
-BODY_EXP = 1.0              # FARM value / bodies ** this outside stack mode (1.0 = per-body split, today)
-STACK_BODY_EXP = 0.0        # the same exponent in stack mode (0.0: value not split, the stack clears 5x faster)
-STACK_WAIT_PARTNER = 0      # replaces race()["wait"] (WAIT_PARTNER) in farm_price in stack mode
-STACK_BANK_MIN = 0          # in stack mode BANK with a bag below this x STACK_BANK_LOW (bank in lumps; 0 = off)
-STACK_BANK_LOW = 0.3
-GROUP_BANK_BAG = 100        # [guess] group mode: a bag >= this banks at x GROUP_BANK_X x bag / GROUP_BANK_BAG (the carry
-GROUP_BANK_X = 12.0         # holds the subgroup's gems and its farm prices are unsplit; rows: 396 carried at r300)
-                            # [user decision 15 Oct; was 4.0] ladder 173c26eb: Vesper held 66 -> 264 gems r75-r203, BANK 4.5-39 < FARM 49-65
-GROUP_SHOP_GOLD = 300       # [user decision 15 Oct; guess] group mode: SHOP x GROUP_SHOP_X when my gold >= this (0: off)
-GROUP_SHOP_X = 3.0          # (ladder 173c26eb: 1128 gold at r245 unspent)
-STACK_FOLLOW = 3.0          # in group mode FARM x this on a group a LOWER slot of my subgroup farms (w.lowsub)
-GROUP_HANDOFF = 1           # 1: capture handoff in group mode (50_exec exec_farm reward branch: one carry captures)
-# [user plan 15 Oct night, IMPROVEMENTS 3, amended] chain pricing: FARM prices the marginal leg of farm + carry + bank
-# (extra carry rounds, extra channel turns, the bag's exposure over them); BANK uses (1 - P). 0 = the old prices exactly.
-# With it on, GROUP_BANK_X / GROUP_BANK_BAG / STACK_BANK_MIN have no effect (the chain replaces those patches).
-CHAIN_ON = 0
-CHAIN_PMAX = 0.9            # [guess] P(lose the bag) cap
-CHAIN_BAG = 100             # [guess] P(lose the bag) x (1 + bag / this): a big bag is a target
-CHAIN_EXPO = 60             # [guess] risk_extra = P x bag x (extra exposed rounds) / this
-CHAIN_NEAR = 0              # [measured 15 Oct night] 1: the farm chain's P is P_NEAR with an enemy within 8 (the plan);
-                            # 0: draft danger only. With 1 a bag-0 farmer's value fell ~60 % whenever an enemy was in
-                            # sight, heal choices 7 -> 53 on corners B, and corners B lost the full game 584-1044
-CHAIN_BANK_PLUS = 1         # [measured 15 Oct night] 1: BANK keeps today's (1 + P); 0: (1 - P x (1 + bag / CHAIN_BAG)) (the
-                            # plan). With 0 bank choices fell 22 -> 13 on corners B (r300 -660); the plan's own fallback
+# Crews [strat/TEAM_LOOP.md T1-T3]: a group I can't clear alone is taken by a crew of need + CREW_PLUS bodies (the top
+# teams put 3.8-4 bodies on big groups, we put 2.8); claims are the slot bytes, the lowest slots keep a full crew.
+CREW_PLUS = 1               # PROVISIONAL A76 bodies over the draft's need on a group one body can't clear
+CREW_MAX = 4                # PROVISIONAL A76 crew cap (one body stays free for the rest of the map)
+RESP_LOOK = 40              # PROVISIONAL A78 [T6] a group respawning within this many rounds prices with eta = time to respawn
+ROLE_BUILD = 1              # [strat/ROLES.md K2] 1: the tanks' builds (TANK_IDS) start with Jungle Strength (30 % less damage from
+                            # camps [rules]; the top teams' first emblem, r42-119), and every body buys along its build on any turn
+                            # on the spawn tiles with >= 30 gold, not only on a SHOP trip; 2: Jungle first for all but Vesper
+                            # (_dev-strat JUNGLE_FIRST=1 + SPAWN_BUY). 0 = off
+TANK_IDS = (9, 0)           # draft ids of the tanks, in tank order: Varg, Ryth (ROLES.md)
+ROLE_PRICE = 1              # [strat/ROLES.md K3] 1: the camp damage a take costs me is priced after my mitigation (my_dmg): a
+                            # finished Jungle emblem, and with KIT_ON my shield. 0 = off (tank(k) of the damage, as before)
+JUNGLE_MIT = 0.3            # [rules] a finished Jungle emblem (any stat): 30 % less damage from camps
+SHIELD_COVER = 0.6          # [measured 17 Oct, A59] the shield took every camp hit in its window (0 HP lost to 273 hits); its 5
+                            # turns per 8-turn cooldown covered 59 % of Varg's hit rounds (62.5 % at most)
+LIVE_STEP = 1               # [_dev-strat, 17 Oct] 1: at a take under way, a body out of range of every live monster steps to a free
+                            # tile in range of one (step_near); the group field also counts dead camps' tiles, so melee bodies
+                            # ping-ponged between the two rules (rows: 26 % idle at takes). 0 = off
 SPAWN_KILL_R = 2            # [user decision 15 Oct] KILL / JOIN a fight / HUNT price 0 on targets within this of an enemy
                             # spawn tile (it heals to full at turn end [rules], camps ring it); exec_kill fails there (-1: off)
 FUEL_FLOOR = 400_000        # after sensing: below this skip pricing, repeat the executor step
@@ -68,7 +51,6 @@ KILL_PLOSE = 0.6            # [user plan 15 Oct, ladder 2; was 0.45 tuned] fight
                             # [user plan 15 Oct, ladder 6] default of the profile / phase key `kill_plose` (Vesper hunt phase 0.95)
                             # (ladder: nobody fought back; 0.5 = even; 0.99 lost 9 champions in kills)
 DEATH_EXCL = 100            # rounds a death excludes its (option, target), and kill/hold after a kill/hold death
-DEATH_MARK = 100            # rounds the team avoids a group an ally died farming (byte 7)
 HEAL_K = 1.5                # [guess] (2.0 -> 1.5, 15 Oct ladder 2: 11 of 27 deaths healing at 316-644 HP) HEAL: P(die) = clamp((1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, 0, 1)
 MY_RATE = 0.4               # [guess] floor of my gems per round in death_cost (60 x max(this, best FARM now) + bag)
 DEATH_OUT = 60              # [rules] rounds out after a death
@@ -84,6 +66,9 @@ WARD_FROM = 10              # [guess] no ward option before this round (round 3:
 WARD_WALK = 30              # [guess] WARD price = WARD_VALUE x WARD_WALK / (WARD_WALK + walk): 4 here, 1.7 at 40 tiles
 WARD_TRIES = 3              # choices of one ward tile per champion before I give it up (timeouts / stuck re-choose it)
 WARD_DETOUR = 5             # [guess] WARD prices only when walk(me->ward) + walk(ward->goal) - walk(me->goal) <= this
+SCAN_WARD = 1               # [B1, docs/LADDER_18OCT.md] 1: the free ward is re-placed every round (50_exec scan_ward) on an
+                            # unseen bush tile within 2, nearest my goal; the draft ward tiles are dropped. 0 = off (draft wards)
+SCAN_FUEL = 900_000         # [guess] no scan ward below this fuel left (as the executor loop's 900k)
 BANK_NEAR = 8               # [guess] walk to the altar at or below which BANK gets the tempo bonus
 BANK_NEAR_BONUS = 1.0       # [guess] BANK x (1 + this) when the altar is near: a 22-gem bag next to an altar banks now
 KILL_PER_SHARD = 0.15       # [guess] KILL multiplier = prof kill + this x shards owned (emblems count their shards)
@@ -106,10 +91,8 @@ LANCH_FAR_W = 0.5           # ... and LANCH_NEAR+1 .. LANCH_R this (enemies and 
 KFAIL_ROUNDS = 6            # [user decision 15 Oct afternoon; was EXCL 20] a failed / timed-out kill bans that target this long
 KFAIL_MAX = 48              # [ladder 6774ff6a, 15 Oct night] the ban doubles per consecutive failure on the same target (6, 12, 24, 48):
                             # Vesper re-chased one uncatchable enemy 25 times in 300 rounds (chase 6 = ban 6: a 50 % duty cycle)
-GROUP_KILL_X = 2.0          # [user decision 15 Oct afternoon; guess] group mode: Vesper's fight multiplier x this
 RECALL_COST = 1             # [user decision 15 Oct afternoon] FARM adds 5 + min(walk home, 20) rounds when the clear leaves me < KEEP_HP
 REWARD_X = 1.0              # [measured 15 Oct] FARM on a cleared group (reward waiting) x this; 2.0 lost the r300 bench (8/18 vs 11/18, -242 vs +806 summed)
-ONEWAY_PARTNERS = 1         # [user decision 15 Oct afternoon] a claimant is my partner only from a LOWER slot (0: anyone)
 FLIP_WINDOW = 10            # [user decision 15 Oct afternoon] farm target A -> B -> A within this many rounds ...
 FLIP_LOCK = 30              # ... excludes B for this many rounds (trace `flip lock`)
 LANCH_R = 8                 # [rule, 15 Oct ladder 3] Lanchester bodies: everyone within this of ME (was: within 5 of
@@ -129,25 +112,6 @@ HUNT_BAG = 30               # [guess] expected bag of a sighted enemy (sighting 
 HUNT_REVISIT = 150          # [guess; 60 -> 150 user plan 15 Oct, ladder 5: chain patrol] rounds before a patrol hunt goes back to an enemy altar I reached
 ROAM_STACK = 60             # [guess] rounds a >= 3-enemy sighting halves the no-sighting hunt
 HUNT_MAX = 40               # rounds a sighting hunt walks before it gives up
-# [user plan 15 Oct night, ladder 1a406974] converge-or-leave: a fresh stack sighting at an altar on our side or
-# contested -> every champion computes one team decision from the shared bytes (centre()): CONVERGE (all to a rally
-# tile on our side, wait for the team, step in) or LEAVE (that region's farm / hold / ward / bank priced 0). 0 = off.
-CENTRE_ON = 0
-CENTRE_MIN_SC = 3           # [measured 15 Oct night, deviation] the trigger needs >= this many enemies seen together even
-                            # where STACK_N_FEW makes a pair "the stack" (collision S=3: pair sightings fired converge
-                            # every ~30 rounds, full game B +810 -> +124 vs tzunami444); 0 = stack_n() only (the spec)
-CONVERGE_PLOSE = 0.4        # [guess] CONVERGE when the team's Lanchester P(lose) (base HP x Str, square law) <= this ...
-CONVERGE_MARGIN = 1         # [guess] ... and alive roster champions >= sighted enemies + this; else LEAVE
-HOT_R = 12                  # [guess] LEAVE: groups / ward tiles within this (Chebyshev) of the stack's altar ...
-HOT_FARM = 0.0              # [guess] ... FARM x this (HOLD / WARD / BANK there x 0); replaces STACK_R / STACK_FARM
-CONVERGE_X = 1.5            # [guess] the converge hunt's multiplier (it must beat an ordinary farm clearly)
-RALLY_D = 8                 # [guess] the rally tile: walkable, this far (Chebyshev) from the altar, lowest F_home
-RALLY_WAIT = 20             # [guess] rounds at the rally with too few allies converging before the rally fails ...
-RALLY_FAIL_ROUNDS = 60      # [guess] ... and my decision for that altar is LEAVE for this many rounds
-RALLY_ENGAGE = 4            # [guess] waiting at the rally, an enemy this close releases me to fight (KILL / JOIN)
-CONV_REL = 30               # rounds after my release from a rally (step in / enemies at the rally) with no converge
-                            # price on that altar (KILL / JOIN own the fight; no walk back to the rally)
-CONV_T = 200                # converge hunt target = CONV_T + altar index (hunt 0-99 altar, 100+ group: unchanged)
 
 
 def sig(x):
@@ -180,27 +144,11 @@ POSTURE = {
     "punish": _col(kill_our_side=1.4, kill_their_side=1.1, bank_risk=1.2),
 }
 # Farm-race numbers by draft regime [user plan 15 Oct, ladder 4; guess all]: walk_w x FARM walk rounds, farm_hyst =
-# farm -> farm switch while not engaged, wait = WAIT_PARTNER, bank_ret = BANK rounds count the walk back (2 x walk).
+# farm -> farm switch while not engaged, bank_ret = BANK rounds count the walk back (2 x walk).
 # "race": regime many, or pick with >= RACE_RICH groups per body; "base" (few, other pick, unknown): the old numbers.
-RACE = {"race": dict(walk_w=2.0, farm_hyst=2.0, wait=30, bank_ret=2),
-        "base": dict(walk_w=1.0, farm_hyst=HYST, wait=WAIT_PARTNER, bank_ret=1)}
+RACE = {"race": dict(walk_w=2.0, farm_hyst=2.0, bank_ret=2),
+        "base": dict(walk_w=1.0, farm_hyst=HYST, bank_ret=1)}
 RACE_RICH = 4
-
-
-def stack_mode(w, r):
-    """[user plan 15 Oct, game type] group mode: True while r < GROUP_UNTIL and the draft's solo share <= GROUP_SOLO_MAX
-    or [user decision 15 Oct] its group-gem share ggems >= GROUP_GEMS_MIN;
-    cached per round on w, traces `stack on/off` on each change. Depends on the draft summary and r only: every
-    champion agrees."""
-    if getattr(w, "sm_r", -1) == r:
-        return w.sm
-    on = r < GROUP_UNTIL and bool(w.d) and (w.d.get("solo", 1.0) <= GROUP_SOLO_MAX
-                                            or w.d.get("ggems", 0.0) >= GROUP_GEMS_MIN)   # [user decision 15 Oct] gem gate
-    if on != getattr(w, "sm", False):
-        trace("stack", f"on solo={w.d.get('solo', 1.0):.2f} ggems={w.d.get('ggems', 0.0):.2f} until={GROUP_UNTIL}"
-              if on else "off")
-    w.sm, w.sm_r = on, r
-    return on
 
 
 def near_espawn(w, p):
@@ -215,13 +163,6 @@ def near_espawn(w, p):
             z.draw_chebyshev(q, SPAWN_KILL_R)
         w.espz = z
     return z.is_set(p)
-
-
-def sub_size(w):
-    """[user plan 15 Oct, pair/trio opener] my opening subgroup's size (30_world opening_slots: w.subs), the team if
-    unknown."""
-    sb = getattr(w, "subs", None)
-    return len(sb[w.slot]) if sb and w.slot in sb else max(1, len(w.roster))
 
 
 def race(w):
@@ -248,13 +189,13 @@ class Snap:
     __slots__ = ("r", "st", "alive", "recalling", "submitting", "can_move", "can_attack", "pos", "hp", "maxhp",
                  "bag", "gold", "S", "enemies", "allies", "live", "vis", "mem", "spawn", "near_e", "P", "walt", "edps", "plose",
                  "sc", "sa", "sage", "stack", "dcost", "attacker", "trapped", "ba", "bwk", "sap", "carry",
-                 "cdec", "cpl", "nus")
+                 "cdec", "cpl", "nus", "ghosts", "nlive", "call")
 
 
 def sense(w):
     me, r = w.me, cambc.round_number()
     s = Snap()
-    s.r = r
+    s.r, s.nlive, s.call = r, None, None
     s.st = st = int(me.state())
     s.alive = bool(st & 1)
     s.recalling, s.submitting = bool(st & 2), bool(st & 4)
@@ -396,7 +337,7 @@ def claims(w, s):
     """{group handle: allies broadcasting farm/join on it}, {slot: (opt, tgt)}."""
     cl, by = {}, {}
     for k in range(5):
-        if k == w.slot:
+        if k == w.slot and not w.twin:          # [C6] Issac reads Cassi's byte (same slot) as an ally's
             continue
         b = s.mem[k]
         op, tg = b & 7, b >> 3
@@ -446,109 +387,127 @@ def bank_altar(w, s, sap):
     return a, wk
 
 
-def chain(w, s, o, g):
-    """[IMPROVEMENTS 3, amended] (carry_extra, channel_extra, P_lose_bag) for farming group o that adds g gems to my
-    bag: carry_extra = walk anchor -> the altar I would bank at from there (o.near unless on their side or by the
-    stack, then today's bank altar) - my walk to today's bank altar, >= 0; channel_extra = extra channel turns;
-    P = mean draft danger over the anchor and that altar (P_NEAR with an enemy within 8 if CHAIN_NEAR) x
-    (1 + (bag + g) / CHAIN_BAG), clamped to [0, CHAIN_PMAX]."""
-    a = s.ba
-    n = o.near
-    if n < len(w.apos) and w.aside[n] != 2 and (s.sap is None or w.apos[n].chebyshev_distance(s.sap) > STACK_R):
-        a = n
-    f = w.nav.get(f"a{a}")
-    d = fget(f, o.anchor) if f is not None else FAR
-    if d >= FAR:
-        d = max(0, o.anchor.chebyshev_distance(w.apos[a]) - 1)
-    b = s.bag + g
-    P = P_NEAR if CHAIN_NEAR and s.near_e <= 8 else (dz(w, o.anchor) + dz(w, w.apos[a])) / 2
-    return max(0, d - s.bwk), int((-s.bag // 10) - (-b // 10)), min(CHAIN_PMAX, max(0.0, P * (1 + b / CHAIN_BAG)))
+def my_dmg(dmg, k, clear):
+    """Camp damage I take in a k-body take dealing dmg over clear rounds: tank(k) of it (TANK_SHARE); [K3 ROLE_PRICE] less
+    my Jungle emblem's 30 % [rules] and what my shield absorbs: SHIELD_COVER of it, at most its amount per cast, one cast
+    per 8 rounds (cooldown [rules]; A59 measured)."""
+    d = dmg * tank(k)
+    if ROLE_PRICE:
+        d *= ME.get("jmit", 1.0)
+        sa = ME.get("shield_amt", 0)
+        if sa:
+            d -= min(SHIELD_COVER * d, sa * (1 + clear // 8))
+    return d
 
 
-def farm_price(w, s, h, bodies, walk, c=None):
+def mit_refresh(w):
+    """[K3 ROLE_PRICE] ME['jmit'] (0.7 with a Jungle emblem of any stat) and ME['shield_amt'] (the shield slot's amount
+    now: it grows with Focus; 0 without KIT_ON) for my_dmg. Every 20 rounds and after a buy."""
+    if not ROLE_PRICE:
+        return
+    j = 1.0
+    try:
+        n = w.me.item_count()
+        for it in (cambc.ItemType.JUNGLE_EMBLEM_OF_STRENGTH, cambc.ItemType.JUNGLE_EMBLEM_OF_FOCUS,
+                   cambc.ItemType.JUNGLE_EMBLEM_OF_HEALTH):
+            if n[int(it)] > 0:
+                j = 1 - JUNGLE_MIT
+    except Exception:
+        pass
+    ME["jmit"] = j
+    a = getattr(w, "shield_ab", None)
+    try:
+        ME["shield_amt"] = a.shield_amount() if KIT_ON and a is not None else 0
+    except Exception:
+        ME["shield_amt"] = 0
+
+
+def living(w, s):
+    """Bodies alive: the roster minus the other slots broadcasting dead (code 7); cached on s."""
+    n = s.nlive
+    if n is None:
+        n = max(1, len(w.roster))
+        for k in range(min(5, len(w.roster))):
+            if k != w.slot and (s.mem[k] & 7) == 7:
+                n -= 1
+        n = s.nlive = max(1, n)
+    return n
+
+
+def crew(w, s, h):
+    """[T2] Bodies for a take of h: 1 when h has no live monster left or the draft model says one body clears it
+    (o.need, roster mean Strength / min HP: the same number on every body), else min(living, need + CREW_PLUS,
+    CREW_MAX). Not my own live model: Varg soloes what Vesper can't, and a crew only forms when every body counts it
+    the same (packs, 19 Oct: Varg saw crew 1 on Vesper's crew-3 group, read her claim as full, and she waited alone).
+    P10: concentrate force; over-bodying a big group clears it faster, spreads the hits and starts its respawn sooner."""
+    o = w.G[h]
+    if o.st != "alive" or o.need <= 1 or o.mi >= 31:
+        return 1                                # (mi 31: past the 31 claimable groups, no claim or call can name it)
+    return min(living(w, s), max(1, o.need) + CREW_PLUS, CREW_MAX)
+
+
+def claimants(w, s, mi):
+    """Slots whose byte is farm on group index mi (me included: my byte as sent last)."""
+    return sum(1 for k in range(min(5, len(w.roster))) if s.mem[k] == 1 | mi << 3)
+
+
+def call_of(w, s):
+    """[T3] The live crew call (caller slot, group handle) or None. Byte 7 = (caller slot + 1) << 5 | group index; live
+    while the caller's byte is farm on that group and its claimants are short of the crew (a full crew frees the
+    call for the next one). P10: one crew forms at a time, so the bodies meet on one group instead of five."""
+    b = s.mem[7]
+    k, mi = (b >> 5) - 1, b & 31
+    h = w.idx.get(mi)
+    if k < 0 or h is None or s.mem[k] != 1 | mi << 3:
+        return None
+    return (k, h) if claimants(w, s, mi) < crew(w, s, h) else None
+
+
+def farm_price(w, s, h, k, walk, div):
+    """[T1] My share of the team rate of a take of h by a crew of k: value / div / (walk + clear(k) + 5 + detour),
+    less my bag's risk. One currency: team gems per round, split per body so it compares with bank, kill and heal.
+    div = k, or for a crew still forming the bodies it still needs (price_all)."""
     o = w.G[h]
     if o.st == "resp" and o.until > s.r:
-        return 0.0
+        # [T6] arrive at the respawn: priced as a full group whose eta is the later of my walk and its respawn
+        # (P14 be first to the field: the top teams retake 20 rounds after the respawn timer, we waited for it to show)
+        if o.until - s.r > RESP_LOOK:
+            return 0.0
+        walk = max(walk, o.until - s.r)
     rc = race(w)
     walk *= rc["walk_w"]
     prof = ME["prof"]
-    value = o.gems + g2g(s.r) * o.gold * prof["gold"]
-    sm = stack_mode(w, s.r)
-    bx = STACK_BODY_EXP if sm else BODY_EXP     # [user plan 15 Oct, stack opener] value / bodies ** bx
-    div = max(1, bodies) if bx == 1.0 else max(1, bodies) ** bx
-    if CHAIN_ON:
-        g = o.gems / div                        # gems my bag gains; gold is not carried risk and adds no channel
-        gv = value / div - g
-        ce, he, P = chain(w, s, o, g) if s.carry and w.apos else (0, 0, 0.0)
-        cv = g * (1 - P) + gv                   # [IMPROVEMENTS 3] the gems reach the altar with P(keep the bag)
+    # P2 one currency: a crew take is priced in team value (gold weight 1), so every body ranks it the same; my
+    # profile's gold weight only on a solo take, whose gold is all mine (packs, 19 Oct: Vesper's x3 gold put her
+    # alone on a 180-gold crew-3 group that Varg and Ryth priced below their solo groups)
+    value = o.gems + g2g(s.r) * o.gold * (prof["gold"] if k <= 1 else 1.0)
     if o.st == "reward":
-        if CHAIN_ON:
-            return cv / (walk + 5 + ce + he) * REWARD_X - P * s.bag * (ce + 5) / CHAIN_EXPO
         return value / div / (walk + 5) * REWARD_X     # [user decision 15 Oct afternoon] free gems beat a clear
-    Se = s_eff(w, s, h, bodies)                 # [user decision 15 Oct] my Strength x my splash (30_world)
+    Se = s_eff(w, s, h, k)                      # [user decision 15 Oct] my Strength x my splash (30_world)
     if o.hp is None:                            # full HP: cached per (group, bodies, my Strength)
-        key = (h, bodies, Se)
+        key = (h, k, Se)
         cd = CLEAR_MEMO.get(key)
         if cd is None:
             if len(CLEAR_MEMO) > 400:
                 CLEAR_MEMO.clear()
-            cd = CLEAR_MEMO[key] = clear_dmg(o.mons, Se, bodies)
+            cd = CLEAR_MEMO[key] = clear_dmg(o.mons, Se, k)
         clear, dmg = cd
     else:
         mons = [m for m in o.hp if m[0] > 0]
         if not mons:
-            if CHAIN_ON:
-                return cv / (walk + 5 + ce + he) - P * s.bag * (ce + 5) / CHAIN_EXPO
             return value / div / (walk + 5)
-        clear, dmg = clear_dmg(mons, Se, bodies)
-    per = dmg * tank(bodies) + s.edps * min(clear + 5, 10)    # [tuned] + enemies hitting me; TANK_SHARE [15 Oct afternoon]
+        clear, dmg = clear_dmg(mons, Se, k)
+    per = my_dmg(dmg, k, clear) + s.edps * min(clear + 5, 10)    # [tuned] + enemies hitting me; TANK_SHARE [15 Oct afternoon]
     if per >= s.hp:
-        return 0.0                                  # [deviation] certain death is not a price
-    miss = bodies - 1 - (w.claims.get(h, 0) if c is None else c)
-    if miss > 0:
-        walk += (STACK_WAIT_PARTNER if sm else rc["wait"]) * miss                 # [guess] partners not committed yet
+        return 0.0                              # [deviation] certain death is not a price
     risk = s.bag if s.hp - per < KEEP_HP * s.maxhp else s.P * s.bag   # [tuned] bag exposure (danger_p)
     if RECALL_COST and s.hp - per < KEEP_HP * s.maxhp:
         # [user decision 15 Oct afternoon] the clear leaves me below KEEP_HP: a recall (5) + the walk back out follow it
         walk += 5 + min(fget(w.F_home, o.anchor) if w.F_home is not None else 20, 20)
-    if CHAIN_ON:
-        # [IMPROVEMENTS 3, amended] marginal leg: carry_extra replaces detour, risk_extra (the bag exposed over the
-        # extra rounds) replaces P x bag; a clear that breaks KEEP_HP still risks the whole bag (kept as today)
-        if s.hp - per >= KEEP_HP * s.maxhp:
-            risk = P * s.bag * (ce + clear + 5) / CHAIN_EXPO
-        return cv / (walk + clear + 5 + ce + he) - risk
     detour = 0
     if o.near < len(w.apos):
         detour = max(0, o.anchor.chebyshev_distance(w.apos[o.near]) - s.walt)
     return value / div / (walk + clear + 5 + detour) - risk
-
-
-def need_k(w, s, h, c):
-    """Smallest k >= 1 + c (claimants + me), at most the team, whose most-hit body keeps KEEP_HP (live clear model:
-    my HP and Strength, monsters' remembered HP); None if no team size does. Pair takes price with this k and pay
-    WAIT_PARTNER per body not yet committed, so the first champion claims and the second sees one claimant."""
-    o = w.G[h]
-    if o.st != "alive":
-        return 1 + c
-    mons = o.mons if o.hp is None else [m for m in o.hp if m[0] > 0]
-    if not mons:
-        return 1 + c
-    sm = stack_mode(w, s.r)
-    if sm and w.seed is not None:
-        return max(1 + c, sub_size(w))          # [user plan 15 Oct, pair/trio opener] seed: my subgroup takes it
-    T = max(1, len(w.roster))
-    floor = s.hp * SURVIVE                      # survival, as FARM's own zero rule (KEEP_HP stays a risk term)
-    for k in range(1 + c, T + 1):
-        Se = s_eff(w, s, h, k)                  # [user decision 15 Oct] splash (30_world)
-        key = (h, k, Se) if o.hp is None else None
-        cd = CLEAR_MEMO.get(key) if key else None
-        if cd is None:
-            cd = clear_dmg(mons, Se, k)
-            if key:
-                CLEAR_MEMO[key] = cd
-        if cd[1] * tank(k) + s.edps * min(cd[0] + 5, 10) <= floor:   # [15 Oct afternoon] TANK_SHARE
-            return min(k, max(1 + c, sub_size(w))) if sm else k   # group mode: capped at my subgroup's size
-    return None
 
 
 RESET_X = {}                # champion id -> 2 with an attack-reset ability (double hit), else 1; cached per id
@@ -609,80 +568,6 @@ def lanchester(s, e_pos=None):
 def engaged(s, h):
     """A live monster of group h is within CAMP_R of me (the camp is hitting me / I am attacking it)."""
     return any(hp > 0 and p.chebyshev_distance(s.pos) <= CAMP_R for _c, hp, p, _st in s.live.get(h, ()))
-
-
-def rally_tile(w, a):
-    """[CENTRE_ON] rally tile for altar a, cached in w.rally: a walkable tile at Chebyshev RALLY_D from it (then
-    RALLY_D - 1, + 1, ...) with the lowest F_home (nearest our spawn); None if none is reachable. One ring per altar."""
-    rl = w.rally
-    if a in rl:
-        return rl[a]
-    F = w.home_field()
-    ap = w.apos[a]
-    best = None
-    for d in (RALLY_D, RALLY_D - 1, RALLY_D + 1, RALLY_D - 2, RALLY_D + 2, RALLY_D - 3, RALLY_D - 4):
-        for x in range(ap.x - d, ap.x + d + 1):
-            for y in ((ap.y - d, ap.y + d) if ap.x - d < x < ap.x + d else range(ap.y - d, ap.y + d + 1)):
-                if not (0 <= x < w.Wm and 0 <= y < w.Hm):
-                    continue
-                q = V(x, y)
-                if w.blk_nav.is_set(q):
-                    continue
-                v = fget(F, q)
-                if v < FAR and (best is None or v < best[0]):
-                    best = (v, q)
-        if best is not None:
-            break
-    rl[a] = best[1] if best else None
-    trace("centre", f"rally A{a}@{ap.x},{ap.y} -> {best[1].x},{best[1].y} home={best[0]}" if best else f"rally A{a} none")
-    return rl[a]
-
-
-def conv_count(w, s, a):
-    """[CENTRE_ON] roster champions converging on altar a, me included: bytes with the hunt code (3) and target a,
-    plus code-3 bytes (a kill) of allies I can see (the fight at the rally has started)."""
-    vis = {w.ally_slot(x[0]) for x in s.allies}
-    n = 1
-    for k in range(min(5, len(w.roster))):
-        if k == w.slot:
-            continue
-        b = s.mem[k]
-        if b & 7 == 3 and ((b >> 3) == a or k in vis):
-            n += 1
-    return n
-
-
-def centre(w, s):
-    """[CENTRE_ON, user plan 15 Oct night] the team's answer to a fresh stack sighting at altar s.sa on our side or
-    contested: "converge" | "leave" | None (no trigger). Same bytes -> same answer on every champion, except my own
-    failed rally (w.cfail: LEAVE for RALLY_FAIL_ROUNDS). P(lose) by the square law on draft base HP x Strength: ours
-    = the alive roster (byte code != 7, me included), theirs = s.sc x the roster mean. Sets s.cdec, s.cpl, s.nus;
-    traces `centre` on every change."""
-    dec, pl, n = None, 0.0, 0
-    a = s.sa
-    if CENTRE_ON and s.stack and s.sc >= CENTRE_MIN_SC and w.apos and w.aside[a] <= 1:
-        ros = w.roster or [ME.get("id", -1)]
-        hs = [BASE_STATS.get(d, (1000, 50)) for d in ros]
-        mean = sum(h * st for h, st in hs) / max(1, len(hs))
-        us = 0.0
-        for k in range(len(ros)):
-            if k == w.slot or k > 4 or s.mem[k] & 7 != 7:
-                n += 1
-                us += hs[k][0] * hs[k][1]
-        th = s.sc * mean
-        pl = th * th / max(1.0, us * us + th * th)
-        dec = "converge" if pl <= CONVERGE_PLOSE and n >= s.sc + CONVERGE_MARGIN and a <= 30 else "leave"
-        if dec == "converge" and (w.cfail.get(a, -1) > s.r or rally_tile(w, a) is None):
-            dec = "leave"
-    s.cdec, s.cpl, s.nus = dec, pl, n
-    w.cnus = n
-    key = (dec, a if dec else None)
-    if key != w.cdec:
-        w.cdec = key
-        trace("centre", f"{dec or 'none'} sc={s.sc} sa=A{a if a < 255 else '-'} n_us={n} plose_team={pl:.2f} "
-                        f"side={w.aside[a] if a < len(w.aside) else '-'} age={s.sage if s.sc else '-'} "
-                        f"fail={int(w.cfail.get(a, -1) > s.r)}")
-    return dec
 
 
 def stack_n(w):
@@ -798,7 +683,6 @@ def price_all(w, s, cl, by):
     """[(price, option, target)] for every option this turn (multipliers: champion row x posture column)."""
     prof, r = ME["prof"], s.r
     pm = posture(w, s)
-    sm = stack_mode(w, r)
     out = []
     # WARD: on the way, not first. A pending draft ward tile prices only when its detour from my current goal is
     # <= WARD_DETOUR, or when I am idle / falling back (or already walking to it); 0 once my ward is placed
@@ -820,92 +704,72 @@ def price_all(w, s, cl, by):
     s.edps = sum(e[5] for e in s.enemies if e[4] <= 4)
     s.walt = fget(w.F_alt, s.pos)
     s.plose = lanchester(s, s.pos) if s.enemies else 0.0
-    dead_g = None
-    b7 = s.mem[7]                               # death marker: group index + 1 (low 5 bits), (round // 32) & 7 stamp
-    if b7 & 31 and (((r // 32) - (b7 >> 5)) & 7) * 32 < DEATH_MARK:
-        dead_g = w.idx.get((b7 & 31) - 1)
+    # groups an ally died on: its slot byte is code 7 with the group as target while it is out (60 rounds [rules])
+    dead_g = {w.idx[s.mem[k] >> 3] for k in range(min(5, len(w.roster)))
+              if k != w.slot and s.mem[k] & 7 == 7 and s.mem[k] >> 3 in w.idx}
+    s.call = call_of(w, s)
     sap = w.apos[s.sa] if s.stack else None
     s.sap = sap
-    cdec = centre(w, s) if CENTRE_ON else None      # [CENTRE_ON] converge / leave / None
-    hot = w.apos[s.sa] if cdec == "leave" else None # LEAVE: that altar's region prices 0 (below, end of price_all)
     s.ba, s.bwk = bank_altar(w, s, sap) if w.apos else (0, FAR)
     s.carry = True
-    if CHAIN_ON and sm and s.bag == 0:
-        # [IMPROVEMENTS 3] group mode: the chain is the subgroup carry's (handoff: Vesper if in my subgroup, else its
-        # lowest slot); the others' bags stay 0 after the handoff, they price the farm leg only
-        mine = (getattr(w, "subs", None) or {}).get(w.slot, ())
-        if len(mine) > 1:
-            vs = w.roster.index(VESPER_ID) if VESPER_ID in w.roster else -1
-            s.carry = w.slot == (vs if vs in mine else min(mine))
     update_groups(w, s, cand)
     rawb = 0.0
+    # [T3] P19 a crew member stays with its crew: while another body claims my crew take, I start no other farm
+    mine = cur[1] if cur[0] == "farm" and cur[1] in w.G and w.ncrew >= 2 and \
+        claimants(w, s, w.G[cur[1]].mi) >= 2 else None
+    # [T3] allies claiming a crew take (crew >= 2) are committed to it: they can't answer another crew's call
+    busy = sum(n for g, n in cl.items() if g in w.G and crew(w, s, g) >= 2)
     for h in cand:
         o = w.G[h]
-        c = cl.get(h, 0)
-        # [rule, 15 Oct ladder 3] one-way yield on need-1 groups: only a LOWER slot's claim zeroes it (w.lowcl), and
-        # a higher slot's claim is never a partner for me (it yields), so c = 0 (was: its claim made k = 2 with no
-        # WAIT_PARTNER, pulling the lower slot onto the higher slot's group every 2 rounds: a 30-round A,B,A,B swap
-        # on a 40x40 ladder map). Engaged on h (a live monster of h within CAMP_R): never yield it.
-        call = c
-        if o.need <= 1:
-            if not sm and h in w.lowcl and not (cur == ("farm", h) and engaged(s, h)):   # stack mode: no yield
-                continue
-            c = 0
-        elif ONEWAY_PARTNERS:
-            # [user decision 15 Oct afternoon, ladder cd737718: a pair swapped g0/g2 every 2 rounds, each counting the
-            # other's claim as a partner] only LOWER slots' claims are partners: the lower slot leads, higher slots join
-            c = w.lowcn.get(h, 0)
-        k = need_k(w, s, h, c)                  # bodies the live clear model needs, me + c claimants at least
-        if k is None or (call == 0 and k >= 2 and r < w.pair_until and not sm):   # stack mode: k is the team
+        # [T3] assignment through the slot bytes (CBBA-style). A one-body group is exclusive: claimed by an ally it
+        # prices 0, and with two claimants the higher slot leaves (rank by slot, so simultaneous choices settle in a
+        # turn; engaged on h, a live monster within CAMP_R, I stay). A crew group past its crew takes one more body
+        # at the share of all its claimants, kk = allies claiming + 1 (P10; elkring 19 Oct: the fifth body over a crew of
+        # 4 had nothing priced and fell back for 12 rounds, as the top teams put all five on the first big group).
+        k = crew(w, s, h)
+        kk = max(k, 1 + cl.get(h, 0)) if k >= 2 else 1
+        if k == 1 and (w.lowcn.get(h, 0) >= 1 and not engaged(s, h) if cur == ("farm", h) else cl.get(h, 0) >= 1):
             continue
-        # One claimant per SOLO group: an ally broadcasts farm on a group the draft says needs 1 body -> 0 for me
-        # (user's plan, 15 Oct late). Groups needing >= 2 keep the per-body split (value / bodies). History: the gate
-        # on ALL groups (fix7/fix8) lost rows A and raised elkring deaths 5 -> 17-19 (elks under-bodied). Tried with
-        # "and my live model could solo it": the weaker champion joined the stronger one's group and the stronger
-        # one then left it (collision A, open1), so the draft's need decides alone.
-        # [rule, 15 Oct ladder phase 1] tie-break by roster slot: only an ally with a LOWER slot zeroes it (the lower
-        # slot keeps it); a higher slot sees mine and yields, so simultaneous choices settle in one turn.
-        if h == dead_g or (s.plose > FARM_PLOSE and s.near_e <= 5):
-            continue                            # an ally died farming it recently, or outnumbered here
+        if k >= 2 and cur != ("farm", h) and not cl.get(h, 0) and s.call is not None and s.call[1] != h:
+            continue                            # a crew is being called elsewhere: join it, don't start another
+        if (mine is not None and h != mine) or h in dead_g or (s.plose > FARM_PLOSE and s.near_e <= 5):
+            continue                            # in a crew elsewhere, an ally died farming it, or outnumbered here
+        if k >= 2 and cur != ("farm", h):
+            # [T3] P10 start or join a crew take only if the bodies free to come reach its need (me, its claimants,
+            # the allies not in another crew) or my live model says those survive it (elkring 19 Oct: with four
+            # bodies on one group the fifth walked alone to three need-3 groups in turn and failed at each)
+            av = living(w, s) - busy + cl.get(h, 0)
+            if av < min(k, o.need) and not live_ok(w, s, h, av):
+                continue
         wk = w.walk_to(f"g{h}", s.pos)
         if wk is None or wk >= FAR:
             wk = w.gd.get(h, FAR)
         if wk >= FAR:
             continue
-        fp = farm_price(w, s, h, k, wk, c)
+        # [T3] P19 a crew forming here is shared by the bodies it still needs: the claimants are committed, so the last
+        # body it needs sees the whole take (packs 19 Oct: a call with one claimant priced value / 3 lost to every
+        # solo group and the caller waited alone)
+        div = max(1, k - cl.get(h, 0)) if kk == k >= 2 and cur != ("farm", h) else kk
+        fp = farm_price(w, s, h, kk, wk, div)    # [C2b] a price <= 0 here is no miss: my bag's risk or enemies near
         if fp > rawb:
             rawb = fp                           # death_cost: the best farm price before multipliers
         p = fp * prof["farm"] * pm["farm_their_side" if o.side == 2 else "farm"]
-        if hot is not None:
-            if o.anchor.chebyshev_distance(hot) <= HOT_R:
-                p *= HOT_FARM                   # [CENTRE_ON] LEAVE: replaces the STACK_R / STACK_FARM term
-        elif sap is not None:
+        if sap is not None:
             if SMOOTH_ON:                       # smooth: x0.29 at the altar, x0.6 at STACK_R, x0.96 at 40 tiles
                 p *= 1 - (1 - STACK_FARM) * sig((STACK_R - o.anchor.chebyshev_distance(sap)) / 3)
             elif o.anchor.chebyshev_distance(sap) <= STACK_R:
                 p *= STACK_FARM                 # the stack was just seen there
-        if sm and h in w.lowsub:
-            p *= STACK_FOLLOW                   # [user plan 15 Oct, pair/trio opener] follow my subgroup's lower slots
         out.append((p, "farm", h))
     # BANK
     if s.bag > 0 and w.apos:
         a, wk = s.ba, s.bwk                     # bank_altar(): nearest / our bank / away from a stack
         if wk < FAR and (SMOOTH_ON or not (s.near_e <= 4 and s.plose > P_LOSE_MAX)):
             P = s.P
-            if CHAIN_ON and not CHAIN_BANK_PLUS:
-                # [IMPROVEMENTS 3] the bag's risk lives on the farm side (risk_extra), so BANK could use (1 - P)
-                P = -min(CHAIN_PMAX, P * (1 + s.bag / CHAIN_BAG))
             # [deviation] the risk of holding the bag is ADDED to BANK (PRICES: "at bag >= 20 with an enemy
             # within 8, risk dominates and BANK wins"); subtracting it would stop every bank near an enemy.
             # BANK_NEAR_BONUS [guess]: tempo, a bag next to an altar banks now (ladder: 22 gems carried 40 rounds)
             near = 1 + BANK_NEAR_BONUS if wk <= BANK_NEAR else 1
             bp = s.bag * (1 + P) * near / (wk * race(w)["bank_ret"] + max(1, -(-s.bag // 10))) * prof["bank"] * pm["bank_risk"]
-            if CHAIN_ON:
-                pass                            # the chain replaces the lump / cash-out patches
-            elif sm and s.bag < STACK_BANK_MIN:
-                bp *= STACK_BANK_LOW            # [user plan 15 Oct, stack opener] bank in lumps
-            elif sm and GROUP_BANK_BAG and s.bag >= GROUP_BANK_BAG:
-                bp *= GROUP_BANK_X * s.bag / GROUP_BANK_BAG     # the carry banks its lump
             if SMOOTH_ON:
                 bp *= sig((s.near_e - 4) / 1.5)     # x0.5 enemy at 4, x0.12 at 1, x0.88 at 7 (exec_bank still refuses <= 3)
             out.append((bp, "bank", a))
@@ -919,11 +783,7 @@ def price_all(w, s, cl, by):
     kp = prof.get("kill_plose", KILL_PLOSE)     # [user plan 15 Oct, ladder 6] per-champion / phase kill gate
     kpow = KILL_PL_POWS.get(kp, KILL_PL_POW)    # SMOOTH_ON: kill value x (1 - pl) ** kpow, 0.5 at pl = kp
     dn = prof.get("denial", DENIAL)             # [user decision 15 Oct afternoon] per-champion denial term (Vesper 60)
-    if sm and w.roster and w.slot < len(w.roster) and w.roster[w.slot] == VESPER_ID:
-        kmul *= GROUP_KILL_X                    # [user decision 15 Oct afternoon] her kill must beat an unsplit farm
     pat = prof.get("patrol", prof.get("hunt", 0) > 0)   # sighting hunt / patrol switch (Vesper: from 15 shards only)
-    kz = camp_zone(w, s) if s.enemies else None    # [user decision 15 Oct] kill exclusions: tiles exec_kill never steps on
-    kin = kz is not None and kz.is_set(s.pos)
     for c, p, hp, bag, dd, st in s.enemies:
         ttk = -(-int(hp) // int(s.S))
         fin = ttk <= 2                          # finisher: dies in <= 2 of my hits
@@ -933,8 +793,6 @@ def price_all(w, s, cl, by):
             continue                            # [bug fix 15 Oct, ladder 4] a chased-out kill: no finisher exemption
         if near_espawn(w, p):
             continue                            # [user decision 15 Oct] on / next to their spawn: heals to full, finishers too
-        if kz is not None and dd > ME.get("range", 1) and (kin or (disk(p, ME.get("range", 1)) & ~kz & ~w.blk_nav).is_empty()):
-            continue                            # [user decision 15 Oct] every tile in my range of it is by a camp: exec_kill would fail
         try:
             chan = c.is_submitting_gems() or c.is_recalling()
             stun = (not chan) and dd <= reach + 3 and c.buffs().has_stun()
@@ -947,9 +805,7 @@ def price_all(w, s, cl, by):
         hr = reach + prof.get("hunt", 0)
         far = 0
         if not (chan or stun or dd <= hr or (fin and dd <= reach + 2 * ttk + 2)):
-            if not (SMOOTH_ON and SMOOTH_CHASE) or dd > hr + FAR_CHASE_MAX:
-                continue
-            far = (dd - hr) * FAR_CHASE         # smooth closable: each tile past reach + hunt costs FAR_CHASE rounds
+            continue
         value = bag + 50 * g2g(r) + dn
         rounds = max(0, dd - ME.get("range", 1)) + ttk + far
         pl = s.plose
@@ -966,7 +822,7 @@ def price_all(w, s, cl, by):
     # HUNT a sighting [rule, 15 Oct ladder 3]: hunt phase only, nobody visible, fresh byte 5 -> walk to its altar.
     # value = HUNT_BAG + 50 g2g + DENIAL [guess bag], rounds = walk + 5; Lanchester vs s.sc enemies at my base stats.
     if (pat and not s.enemies and s.sc and s.sage <= SIGHT_FRESH and s.sa < len(w.apos)
-            and r >= w.kh_until and cdec != "converge"):
+            and r >= w.kh_until):
         a = s.sa
         wk = w.walk_to(f"a{a}", s.pos)
         if wk is None or wk >= FAR:
@@ -1016,9 +872,12 @@ def price_all(w, s, cl, by):
     for c, p, hp, st in s.allies:
         k = w.ally_slot(c)
         op, tg = by.get(k, (0, 0))
-        if op != 3 or not 2 < p.chebyshev_distance(s.pos) <= JOIN_FIGHT_R or r < w.kh_until:    # <= 2: there, KILL
+        sos = None
+        if op != 3:
             continue
-        e = next((x for x in s.enemies if int(x[0]) & 31 == tg), None)
+        if not 2 < p.chebyshev_distance(s.pos) <= JOIN_FIGHT_R or r < w.kh_until:    # <= 2: there, KILL
+            continue
+        e = sos or next((x for x in s.enemies if int(x[0]) & 31 == tg), None)
         ep, eb, ttk = (e[1], e[3], -(-int(e[2]) // int(s.S))) if e else (p, 0, JOIN_TTK)
         if near_espawn(w, ep):
             continue                            # [user decision 15 Oct] kill exclusions: the target is on their spawn
@@ -1044,18 +903,6 @@ def price_all(w, s, cl, by):
     fcost = min(prof.get("dcost_fight", DCOST_FIGHT_CAP), dcost)   # [user plan 15 Oct, ladder 5/6] fights risk at most 150 (key dcost_fight); HEAL keeps dcost
     for v, rd, m, pl, o, tg in fights:
         out.append(((v - pl * fcost) / rd * m, o, tg))
-    if cdec == "converge" and r - w.crel.get(s.sa, -999) > CONV_REL:
-        # [CENTRE_ON] CONVERGE (also with enemies in sight: a champion by the stack falls back to the rally first;
-        # after my release KILL / JOIN own the fight for CONV_REL rounds): every champion hunts the stack's altar via the rally tile, priced as a team fight:
-        # value s.sc x (HUNT_BAG + 50 g2g) x (1 - P) - P x fcost over (walk to the rally + 5) x CONVERGE_X, P = the
-        # team's P(lose) (centre). Not in death_cost's best price above (HEAL untouched).
-        a = s.sa
-        rt = rally_tile(w, a)
-        wk = w.walk_to(f"r{a}", s.pos)
-        if wk is None or wk >= FAR:
-            wk = s.pos.chebyshev_distance(rt)
-        pl = s.cpl
-        out.append(((s.sc * (HUNT_BAG + 50 * g2g(r)) * (1 - pl) - pl * fcost) / (wk + 5) * CONVERGE_X, "hunt", CONV_T + a))
     # HEAL: what a death costs (death_cost: bag + 60 rounds of my best farm price) x P(die), over a recall (5) + the walk back out.
     # P(die) = (1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, clamped to [0, 1]; at least STACK_HEAL with >= 3
     # enemies within 8 and no ally within 5, even at full HP (HEAL is then "go home": the executor walks while an
@@ -1097,57 +944,19 @@ def price_all(w, s, cl, by):
         rounds = 1 if s.spawn else 6
         if SHOP_RETURN and not s.spawn:
             rounds += fget(w.home_field(), s.pos) if w.F_home is not None else 20
-        gx = GROUP_SHOP_X if sm and GROUP_SHOP_GOLD and s.gold >= GROUP_SHOP_GOLD else 1.0   # [user decision 15 Oct] carry cash-out
-        out.append((g2g(r) * n * cost / rounds * prof["shop"] * pm["shop"] * gx, "shop", 0))
-    # JOIN: an ally farming a group that needs >= 2
-    for k, (op, tg) in by.items():
-        if op != 1 or tg not in w.idx:
-            continue
-        h = w.idx[tg]
-        o = w.G[h]
-        if o.need < 2:
-            continue
-        wk = w.gd.get(h, FAR)
-        if wk >= FAR:
-            continue
-        if min(t.chebyshev_distance(s.pos) for t in o.tiles) <= 4:
-            continue                            # there: FARM(g) prices itself
-        b = cl.get(h, 1)
-        bx = STACK_BODY_EXP if sm else BODY_EXP     # [user plan 15 Oct, stack opener] same exponent as farm_price
-        lo = farm_price(w, s, h, b, wk) * (b if bx == 1.0 else b ** bx) if b >= o.need else 0.0
-        gain = farm_price(w, s, h, b + 1, wk) * ((b + 1) if bx == 1.0 else (b + 1) ** bx) - max(0.0, lo)
-        if gain > 0:
-            out.append((gain / max(1, wk) * prof["join"] * pm["join"], "join", k))
-    if hot is not None:
-        # [CENTRE_ON] LEAVE: HOLD and BANK at the stack's altar and WARD tiles within HOT_R of it x 0
-        a = s.sa
-        out = [t for t in out if not ((t[1] in ("hold", "bank") and t[2] == a)
-                                      or (t[1] == "ward" and w.wtiles[t[2]].chebyshev_distance(hot) <= HOT_R))]
+        out.append((g2g(r) * n * cost / rounds * prof["shop"] * pm["shop"], "shop", 0))
     return out
 
 
-SEED_UNTIL = 40             # [rule, 15 Oct ladder phase 1] the opening seed holds to this round (was round 1 + 2)
+SALT = 0                    # tools/field.py --salts: per-salt jitter on prices (0 = off, the real bot)
+SALT_EPS = 0.02             # [guess, as tzunami-lite] jitter size: only near-ties change
 
 
-def seeded(w, s):
-    """True while the opening seed holds: until SEED_UNTIL, while I still execute it (going), and the seeded group is
-    not cleared / respawning (seen taken on arrival: exec_farm returns done) and no reward came in yet (bag or gold
-    above what I held when it was set: a capture; a fast respawn otherwise kept me re-farming it). Clears w.seed and traces once on end."""
-    sd = w.seed
-    if sd is None:
-        return False
-    o = w.G.get(sd)
-    cd = w.cdec[0] if CENTRE_ON else None      # [CENTRE_ON] converge, or leave with the seed in the hot region: no seed
-    hotseed = cd == "leave" and o is not None and w.cdec[1] is not None \
-        and o.anchor.chebyshev_distance(w.apos[w.cdec[1]]) <= HOT_R
-    if s.r <= w.seed_until and w.cur == ("farm", sd) and w.status == "going" and o is not None \
-            and not (o.st == "resp" and o.until > s.r) and s.bag <= w.lastbag and s.gold <= w.lastgold \
-            and cd != "converge" and not hotseed:
-        return True
-    w.seed = None
-    trace("choice", f"seed end {tname(w, 'farm', sd)} cur={w.cur[0]} status={w.status} st={o.st if o else '-'} "
-                    f"bag={s.bag} gold={s.gold}")
-    return False
+def salt_j(r, slot, o, t):
+    """SALT jitter factor in [1 - SALT_EPS, 1 + SALT_EPS) (deterministic; no hash(): str hashes are salted per run)."""
+    v = (SALT * 1000003 + r * 7919 + slot * 104729 + ord(o[0]) * 131 + len(o) * 17 + (t if isinstance(t, int) else 0)) \
+        * 2654435761 & 0xFFFF
+    return 1.0 + SALT_EPS * (v / 32768.0 - 1.0)
 
 
 def choose(w, s):
@@ -1159,16 +968,15 @@ def choose(w, s):
     cur = w.cur
     cl, by = claims(w, s)
     w.claims = cl
-    w.lowcl = {w.idx[tg] for k, (op, tg) in by.items() if k < w.slot and op == 1 and tg in w.idx}
-    w.lowcn = {}                                # group -> claimants with a lower slot than mine (ONEWAY_PARTNERS)
+    lo = w.slot + 1 if w.twin else w.slot       # [C6] Issac ranks just after Cassi (her slot counts as lower)
+    w.lowcn = {}                                # [T3] group -> claimants with a lower slot than mine (my crew rank)
     for k, (op, tg) in by.items():
-        if k < w.slot and op == 1 and tg in w.idx:
+        if k < lo and op == 1 and tg in w.idx:
             w.lowcn[w.idx[tg]] = w.lowcn.get(w.idx[tg], 0) + 1
-    sb = getattr(w, "subs", None) or {}
-    mine = sb.get(w.slot, ())
-    w.lowsub = {w.idx[tg] for k, (op, tg) in by.items() if k < w.slot and k in mine and op == 1 and tg in w.idx}
     ps = price_all(w, s, cl, by)
     r = s.r
+    if SALT:
+        ps = [(t[0] * salt_j(r, w.slot, t[1], t[2]), t[1], t[2]) for t in ps]    # tools/field.py --salts
     ps = [t for t in ps if t[1] == "heal" or w.excl.get((t[1], t[2]), -1) <= r]
     ps.sort(key=lambda t: -t[0])
     curp = None
@@ -1182,8 +990,6 @@ def choose(w, s):
     if TRACE and s.attacker is not None and w.cur[0] in ("heal", "fall") or TRACE and s.attacker is not None and best[1] in ("heal", "fall"):
         trace("flee", f"{w.cur[0]}->{best[1]} att={int(s.attacker[0])} d={s.attacker[4]} trapped={int(s.trapped)} "
                       f"ok={int(flee_ok(s))} hp={s.hp / s.maxhp:.2f} pl={s.plose:.2f}")
-    if seeded(w, s) and best[1] != "heal" and not retreat_now(s):
-        return False                            # the opening seed holds (only HEAL / retreat break it)
     going = curp is not None and curp > 0 and w.status == "going"
     held = going and r - w.started < HOLD_TURNS and not retreat_now(s)
     # [user plan 15 Oct, ladder 5] a KILL on a still-visible target, or a HUNT on a fresh sighting while it prices,
@@ -1217,6 +1023,7 @@ def choose(w, s):
                         f"hp={s.hp / s.maxhp:.2f} fight={bfi:.2f} dcost={s.dcost:.0f} pl={getattr(s, 'plose', 0):.2f} ne={s.near_e} "
                         f"d={w.G[new[1]].anchor.chebyshev_distance(s.pos) if new[0] == 'farm' and new[1] in w.G else '-'} "
                         f"from={cur[0]}:{cur[1]} hit={int(hit)} prog={pg:.2f}"
+                        + (f" crew={w.ncrew} cl={w.claims.get(new[1], 0)} live={living(w, s)} call={s.call}" if new[0] == "farm" else "")
                         + (f" roam={w.roam:.2f}" if new[0] == "hunt" and new[1] != s.sa else "")
                         + "".join(f" tp={e[1].x},{e[1].y} desp={min(e[1].chebyshev_distance(q) for q in w.esp.positions())}"
                                   for e in s.enemies if new[0] == "kill" and int(e[0]) == new[1]))
@@ -1229,8 +1036,6 @@ def tname(w, op, tg):
     if op == "farm":
         o = w.G.get(tg)
         return f"g{tg}@{o.anchor.x},{o.anchor.y}" if o else str(tg)
-    if op == "hunt" and tg >= CONV_T:
-        return f"C{tg - CONV_T}"                # converge on altar tg - CONV_T
     if op == "hunt" and tg >= 100:
         return f"g{tg - 100}"
     if op in ("bank", "hold", "hunt"):
@@ -1249,18 +1054,35 @@ def tbits(w, op, tg):
 
 
 def broadcast(w, s, code):
-    """My byte (slot) when it changed; bytes 5-6 sighting (count | stamp, region altar); stale bytes 5 and 7 cleared."""
+    """My byte (slot) when it changed; the crew call (byte 7); bytes 5-6 sighting (count | stamp, region altar)."""
     if w.cur[0] == "ward" and w.cur[1] is not None:
         b = ((w.cur[1] + 1) & 31) << 3         # code 0, target = ward index + 1
+    elif code == 7:
+        b = 7 | w.dead_mi << 3                  # dead: the group I died on (the team avoids it while I am out)
     else:
-        hb = 31                                 # hunt: 31 = sighting / patrol; a converge hunt: its altar (0-30)
-        if w.cur[0] == "hunt" and w.cur[1] is not None and w.cur[1] >= CONV_T:
-            hb = min(31, w.cur[1] - CONV_T)
+        hb = 31                                 # hunt: 31 = sighting / patrol
         b = code | ((hb if w.cur[0] == "hunt" else tbits(w, OPT[code], w.cur[1])) << 3 if 0 < code < 7 else 0)
-    if b != w.sent:
+    if b != w.sent and not w.twin:              # [C6] Issac shares Cassi's slot: only Cassi writes it
         try:
             cambc.shared_memory[w.slot] = b
-            w.sent = b
+            w.sent = s.mem[w.slot] = b
+        except Exception:
+            pass
+    if w.twin:
+        return
+    # [T3] the crew call: a crew take with no live call and claimants short of the crew calls it; my call
+    # ends when my byte leaves its group
+    b7, me = s.mem[7], w.slot + 1
+    h = w.cur[1] if w.cur[0] == "farm" else None
+    c7 = b7
+    if h in w.G and w.ncrew >= 2 and s.call is None and claimants(w, s, w.G[h].mi) < w.ncrew:
+        c7 = me << 5 | w.G[h].mi
+    elif b7 >> 5 == me and b != 1 | (b7 & 31) << 3:
+        c7 = 0
+    if c7 != b7:
+        try:
+            cambc.shared_memory[7] = c7
+            s.mem[7] = c7
         except Exception:
             pass
     if not s.alive:
@@ -1269,9 +1091,6 @@ def broadcast(w, s, code):
         if s.sc and s.sage >= SIGHT_LIVE:
             cambc.shared_memory[5] = 0
             s.sc, s.sage = 0, 999
-        b7 = s.mem[7]
-        if b7 & 31 and (((s.r // 32) - (b7 >> 5)) & 7) * 32 >= DEATH_MARK:
-            cambc.shared_memory[7] = 0
     except Exception:
         pass
     es = s.enemies

@@ -3,9 +3,9 @@
 Source: Sun Tzu, *The Art of War*, translated by Lionel Giles (1910), public domain, [Project Gutenberg #132](https://www.gutenberg.org/ebooks/132). Commentary removed; references are `chapter.verse`.
 
 - **Part 1** is the key passages, quoted word for word.
-- **Part 2** is the main principles distilled from them, numbered `P1`, `P2`... so `STRATEGY.md` and code comments can cite them.
+- **Part 2** is the main principles distilled from them, numbered `P1`, `P2`... so the design docs and code comments can cite them.
 
-No game mapping here on purpose: this file is the source. Mapping to Battlecode lives in `STRATEGY.md`.
+No game mapping here on purpose: this file is the source. Mapping to Battlecode lives in the design docs (`docs/redo/`).
 
 ---
 

@@ -12,8 +12,8 @@ export const SYM_NAMES = ['HORIZONTAL', 'VERTICAL', 'ROTATIONAL180'];
 export const CAMP = { WOLF: 0, ELK: 1, GEM_CLUSTER: 2, GOLD_CLUSTER: 3, MONOLITH: 4 };
 export const CAMP_NAMES = ['WOLF', 'ELK', 'GEM_CLUSTER', 'GOLD_CLUSTER', 'MONOLITH'];
 
-export async function load() {
-  if (!fs.existsSync(WASM)) throw new Error(`no ${WASM}: run node tools/mapgen/fetch.mjs first`);
+export async function load(wasm = WASM) {
+  if (!fs.existsSync(wasm)) throw new Error(`no ${wasm}: run node tools/mapgen/fetch.mjs first`);
   let mem = null;
   const view = () => new DataView(mem.buffer);
   // Minimal WASI: no files, no environment, no randomness (deterministic output).
@@ -44,7 +44,7 @@ export async function load() {
     wasi_snapshot_preview1: wasi,
     deep_wasm: { on_assert_fail_impl(e, f, l, m) { console.error(`${cstr(f)}:${l}: assertion failed: ${cstr(e)} ${cstr(m)}`); return 1; } },
   };
-  const { instance } = await WebAssembly.instantiate(fs.readFileSync(WASM), imports);
+  const { instance } = await WebAssembly.instantiate(fs.readFileSync(wasm), imports);
   const ex = instance.exports;
   mem = ex.memory;
   ex._initialize();

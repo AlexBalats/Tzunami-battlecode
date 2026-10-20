@@ -1,6 +1,6 @@
 # Champions
 
-One profile per champion in `docs/Champions/<Name>.md`: facts from `GameRules.md`, key numbers, strengths, weaknesses, matchups, draft value, Art of War angle, and a To test list. Numbers are tagged as in `ECONOMY.md`.
+One profile per champion in `docs/Champions/<Name>.md`: facts from `GameRules.md`, key numbers, strengths, weaknesses, matchups, draft value, Art of War angle, and a To test list. Numbers are tagged [rules] / [measured] / [guess].
 
 ## Roster summary
 

@@ -27,10 +27,8 @@ R_REACT = 8                 # [model] reaction distance = vision 8 [rules]
 WARD_R = 6                  # ward vision 6 [rules]
 RECALL = 5                  # recall channel [rules]
 SPAWN_DANGER_R = 4          # [model]
-DANGER_SPAN = 2 * R_REACT   # [model]
 CHOKE_BUMP = 0.15           # [model]
 NARROW_MAX = 0.6            # [model]
-TRAFFIC_MIN_FRAC = 0.25     # [model]
 CHAMP_STR, CHAMP_HP = 50, 1000   # generic champion (docs/ECONOMY.md farming rates: S 50)
 KEEP_FRAC = 0.4             # [model] the hit body keeps >= 40% HP
 TANK_SHARE = 0.6            # [user decision 15 Oct afternoon; guess] the most-hit body takes max(1/k, this) of the damage
@@ -40,20 +38,11 @@ WARD_HEAVY = 4              # [model] ward weight: 1 per path tile, +3 when its 
 GRID = 10
 DMAX = 254                  # fields' max_distance: the lo byte of the u16 is the distance, 255 = unreached
 PROFILE = None              # measurement only: a custom stage order
-SIDE_CH = "oct"             # ours, contested, theirs (u: unreachable)
-REGIMES = ("few", "pick", "many")
-BANKS = ("safe", "contested", "away")
 MEM_VERSION = 2             # 2: group records carry d_us, d_them (strat/MEMORY_LAYOUT.md)
 DRAFT_RESERVE = 1_500_000   # never let a draft turn suspend: it would eat the next turn's pick
 
 # object fields (alts and gobj are lists)
 DU, DT, SD, EU, ET, HH, BD, NR, DA, BK = range(10)
-
-
-def side_of(m):
-    if m is None:
-        return 3
-    return 0 if m > R_REACT else 2 if m < -R_REACT else 1
 
 
 def clear_damage(mons, k, S=CHAMP_STR):
@@ -693,7 +682,6 @@ class DraftModel:
         if hasattr(self, "dtot"):
             self.danger_cells()                      # add the choke bump to the danger grid
 
-    # ---- encode (layout: decode() below)
     def encode(self):
         """Draft memory bytes, built as one int list."""
         A = getattr(self, "alts", [])
@@ -757,19 +745,6 @@ def decode(mem):
     d["wards"] = [(m[k + 2 * i], m[k + 2 * i + 1]) for i in range(m[10])]
     k += 2 * m[10]
     d["danger"] = [m[k + j // 2] >> (4 * (j & 1)) & 15 for j in range(GRID * GRID)] if d["flags"] & 64 else None
-    d["bytes"] = k + (GRID * GRID // 2 if d["danger"] else 0)
+    d["bytes"] = k = k + (GRID * GRID // 2 if d["danger"] else 0)
     return d
-
-
-def summary(d):
-    """One line, identical in content to tools/mapmodel.py's SUMMARY line (diffed)."""
-    S = max(1, d["S"])
-    alt = "".join("octu"[a[0]] for a in d["altars"])
-    ca = [alt.count(ch) for ch in "oct"]
-    grp = ",".join(f"{'octu'[g[1]]}{g[2]}" for g in d["groups"])
-    ba = "-" if d["bank_altar"] == 255 else f"A{d['bank_altar']}"
-    return (f"SUMMARY {d['W']}x{d['H']} S={d['S']} regime={(REGIMES + ('?',))[d['regime']]} "
-            f"altars={ca[0]}/{ca[1]}/{ca[2]} bank={(BANKS + ('?',))[d['bank']]} bank_altar={ba} "
-            f"rich={d['rich']}/{S}={d['rich'] / S:.2f} altar_sides={alt} groups={grp} "
-            f"solo={d.get('solo', 1.0):.2f} ggems={d.get('ggems', 0.0):.2f}")
 

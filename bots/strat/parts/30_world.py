@@ -7,8 +7,13 @@ rebuilt when I am > FME_MOVE tiles from its root or after a recall/death). Navig
 (~280k at 80x80) and kept in a small cache. Nothing map-specific: everything comes from game_map at runtime.
 """
 
-ROSTER = (9, 1, 0, 2, 6)    # draft ids in pick order: MUST match PICKS in 90_main's draft branch
+COMP = 0                    # [B6] draft comp (COMPS index): 0 Varg-Vesper-Ryth-Vendetta-Marcella (strat-roles); 1 Varg-Stellar-
+                            # Cassi&Issac-Ryth-Tavi (ladder team A's); 2 Varg-Stellar-Tavi-Ryth-Marcella. 90_main picks ROSTER
+COMPS = ((9, 1, 0, 2, 6), (9, 4, 3, 0, 10), (9, 4, 10, 0, 6))
+ROSTER = COMPS[COMP]        # draft ids in pick order (90_main's draft branch picks this)
 CAMP_R = 3                  # every monster's attack range [measured A31]
+KIT_ON = 1                  # [strat/ROLES.md K1] whole kit: Varg's shield, reset retarget, Ryth's aimed stun on camps
+STUN_R = 1                  # Ryth's area stun radius [rules]
 FME_MOVE = 6                # rebuild F_me when I am more than this from its root (spec)
 NAV_CACHE = 6               # goal fields kept (each ~31k memory, ~280k fuel to build at 80x80)
 DIRS = tuple(V(dx, dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if dx or dy)
@@ -89,6 +94,20 @@ class Grp:
                  "d_us", "d_them", "mi", "hp", "st", "until", "seen")
 
 
+def _dead(u):
+    try:
+        return u.health() <= 0
+    except Exception:
+        return True
+
+
+def _awake(c):
+    try:
+        return int(c.state()) == 1          # CampState.ALIVE = awake [sdk 2.2]
+    except Exception:
+        return False
+
+
 def _uhp(u):
     try:
         return u.health()
@@ -147,21 +166,26 @@ class World:
         self.bank = 255
         if d:
             by = {h & 255: h for h in self.order}
-            for i, rec in enumerate(d["groups"]):
+            for rec in d["groups"]:
                 h = by.get(rec[0])
                 if h is None:
                     continue
                 o = self.G[h]
-                o.side, o.need, o.near, o.d_us, o.d_them, o.mi = rec[1], rec[2], rec[4], rec[5], rec[6], min(i, 31)
+                o.side, o.need, o.near, o.d_us, o.d_them = rec[1], rec[2], rec[4], rec[5], rec[6]
             for i, a in enumerate(d["altars"][:nA]):
                 self.aside[i] = a[0]
             self.bank = d["bank_altar"]
         else:
             S = max(1, len(cambc.champions(Team.ALLY)))
-            for i, h in enumerate(self.order):
+            for h in self.order:
                 o = self.G[h]
-                o.mi = min(i, 31)
                 o.need = bodies_needed(list(o.mons), S)
+        # [T3] a slot byte names a group in 5 bits (31 = none), so only 31 groups can be claimed: the 31 nearest our
+        # spawn by the draft's walk (d_us; ties by camp order), the same on every body. Maps can have 40+ groups (lanes
+        # 19 Oct: index = record order put the first groups we walk to past 30, and five bodies piled on them unseen)
+        rk = sorted(range(len(self.order)), key=lambda i: (self.G[self.order[i]].d_us, i))
+        for n, i in enumerate(rk):
+            self.G[self.order[i]].mi = min(n, 31)
         self.idx = {self.G[h].mi: h for h in self.order if self.G[h].mi < 31}
         # fields
         self.nav = {}
@@ -228,9 +252,6 @@ class World:
                 roots.set(t)
         elif k == "a":
             roots = disk(self.apos[int(key[1:])], 1) & ~blk
-        elif k == "r":                          # [CENTRE_ON] rally tile of altar <a> (40_prices rally_tile)
-            roots = Bitboard()
-            roots.set(self.rally[int(key[1:])])
         elif k == "w":                          # ward j: any free tile within 2 of its tile (placement reach 2 [rules])
             roots = disk(self.wtiles[int(key[1:])], 2) & ~blk
         else:
@@ -286,6 +307,7 @@ class World:
     def cast_init(self):
         """Slots by use: camp damage, champion damage, CC (ME['has_cc'] rule), attack reset."""
         self.ab, self.dash_ab = [], None
+        self.shield_ab = self.gcc_ab = None     # [K1] self-shield slot (Varg); ground CC slot (Ryth's area stun)
         try:
             for a in self.me.abilities():
                 if a.is_dash():
@@ -295,6 +317,10 @@ class World:
                     continue
                 aoe, dmg = a.is_aoe_damage(), a.is_damage()
                 cc = a.is_cc() or (aoe and getattr(info, "duration", 0) > 0) or bool(getattr(info, "enhanced_attack", False))
+                if a.is_shield():
+                    self.shield_ab = a
+                elif cc and a.can_target_ground() and not a.is_attack_reset() and not a.is_dash():
+                    self.gcc_ab = a
                 self.ab.append((a, (dmg or aoe) and a.can_target_camps(), (dmg or aoe or cc) and a.can_target_enemies(),
                                 cc, a.is_attack_reset(), a.can_target_ground()))
         except Exception as e:
@@ -303,6 +329,8 @@ class World:
     def cast(self, target, camp):
         """One cast this turn on target (Unit) if a fitting slot is ready; False if none fired."""
         for a, on_camp, on_enemy, cc, reset, ground in self.ab:
+            if KIT_ON and camp and a is self.gcc_ab:
+                continue                        # [K1] on camps the area stun is aimed by kit_stun only
             if (on_camp if camp else (on_enemy or (cc and not reset))) and not reset:
                 try:
                     if not a.is_ready():
@@ -317,10 +345,15 @@ class World:
                         pass
         return False
 
-    def reset_attack(self, target, pre=None):
+    def reset_attack(self, target, pre=None, alts=()):
         """Attack-reset slots (self-cast), then a second basic attack. TRACE: `reset` line with the target's HP
         before my first hit (pre), at cast and right after the second attack() (verification, 15 Oct); the next
-        turn's HP is traced by reset_check()."""
+        turn's HP is traced by reset_check(). [K1] KIT_ON: a target my first hit killed is swapped for the first
+        live one of alts (in range); with none the reset is kept for a later turn (11% were wasted, ROLES.md)."""
+        if KIT_ON and _dead(target):
+            target = next((u for u in alts if not _dead(u)), None)
+            if target is None:
+                return False
         for a, _c, _e, _cc, reset, _g in self.ab:
             if reset:
                 try:
@@ -350,6 +383,89 @@ class World:
         self.rst = None
         t, pre, h0, r0 = rs
         trace("reset", f"next tgt={int(t)} pre={pre} cast={h0} now={_uhp(t)} rounds={cambc.round_number() - r0}")
+
+    def kit_shield(self, s, hit, extra=None):
+        """[K1, strat/ROLES.md] the self-shield (Varg), one cast per turn [rules], when a hit is coming: an awake camp
+        monster within CAMP_R (or extra, the camp I am about to hit) with no visible champion nearer than me (A2: the
+        nearest is hit), or my HP dropped (hit) with a live monster in reach or an enemy attacker. True if cast."""
+        a = self.shield_ab
+        if a is None:
+            return False
+        try:
+            if not a.is_ready() or self.me.buffs().has_shield():
+                return False
+        except Exception:
+            return False
+        why = "enemy" if hit and s.attacker is not None else None
+        if why is None:
+            others = [p for _c, p, _hp, _st in s.allies] + [e[1] for e in s.enemies]
+            for lv in s.live.values():
+                for c, hp, p, _st in lv:
+                    d = p.chebyshev_distance(s.pos)
+                    if hp <= 0 or d > CAMP_R or (c is not extra and not _awake(c)):
+                        continue
+                    if hit or all(q.chebyshev_distance(p) >= d for q in others):
+                        why = "camp"
+                        break
+                if why:
+                    break
+        if why is None:
+            return False
+        try:
+            ok = a.use(None)
+        except Exception as e:
+            ok = False
+            trace("kit", "shield " + err_text(e)[:60])
+        if ok:
+            trace("kit", f"shield {why} hp={s.hp:.0f}")
+        return ok
+
+    def kit_stun(self, s, h, target):
+        """[K1, strat/ROLES.md; A22, A23 measured] the ground area stun (Ryth) on camps, before my attack (it excludes
+        walking [rules]): the tile in its range whose radius-STUN_R square holds the most awake monsters (target counts:
+        I am about to hit it). Never a tile that covers a sleeping monster of another group (it would wake it). True if
+        cast."""
+        a = self.gcc_ab
+        if a is None or self.moved:
+            return False
+        try:
+            if not a.is_ready():
+                return False
+            vt = a.valid_tiles()
+        except Exception:
+            return False
+        aw, bad = [], []
+        for g, lv in s.live.items():
+            for c, hp, p, _st in lv:
+                if hp > 0 and p.chebyshev_distance(s.pos) <= CAMP_R + 2 * STUN_R + 2:
+                    if c is target or _awake(c):
+                        aw.append(p)
+                    elif g != h:
+                        bad.append(p)
+        best = []
+        seen = set()
+        for p in aw:
+            for q in [p] + [p + d for d in DIRS]:
+                k = (q.x, q.y)
+                if k in seen:
+                    continue
+                seen.add(k)
+                try:
+                    if not vt.is_set(q) or any(b.chebyshev_distance(q) <= STUN_R for b in bad):
+                        continue
+                except Exception:
+                    continue
+                n = sum(1 for m in aw if m.chebyshev_distance(q) <= STUN_R)
+                best.append((-n, q.chebyshev_distance(s.pos), q.x, q.y))
+        best.sort()
+        for n, _d, x, y in best[:3]:
+            try:
+                if a.use(V(x, y)):
+                    trace("kit", f"stun n={-n} at {x},{y} g{h}")
+                    return True
+            except Exception:
+                pass
+        return False
 
     # ---- movement ----
     def dash_to(self, s, key, kind):
@@ -427,68 +543,44 @@ class World:
                 return st
         return self.step_field(f, s.pos)
 
-    def step_near(self, tiles, r, s, avoid=None):
-        """Towards the tiles within r of tile(s) (a one-off compute_to, ~75k). avoid: a Bitboard of tiles never
-        stepped onto (50_exec camp_zone); with it, "nopath" when no path avoids them (my own tile stays free)."""
+    def step_near(self, tiles, r, s):
+        """Towards the tiles within r of tile(s) (a one-off compute_to, ~75k)."""
         if not s.can_move:
             return "blocked"
         blk = self.blk_nav | vision.champion_tiles()
-        if avoid is not None:
-            blk = blk | avoid
         blk.set(s.pos, False)
         roots = Bitboard()
         for t in (tiles if isinstance(tiles, list) else (tiles,)):
             roots.draw_chebyshev(t, r)
         roots &= ~blk
         if roots.is_empty():
-            return "nopath" if avoid is not None else "blocked"
-        return self._step_roots(blk, roots, s, avoid)
-
-    def _step_roots(self, blk, roots, s, avoid):
+            return "blocked"
         dest = Bitboard()
         dest.set(s.pos)
         f = DistanceField()
         f.compute_to(blk & ~roots, roots, dest, Bitboard(), FAR - 1)
-        if avoid is not None and fget(f, s.pos) >= FAR:
-            return "nopath"
         return self.step_field(f, s.pos)
 
-    def step_avoid(self, key, s, avoid):
-        """[user decision 15 Oct, kill exclusions] step_to(key) never stepping onto an avoid tile: the goal field's
-        roots (as goal()) minus avoid, a one-off compute_to (~75k). "nopath" when none is reachable that way."""
-        if not s.can_move:
-            return "blocked"
-        k = key[0]
-        blk = self.blk_nav | vision.champion_tiles() | avoid
-        blk.set(s.pos, False)
-        if k == "g":
-            r = max(1, ME.get("range", 1))
-            roots = Bitboard()
-            for t in self.G[int(key[1:])].tiles:
-                roots.draw_chebyshev(t, r)
-        elif k == "a":
-            roots = disk(self.apos[int(key[1:])], 1)
-        else:
-            roots = self.sp | Bitboard()
-        roots &= ~blk
-        if roots.is_empty():
-            return "nopath"
-        return self._step_roots(blk, roots, s, avoid)
-
-    def step_flee(self, s, pts):
+    def step_flee(self, s, pts, to=None):
         """HEAL / recall refused: one step that keeps the min distance to pts (enemies) as large as possible, capped
-        at 7 (out of reach + a step), and among those the lowest home-field value (towards spawn)."""
+        at 7 (out of reach + a step), and among those the lowest home-field value (towards spawn).
+        [B2 REGROUP_ON] `to` (an ally's tile): among the steps that don't close on pts (capped at my distance now),
+        the nearest to `to`, then the home field."""
         if not s.can_move:
             return "blocked"
         hf = self.home_field()
         pos = s.pos
+        d0 = min(7, min(pos.chebyshev_distance(p) for p in pts))
         cand = []
         for dv in DIRS:
             q = pos + dv
             if not (0 <= q.x < self.Wm and 0 <= q.y < self.Hm) or self.blk_nav.is_set(q):
                 continue
             de = min(q.chebyshev_distance(p) for p in pts)
-            cand.append((-min(de, 7), fget(hf, q), q.x, q.y))
+            if to is None:
+                cand.append((-min(de, 7), fget(hf, q), q.x, q.y))
+            else:
+                cand.append((-min(de, d0), q.chebyshev_distance(to) + fget(hf, q) / 1000, q.x, q.y))
         cand.sort()
         for _d, _h, x, y in cand[:3]:
             if self.move(V(x, y)):
@@ -516,12 +608,6 @@ class World:
 WORLD = World()
 
 
-def opening_seed(w):
-    """My entry of opening_slots (None past its end)."""
-    slots = opening_slots(w, 5)               # 5: the same list whatever roster I saw at boot
-    return slots[w.slot] if w.slot < len(slots) else None
-
-
 def ward_init(w):
     """Wards on the way (15 Oct, late): the draft's ward tiles (d['wards'], up to 3) are a team list of pending tiles
     for the whole game. No round-1 assignment and no rush: any champion whose own ward is still unplaced (one per
@@ -529,138 +615,11 @@ def ward_init(w):
     tile j; w.ward_pending the indices not yet seen placed (an ally ward seen within 2 of the tile, or mine)."""
     w.wtiles, w.ward_pending, w.ward_tries = [], set(), {}
     d = w.d
-    if not d or not d.get("wards"):
-        return
+    if SCAN_WARD or not d or not d.get("wards"):
+        return                                  # [SCAN_WARD] the ward scans every round instead (50_exec scan_ward)
     for j, (x, y) in enumerate(d["wards"][:3]):
         w.wtiles.append(V(x, y))
         w.ward_pending.add(j)
 
 
-VESPER_ID = 1                # draft id of Vesper Vale (her slot takes a gold group first)
-
-
-def rich_group(w, m, used, tests):
-    """[user plan 15 Oct, pair/trio opener] the richest reachable group not in used for m bodies: sides 0/1 before 2,
-    then (gems + g2g(1) gold) / (d_us + clear rounds with m bodies); tests are need filters tried in order (the first
-    that matches anything wins). None if nothing is reachable."""
-    for ok in tests:
-        best = None
-        for h in w.order:
-            o = w.G[h]
-            if o.d_us >= 255 or h in used or not ok(o.need):
-                continue
-            cr = -(-sum(x[0] for x in o.mons) // (CHAMP_STR * m))
-            key = (o.side > 1, -(o.gems + g2g(1) * o.gold) / (o.d_us + cr + 1), h)
-            if best is None or key < best:
-                best = key
-        if best:
-            return best[2]
-    return None
-
-
-GROUP_NAMES = {5: "five", 4: "quad", 3: "trio", 2: "pair", 1: "solo"}
-GROUP_CAMP_SIZES = 0        # [user decision 15 Oct afternoon: off, rows 4-pick trio+solo lost] [user decision 15 Oct] 1: subgroup sizes from the camps (camp_sizes); 0: fixed 3+2 / 2+2 / 2+1
-
-
-def camp_sizes(w, S):
-    """[user decision 15 Oct, subgroups from the camps] (sizes, groups): subgroup 0's size = the draft need of the
-    richest group needing 2..S (rich_group key with m = its own need); the rest (S - that, >= 1) form subgroup 1 on the
-    next richest group whose need <= its size (else any). None when no group needs 2..S (the fixed sizes then)."""
-    best = None
-    for h in w.order:
-        o = w.G[h]
-        if o.d_us >= 255 or not 2 <= o.need <= S:
-            continue
-        cr = -(-sum(x[0] for x in o.mons) // (CHAMP_STR * o.need))
-        key = (o.side > 1, -(o.gems + g2g(1) * o.gold) / (o.d_us + cr + 1), h)
-        if best is None or key < best:
-            best = key
-    if best is None:
-        return None
-    g0 = best[2]
-    m0 = w.G[g0].need
-    if m0 >= S:
-        return (S,), [g0]
-    m1 = S - m0
-    g1 = rich_group(w, m1, {g0}, (lambda n, m=m1: n <= m, lambda n: True))
-    return (m0, m1), [g0, g1]
-
-
-def group_slots(w):
-    """[user plan 15 Oct, pair/trio opener] group-game seeds. [user decision 15 Oct] GROUP_CAMP_SIZES: sizes and groups
-    are camp_sizes (the richest group's need, the rest on the next group they can take); fallback below: the roster
-    split by size (5 -> trio + pair, 4 -> two pairs, 3 -> pair + solo, <= 2 -> one subgroup). Subgroup 0 takes the richest group needing 2..its size (else >= 2,
-    else any); a pair as subgroup 1 the next richest needing exactly 2 (else >= 2, else any); a solo the best need-1
-    group (else any). Vesper's slot joins the subgroup whose group has more gold (ties: subgroup 0); the other slots
-    fill hers first, lowest slot first, then the other. Sets w.subs {slot: tuple of its subgroup's slots}; returns
-    5 entries (slot -> group). Same on every champion: draft S, roster order, draft records only."""
-    S = min(5, max(1, (w.d or {}).get("S") or len(w.roster)))
-    cs = camp_sizes(w, S) if GROUP_CAMP_SIZES else None
-    if cs is not None:
-        sizes, gs = cs
-    else:
-        sizes = (3, 2) if S >= 5 else (2, 2) if S == 4 else (2, 1) if S == 3 else (S,)
-        gs = []
-    used = set(g for g in gs if g is not None)
-    for i, m in enumerate(sizes if cs is None else ()):
-        if m == 1:
-            tests = (lambda n: n <= 1, lambda n: True)
-        elif i == 0:
-            tests = (lambda n, m=m: 2 <= n <= m, lambda n: n >= 2, lambda n: True)
-        else:
-            tests = (lambda n: n == 2, lambda n: n >= 2, lambda n: True)
-        g = rich_group(w, m, used, tests)
-        gs.append(g)
-        if g is not None:
-            used.add(g)
-    vs = w.roster.index(VESPER_ID) if VESPER_ID in w.roster else -1
-    gold = [w.G[g].gold if g is not None else -1 for g in gs]
-    iv = gold.index(max(gold)) if 0 <= vs < S else 0
-    rest = [k for k in range(S) if k != vs] if 0 <= vs < S else list(range(S))
-    mem = [[] for _ in sizes]
-    if 0 <= vs < S:
-        mem[iv].append(vs)
-    for i in [iv] + [j for j in range(len(sizes)) if j != iv]:
-        while len(mem[i]) < sizes[i] and rest:
-            mem[i].append(rest.pop(0))
-    w.subs = {}
-    slots = [None] * 5
-    for i, ms in enumerate(mem):
-        for k in ms:
-            w.subs[k] = tuple(sorted(ms))
-            slots[k] = gs[i]
-    return slots
-
-
-def opening_slots(w, n):
-    """n DISTINCT group handles (slot i takes entry i); every champion computes the same list with no comms.
-    Groups on our side (0) and contested (1), ranked by the walk from our spawn (d_us; ties: higher value per round),
-    solo groups (need 1) first, then pair groups (need 2). [rule, 15 Oct ladder 2] Vesper's slot first takes the nearest
-    group with gold > 0 (one she can take alone if any: all gold to Vesper); no group is given to two slots (the
-    50x50 4-pick ladder map had one seedable group and three champions on it); when the list runs out, the
-    next-nearest unused reachable group of any need and side. Seeds only the first choice."""
-    if stack_mode(w, cambc.round_number()):
-        return group_slots(w)[:n]               # [user plan 15 Oct, pair/trio opener] subgroup seeds
-    solo, pair, rest = [], [], []
-    for h in w.order:
-        o = w.G[h]
-        if o.d_us >= 255:
-            continue
-        hp = sum(m[0] for m in o.mons)
-        cr = -(-hp // (CHAMP_STR * max(1, o.need)))
-        key = (o.d_us, -(o.gems + g2g(1) * o.gold) / (o.d_us + cr + 1), h)
-        (rest if o.side > 1 or o.need > 2 else solo if o.need <= 1 else pair).append(key)
-    solo.sort()
-    pair.sort()
-    rest.sort()
-    order = [k[2] for k in solo + pair + rest]
-    vs = w.roster.index(VESPER_ID) if VESPER_ID in w.roster else -1
-    vg = None
-    if 0 <= vs < n:
-        gold = sorted((w.G[h].side > 1, w.G[h].need > 1, w.G[h].d_us, h) for h in order if w.G[h].gold > 0)
-        vg = gold[0][3] if gold else None
-    slots, it = [], iter(h for h in order if h != vg)
-    for i in range(n):
-        slots.append(vg if i == vs and vg is not None else next(it, None))
-    assert len(set(h for h in slots if h is not None)) == sum(1 for h in slots if h is not None), "seed dup"
-    return slots
+VESPER_ID = 1                # draft id of Vesper Vale (50_exec handoff: she carries the capture)

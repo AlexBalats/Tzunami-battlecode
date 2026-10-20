@@ -1,26 +1,30 @@
+# cambc caches and build outputs
 .cambc/
 bots/*/.cambc/
-matches/
-replays/
 bots/*/build/
 bots/*/target/
-.DS_Store
-.venv/
-runs/
 
-# local-only outputs and scratch copies (15 Oct cleanup)
-__pycache__/
-.claude/worktrees/
+# local match outputs (tools/arena.py writes runs/arena/, cambc writes replays/; matches/ holds run-batch lists)
+runs/
 replays/
-runs/
-/*.csv
-submissions/*.zip
-!submissions/strat.zip
-!submissions/strat-imp.zip
-
-# local scratch (16 Oct): every bots/_* folder is a generated copy (arena NAME@REV snapshots, seeds.py
-# salts, variant.py variants, bench copies), rebuilt on demand and never committed; map generator cache;
-# other teams' downloaded replays
-bots/_*/
-tools/mapgen/.cache/
+matches/
 replays_from_others/
+/*.csv
+
+# local scratch: every bots/_* folder is a generated copy (arena NAME@REV snapshots, rollbacks, probes),
+# rebuilt on demand and never committed
+bots/_*/
+
+# Python and tooling
+.venv/
+__pycache__/
+.pytest_cache/
+tools/mapgen/.cache/
+.claude/
+.vscode/
+.DS_Store
+
+# submissions: only the ladder entry and the bar are committed
+submissions/*.zip
+!submissions/redo-r7.zip
+!submissions/strat-sw.zip
