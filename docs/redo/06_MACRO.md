@@ -215,6 +215,9 @@ each alternates Durability / Power. All Strength but Durability (Health): our ro
 gold multiplier moved from the profile rows to the role too (`ROLE_GOLD`: main 3.0, second and crew 0.05, the crew's
 spike shift unchanged). Base HP / Strength are read from the SDK (`Champion.design`, X2), not a table.
 
+**Tried (21 Oct), not shipped:** [10_GOLD_ITEMS.md](10_GOLD_ITEMS.md) §3 (each passive once then Power; gold weight
+main 1.5 / others 1.0 from round 0; the spike shift deleted) lost 24W/46L to R8 (10 §4.1). The builds above stand.
+
 **"~4–5 emblems a game" (user, confirmed 20 Oct): per individual crew champion**, not for the crew as a whole.
 That is about 600–750 gold each over a game, a target §6 measures. Each crew body shops for itself by §4.5.
 

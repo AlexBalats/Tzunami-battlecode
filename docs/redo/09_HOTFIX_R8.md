@@ -250,7 +250,8 @@ Expected [guess]: Varg's g7 becomes either one take (if the model is right at fu
       carry meets two.
    5. No carry alive: the nearest unclaimed group by walk, even at 0 price (scouting refreshes `update_groups`).
    - Delete the bank-altar walk.
-4. **Crew gold weight [guess]:** `ROLE_GOLD["crew"]` 0.05 → 0.3 before the spike. With 0.05, every gold-heavy group
+4. **Tried in R9 at 1.0 from round 0 with the spike shift deleted ([10_GOLD_ITEMS.md](10_GOLD_ITEMS.md) §3): lost
+   24W/46L to R8 (10 §4.1), not shipped; still open, after gold income (10 §5).** The original item: **Crew gold weight [guess]:** `ROLE_GOLD["crew"]` 0.05 → 0.3 before the spike. With 0.05, every gold-heavy group
    prices near 0 for 3 of our 5 bodies. Gold is the 0–0 tiebreak [rules], and the crew's items speed up its farm.
    Check it against the main's gold share, which must not fall back toward the old split.
 

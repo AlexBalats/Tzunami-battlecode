@@ -141,7 +141,9 @@ class World:
             d = draft_decode(cambc.draft_memory)
         except Exception as e:
             trace("boot", "decode " + err_text(e))
-        self.d = d
+        if not d:
+            trace("boot", "no draft memory: defaults")
+        self.d = d or {}                # readers use .get with defaults; `if d:` below picks the no-memory fallback
         # groups: the only camp_groups() call
         self.G = {}
         self.order = []                 # group handles in camp_groups() order (draft-memory order)
@@ -3503,8 +3505,9 @@ Deviations from tools/mapmodel.py, all [model]:
   - distances >= 255 count as unreached (999 in the margin); only a > 254-step map is affected.
   - ownership: min of D over the camps' bounding box grown by 1 (offline: the exact Chebyshev-1 ring); when the
     box's first minimum is not on the ring, the exact ring is used. Same sides, margins and entries on all 9 maps.
-  - nearest altar: exact (same descent rule as the offline): the altars within Chebyshev d+1 of the tile are
-    found with 16-bit-lane int arithmetic; if one, it is the answer, else the descent runs until one is left.
+  - nearest altar: the altars within Chebyshev d+1 of the tile are found with 16-bit-lane int arithmetic; if one,
+    it is the answer, else the tied altar with the lowest own-field distance (lowest id on ties). The offline tool
+    descends the all-altar field instead; the two can differ only on exact ties (21 Oct: the descent cost 10.9M).
   - blocks are the (nearest altar, side) keys of the groups and altars, not tile regions (st_blocks).
   - danger per cell is averaged over the cell's middle row, not all its tiles; the enemy-spawn zone is path
     distance D_them <= SPAWN_DANGER_R (offline: Chebyshev distance to a spawn tile).
@@ -3528,7 +3531,9 @@ SPREAD = True               # [model] monster hits shared evenly by the k bodies
 DMAX = 254                  # fields' max_distance: the lo byte of the u16 is the distance, 255 = unreached
 PROFILE = None              # measurement only: a custom stage order
 SIDE_CH = "oct"             # ours, contested, theirs (u: unreachable)
-DRAFT_RESERVE = 1_500_000   # never let a draft turn suspend: it would eat the next turn's pick
+DRAFT_RESERVE = 500_000     # left after a turn's last stage (traces, end_turn): a suspended draft turn loses the
+#                             draft [measured 21 Oct, 01shortcut]; the encode is at the next turn's start (draft_main)
+FRESH = 2_400_000           # a later draft turn's fuel after its submit and pick, no encode [measured 2.42-2.45M]
 
 # object fields (alts and gobj are lists)
 DU, DT, SD, EU, ET, HH, BD, NR, DA, BK = range(10)
@@ -3623,31 +3628,38 @@ class DraftModel:
         self.unit = {}
 
     def est(self, name):
-        """Fuel estimate of a stage [measured 14 Oct late, expanse 80x80 / lanes 90x30, padded ~1.5x]; N, G, A
-        are known after geometry/groups."""
+        """Fuel of a plain stage, or of a generator stage's first unit [measured 21 Oct, all 35 maps from side A:
+        max groups 6.72M (boss-battle), fields 1.80M and danger 2.40M (big-world, N 10,000), blocks 0.56M (lanes,
+        18 altars); padded ~1.1-1.2x and scaled by N tiles and A altars]. N and A are
+        known after geometry."""
         N = getattr(self, "N", 10_000)
-        G = len(getattr(self, "groups", ())) or 45
         A = len(getattr(self, "apos", ())) or 18
-        return {"geometry": 150_000, "groups": 1_400_000 + 25_000 * G, "fields": 200_000 + 120 * N,
-                "own": 100_000 + 30_000 * (G + A), "altar": 200_000 + 70 * N + 30_000 * G,
-                "blocks": 100_000, "danger": 500_000, "paths": 200_000,
-                "chokes": 600_000}.get(name, 1_000_000)
+        return {"geometry": 250_000, "groups": 8_000_000, "fields": 250_000 + 180 * N,
+                "blocks": 150_000 + 30_000 * A, "danger": 1_700_000 + 100 * N,
+                }.get(name) or self.unit_hint(name)
 
     def unit_hint(self, name):
-        """Largest single unit of a generator stage before it is measured [padded]."""
-        return {"paths": 400_000}.get(name, 400_000)
+        """Largest single unit of a generator stage before it is measured [measured 21 Oct max: own 1.30M
+        (lanes), altar one DistanceField (~0.7M on 100x100), paths 0.61M; padded]."""
+        return {"own": 1_500_000, "altar": 1_000_000, "paths": 800_000, "chokes": 1_000_000}.get(name, 1_000_000)
 
     def run(self, turn, reserve=DRAFT_RESERVE):
         """Run stages while they fit. A stage is a plain method (runs whole: needs its estimate up front) or a
-        generator yielding after each unit of work: it runs unit by unit while the largest unit seen so far still
-        fits above the reserve, and resumes on the next draft turn.
+        generator yielding after each unit of work: it runs unit by unit while the largest unit measured so far
+        (at least half its hint; the hint before any is measured) still fits above the reserve, and resumes on the next draft turn. A plain stage too big for any later turn (FRESH)
+        is dropped there, so the stages after it still run (encode and chokes read a missing danger as absent).
         Returns (stages finished this call, stages worked on this call)."""
         ran, touched = [], []
         while self.stages:
             s = self.stages[0]
             f0 = fuel()
             if self.gen is None:
-                if f0 - reserve < self.est(s):
+                e = self.est(s)
+                if f0 - reserve < e:
+                    if turn > 1 and e > FRESH - reserve:
+                        trace("stage", f"{s} dropped est={e} left={f0}")
+                        self.stages.pop(0)
+                        continue
                     break
                 try:
                     g = getattr(self, "st_" + s)()
@@ -3657,14 +3669,16 @@ class DraftModel:
                 self.gen = g if g is not None and hasattr(g, "send") else True
             done = self.gen is True
             if not done:
-                unit = self.unit.get(s) or self.unit_hint(s)
+                h = self.unit_hint(s)
+                unit = max(self.unit[s], h // 2) if s in self.unit else h   # the largest unit measured, floor hint/2
                 try:
                     while fuel() - reserve > unit:
                         u0 = fuel()
                         next(self.gen)
                         u = u0 - fuel()
-                        if u > unit:
-                            unit = self.unit[s] = u
+                        if u > self.unit.get(s, 0):
+                            self.unit[s] = u
+                        unit = max(self.unit[s], h // 2)
                 except StopIteration:
                     done = True
                 except Exception as e:
@@ -3811,6 +3825,7 @@ class DraftModel:
             o = self.classify(x0, y0, x1, y1, cs if len(cs) > 1 else None)
             o += (h, bd, 255, FAR, 255)
             self.gobj.append(o)
+            yield                                 # a unit = one group
         ca = [0, 0, 0, 0]
         cg = [0, 0, 0, 0]
         for o in self.alts:
@@ -3831,11 +3846,8 @@ class DraftModel:
         self.bank = 0 if ca[0] else 1 if ca[1] else 2
         self.rich = cg[0] + cg[1]           # richness = rich / S groups (ours + contested) per body
 
-    def label(self, e, d):
-        """Nearest altar of tile index e at all-altar distance d (< FAR), as the offline descent_label(): descend
-        the all-altar field (next_move_from: first optimal step in compass order [sdk]) to a ring tile, then the
-        lowest altar id adjacent to it. The final altar lies within Chebyshev d+1 of e, so when only one altar
-        does, it is the answer without descending; else descend until one candidate is left (or the ring)."""
+    def cands(self, e, d):
+        """Altars within Chebyshev d+1 of tile index e (16-bit-lane int arithmetic on Python ints), by id."""
         W = self.W
         x, y = e % W, e // W
         ONES = self.ONES
@@ -3845,29 +3857,42 @@ class DraftModel:
         k2 = (2 * r + 1) * ONES
         c = dx & ~(dx - k2) & dy & ~(dy - k2) & self.B14  # bit 14 of lane k: |ax - x| <= r and |ay - y| <= r
         if c & (c - 1) == 0:
-            return (c.bit_length() - 15) >> 4 if c else 255
-        if d == 0:
-            return ((c & -c).bit_length() - 15) >> 4
-        C = []
+            return [(c.bit_length() - 15) >> 4] if c else []
+        ks = []
         while c:
             lo = c & -c
-            C.append((lo.bit_length() - 15) >> 4)
+            ks.append((lo.bit_length() - 15) >> 4)
             c ^= lo
-        AX, AY = self.AX, self.AY
-        nm = self.Fa.next_move_from
-        t = V(x, y)
-        while True:
-            dd = nm(t)
-            if dd is None:
-                break
-            t = t + dd
-            d -= 1
-            x, y = t.x, t.y
-            r = d + 1
-            C = [k for k in C if -r <= AX[k] - x <= r and -r <= AY[k] - y <= r]
-            if len(C) == 1 or d == 0:
-                break
-        return C[0] if C else 255        # d == 0: C = adjacent altars in id order -> the lowest id
+        return ks
+
+    def label(self, e, ks):
+        """Nearest altar of tile index e from its candidates ks = cands(e, d) at all-altar distance d: one is the
+        answer, else the one whose own field (altar_raw) is lowest at e, lowest id on ties [model]. Was the offline
+        descent_label() (next_move_from step by step, ~10k fuel a step): 10.9M of draft turn 1 on a two-altar map,
+        which suspended the turn and lost the draft [measured 21 Oct, 01shortcut]."""
+        if len(ks) < 2:
+            return ks[0] if ks else 255
+        return min(ks, key=lambda k: (self.altar_raw(k)[2 * e], k))
+
+    def tie_fields(self, ks):
+        """Generator: the own fields label(e, ks) will need, one DistanceField per unit (once per altar)."""
+        if len(ks) > 1:
+            for k in ks:
+                if k not in self.Rk:
+                    self.altar_raw(k)
+                    yield
+
+    def altar_raw(self, k):
+        """Altar k's own field from its approach ring (lo byte = distance, 255 unreached), computed on first use."""
+        R = self.Rk.get(k)
+        if R is None:
+            roots = Bitboard()
+            roots.draw_chebyshev(self.apos[k], 1)
+            roots &= self.free
+            f = DistanceField()
+            f.compute(self.block & ~roots, roots, Bitboard(), DMAX)
+            R = self.Rk[k] = bytes(f.export_linear_buffer())
+        return R
 
     def st_altar(self):
         """One DistanceField from every altar's approach ring (Chebyshev 1, walkable), as the offline altar BFS:
@@ -3876,9 +3901,10 @@ class DraftModel:
         for a in self.apos:
             roots.draw_chebyshev(a, 1)
         roots &= self.free
-        f = self.Fa = DistanceField()
+        f = DistanceField()
         f.compute(self.block & ~roots, roots, Bitboard(), DMAX)
         Ra = bytes(f.export_linear_buffer())
+        self.Rk = {}
         self.AX = [a.x for a in self.apos]
         self.AY = [a.y for a in self.apos]
         ONES = AXL = AYL = 0
@@ -3887,6 +3913,7 @@ class DraftModel:
             AXL |= self.AX[k] << 16 * k
             AYL |= self.AY[k] << 16 * k
         self.ONES, self.AXL, self.AYL, self.B14 = ONES, AXL, AYL, ONES << 14
+        yield                                     # a unit = the all-altar field
         W = self.W
         a0, s0 = FAR, None
         for p in self.us:                         # spawn -> its nearest altar (first spawn tile at the min)
@@ -3895,14 +3922,21 @@ class DraftModel:
             if v < a0:
                 a0, s0 = v, i
         self.a0 = a0 if a0 < 255 else FAR
-        self.spawn_altar = self.label(s0, a0) if self.a0 < FAR else 255
+        self.spawn_altar = 255
+        if self.a0 < FAR:
+            ks = self.cands(s0, a0)
+            yield from self.tie_fields(ks)
+            self.spawn_altar = self.label(s0, ks)
         for o in self.gobj:
             e = o[EU] if o[DU] < FAR else o[ET]
             if e is None:
                 continue
             v = Ra[2 * e]
             if v < 255:
-                o[NR], o[DA] = self.label(e, v), v
+                ks = self.cands(e, v)
+                yield from self.tie_fields(ks)    # a unit = one tied altar's field
+                o[NR], o[DA] = self.label(e, ks), v
+            yield                                 # a unit = one group
 
     def st_blocks(self):
         """Blocks = (nearest altar, side) of the groups' entry tiles, plus each altar's own (altar, side).
@@ -4088,8 +4122,11 @@ class DraftModel:
         self.off2 = off
         W, H = self.W, self.H
         cand = (self.pinched(self.block) & self.PT).positions()
+        yield                                     # a unit = the setup, then 16 candidates
         cl = []
-        for p in cand:
+        for j, p in enumerate(cand):
+            if j & 15 == 15:
+                yield
             x, y = p.x, p.y
             n = (min(W, x + 3) - max(0, x - 2)) * (min(H, y + 3) - max(0, y - 2))
             b = Bitboard()
@@ -4100,7 +4137,10 @@ class DraftModel:
         if cl:
             pt = self.pinched(self.terr)
             ft = ~self.terr
-            for p, b, n, i in cl:
+            yield
+            for j, (p, b, n, i) in enumerate(cl):
+                if j & 15 == 15:
+                    yield
                 self.choke[i] = 1 if (round((b & ft).count() / n, 2) <= NARROW_MAX and pt.is_set(p)) else 2
         self.ncand = len(cand)
         if hasattr(self, "dtot"):
@@ -4149,16 +4189,15 @@ _T_DANGER = bytes(0 if v > 32 else 32 - v for v in range(256))
 # ---- the draft entry (was 90_main's draft branch) ----
 # Draft memory: submit() raises once pick() was called in the same turn (engine error 18 on later turns; on turn 1
 # "Memory access requires the owning team's input boundary") [measured 14 Oct, bots/_bench]. So turn 1 picks,
-# then models and encodes; every later turn submits the bytes encoded so far (~30k fuel) immediately before its
-# pick, then continues the model. The champions read the last submit [measured]. Work done on the last draft turn
-# is never submitted, so every stage must finish before it.
+# then models; every later turn encodes the stages finished since the last encode (up to 0.66M fuel, lanes),
+# submits (~30k) immediately before its pick, then continues the model. The champions read the last submit
+# [measured]. Work done on the last draft turn is never submitted, so every stage must finish before it.
 
 # ChampionDraft values [sdk]: RYTH 0, VESPER_VALE 1, VARG 9, REN 8, MARCELLA 6, VENDETTA 2; others as backup, Heart of
 # Ruin (11, new in 3.0: 1000 HP / 40 Str melee, up to +50 % damage at low HP [sdk]) first (X6; GUESS its rank).
 # The first S picks play: Ren third (06 section 11.2), so he is the second carry at every team size.
 PICKS = (9, 1, 8, 0, 2, 6)
 BACKUP = PICKS + (11,) + tuple(d for d in range(11) if d not in PICKS)
-LATE_RESERVE = 700_000      # later draft turns: the pick and submit are done first; keep room for encode
 
 
 def do_pick():
@@ -4179,11 +4218,20 @@ def draft_main():
         pass
     dm = None
     data = None
+    dirty = False                                  # stages finished since the last encode
     turn = 0
     while True:
         turn += 1
         f_start = fuel()
         sub = "-"
+        if dm is not None and (dirty or data is None):
+            try:
+                f0 = fuel()
+                data = dm.encode()
+                trace("stage", f"encode turn={turn} fuel={f0 - fuel()} bytes={len(data)}")
+            except Exception as e:
+                trace("draft", "encode " + err_text(e))
+            dirty = False
         if data is not None:
             try:
                 cambc.draft_memory.submit(data)    # before the pick (see the docstring)
@@ -4198,11 +4246,8 @@ def draft_main():
                 if turn == 1 and TRACE:
                     for line in bodies_table(5):
                         trace("bodies", line)
-            ran, touched = dm.run(turn, DRAFT_RESERVE if turn == 1 else LATE_RESERVE)
-            if ran or data is None:
-                f0 = fuel()
-                data = dm.encode()
-                trace("stage", f"encode turn={turn} fuel={f0 - fuel()} bytes={len(data)}")
+            ran, touched = dm.run(turn)
+            dirty = dirty or bool(ran)
         except Exception as e:
             trace("draft", err_text(e))
         trace("draft", f"turn={turn} start={f_start} picked={picked} submitted={sub} ran={','.join(ran)} worked={','.join(touched)} "

@@ -94,7 +94,9 @@ class World:
             d = draft_decode(cambc.draft_memory)
         except Exception as e:
             trace("boot", "decode " + err_text(e))
-        self.d = d
+        if not d:
+            trace("boot", "no draft memory: defaults")
+        self.d = d or {}                # readers use .get with defaults; `if d:` below picks the no-memory fallback
         # groups: the only camp_groups() call
         self.G = {}
         self.order = []                 # group handles in camp_groups() order (draft-memory order)

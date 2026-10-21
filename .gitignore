@@ -27,5 +27,5 @@ tools/mapgen/.cache/
 # submissions: only the ladder entry and the bar are committed
 submissions/*.zip
 !submissions/redo-r7.zip
-!submissions/redo-r8.zip
+!submissions/redo-r9.zip
 !submissions/strat-sw.zip

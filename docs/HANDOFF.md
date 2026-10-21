@@ -4,6 +4,36 @@ Older entries are in `docs/archive/`: `HANDOFF_to_19oct.md` (13–19 Oct), `HAND
 19 Oct) and `HANDOFF_20oct_redo.md` (the patch and redo sessions 1–6, 20 Oct). Keep this file short: the newest entry
 on top, then the standing sections.
 
+## 21 Oct, session 8: R9 = R8 + the draft fuel fix, zipped (`submissions/redo-r9.zip`); gold design lost
+
+Details are in `docs/redo/10_GOLD_ITEMS.md`.
+- **The draft crash is fixed (10 §1).** Before, the 01shortcut ladder game lost its draft: one pick, no memory, the
+  team stood still until round 101, lost 0–1019. Now all 35 maps have every pick ours and the memory complete.
+  - The nearest altar uses lane arithmetic plus a lazy per-altar field on ties, instead of a step-by-step descent
+    (10.9M → 1.65M on 01shortcut).
+  - `own`, `altar`, `paths` and `chokes` resume across draft turns under `DRAFT_RESERVE`.
+  - The encode runs at the next turn's start.
+  - `w.d = {}` when there is no memory.
+- **R9 vs strat-sw: 52W/18L**, margin +234, 21/35 maps won from both sides (R8: 51W/19L, +217, 19/35).
+  vs `_r8`: 33W/36L (1 CLI error). Faults 0/0.
+- **The gold design (10 §3) lost 24W/46L to R8 and is not shipped.** The code is in
+  `docs/redo/patches/R9_gold_items.diff`.
+  - Its premise was wrong: R8's Vesper holds 36 % of the gold over all 35 maps, not 54–61 % (that was 3–5 games).
+  - The build earned 16 % less gold and died more; the build orders are the likely cause.
+  - 10 §4.1 lists the ablation (main weight 3.0, Monster, Jungle before Durability).
+- **The user's point (10 §5, design notes, not built):** 0–0 games go to gold earned.
+  - 01boss-battle was lost on gold from one side.
+  - Big maps give us the least camp gold per game.
+  - The ladder opponents earn 1.3–3× our gold.
+- **R9 vs R8 head to head is a tie (33W/36L):** same play logic, only the draft changed; R9 ships because R8 can
+  crash on a heavy unseen map. R9 vs R7 (the ladder entry before R9) is not measured head to head yet; the user runs a
+  couple of tests at the next session's start (`python3 -I tools/arena.py redo _r7 --jobs 2`, `_r7` from `8aae86e`).
+- **Next session:** gold income and the gold tiebreak (10 §5), measured against the top teams' ladder replays first.
+  Then H4 (09 §3; H4.4 is still open). `tools/replay/farm/mapjson.mjs` needs the deleted `tools/mapgen`.
+- A newer cambc than 3.0.2 is out (the CLI says so). Not installed; check its changelog at the next session's start.
+- Cleaned: `bots/_probe`, `bots/_old`, `bots/_r8` (R8 = git `43e28fc`; its zip `submissions/redo-r8.zip` was deleted: never published, it has the draft crash), the whole `runs/` (arena cache
+  included) and the pycache folders.
+
 ## 21 Oct, late: R8 built and zipped (`submissions/redo-r8.zip`); H4 is next
 
 - **R8 = R7 + H1 (fuel ledger), H2 (heal deadlock), H3 (finish or leave), H5 (HOLD deleted).** H4 (idle crews) is
