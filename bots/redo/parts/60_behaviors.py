@@ -34,10 +34,13 @@ def safe_recall(w, s):
     """Recall only when clear [rules: damage or stun breaks it]: never start or keep one while an enemy could reach me
     before it ends (08 F4, M4: within its range + my recall turns + RECALL_DASH), within UHIT_ROUNDS of a hit by
     nobody visible, or with a live camp in range. Not clear: cancel a running recall, then step away from the
-    enemies towards home or out of camp range (Nav.away). P9: a recall in reach is a free turn for them (M6)."""
+    enemies towards home or out of camp range (Nav.away). P9: a recall in reach is a free turn for them (M6).
+    09 H2.2 (P3): healing never steps into a live camp's range: after a bush hit, a camp within one step of reach
+    sends me away from it, not home past it."""
     rt = ME.get("recall", 5) + RECALL_DASH
     ne = [e[1] for e in s.enemies if e[4] <= arng(e[0]) + rt]
     if not ne and s.r - getattr(w, "uhit", -99) <= UHIT_ROUNDS:
+        cp = [p for lv in s.live.values() for c, _hp, p, st in lv if st > 0 and p.chebyshev_distance(s.pos) <= crng(c) + 1]
         if s.recalling:
             try:
                 w.me.cancel_recall()
@@ -46,7 +49,10 @@ def safe_recall(w, s):
             except Exception as e:
                 trace("exec", "cancel_recall " + err_text(e))
                 return "going"
-        w.nav.step(s, "home")
+        if cp:
+            w.nav.away(s, cp)
+        else:
+            w.nav.step(s, "home")
         return "going"
     pts = in_camp_range(s, w)
     if s.recalling:
@@ -86,16 +92,6 @@ def partners_near(w, s, h):
             if (op == 1 and t == o.mi) or op == 6:
                 n += 1
     return n
-
-
-def live_ok(w, s, h, k):
-    """k bodies (Strength like mine) clear h with the most-hit body keeping KEEP_HP (live clear model)."""
-    o = w.G[h]
-    mons = [m for m in (o.hp if o.hp is not None else o.mons) if m[0] > 0]
-    if not mons:
-        return True
-    cd = clear_dmg(mons, s_eff(w, s, h, k), k)
-    return my_dmg(cd[1], k, cd[0]) <= s.hp * SURVIVE     # TANK_SHARE; [K3] mitigation
 
 
 def handoff(w, s, o):
@@ -283,11 +279,11 @@ class Farm(Behavior):
             tgt = [(hp, i) for i, (_c, hp, p, _st) in enumerate(lv) if p.chebyshev_distance(s.pos) <= ME.get("range", 1)]
             hurt = any(hp < w.G_maxhp(c) for c, hp, _p, _st in lv)
             sm = stack_mode(w, s.r)
-            if sm and o.need >= 2 and not hurt and not live_ok(w, s, h, 1):
+            if sm and o.need >= 2 and not hurt and not can_finish(w, s, h, 1, s.hp):
                 res = self.group_go(w, s, h, o)     # [user plan 15 Oct, pair/trio opener] no waiting at camps
                 if res is not None:
                     return res
-            elif not sm and o.need >= 2 and not hurt and not live_ok(w, s, h, 1 + partners_near(w, s, h)):
+            elif not sm and o.need >= 2 and not hurt and not can_finish(w, s, h, 1 + partners_near(w, s, h), s.hp):
                 # pair take: wait (monsters are friendly until hit) near the group for the partner
                 near = min(p.chebyshev_distance(s.pos) for _c, _hp, p, _st in lv)
                 if near > 4:
@@ -585,52 +581,6 @@ class Hunt(Behavior):
         return "going"
 
 
-class Hold(Behavior):
-    """Stand next to an altar 30 rounds; hit (and stun) an enemy channelling there."""
-    __slots__ = ("arrived",)
-    name, code = "hold", 4
-
-    def __init__(self):
-        self.arrived = None
-
-    def enter(self, w, s, tg):
-        self.arrived = None
-        if tg is not None and tg < len(w.nav.ad):
-            return w.nav.ad[tg], 30
-        return 0, 0
-
-    def execute(self, w, s, a):
-        ap = w.apos[a]
-        if s.pos.chebyshev_distance(ap) > 1:
-            w.nav.step(s, f"a{a}")
-            return "going"
-        if self.arrived is None:
-            self.arrived = s.r
-        w.capt = True                           # deliberate stand
-        for c, p, hp, _b, dd, _st in s.enemies:
-            try:
-                chan = c.is_submitting_gems()
-            except Exception:
-                chan = False
-            if chan:
-                if s.st & 0x800:
-                    for ab, _oc, _oe, cc, _rs, _g in w.kit.ab:
-                        if cc:
-                            try:
-                                if ab.is_ready() and ab.use(c):
-                                    break
-                            except Exception:
-                                pass
-                if dd <= ME.get("range", 1) and s.can_attack:
-                    try:
-                        w.me.attack(c)
-                        w.attacked = True
-                    except Exception:
-                        pass
-                break
-        return "done" if s.r - self.arrived >= 30 else "going"
-
-
 class Shop(Behavior):
     """Recall (safe_recall), buy on spawn."""
     __slots__ = ()
@@ -684,18 +634,24 @@ class Join(Behavior):
 
 class Heal(Behavior):
     """Recall (safe_recall steps out of camp range / away from enemies first); done on spawn at full HP, or at >= 0.9
-    max HP once arrived. Standing on spawn heals to full at turn end [rules]."""
-    __slots__ = ("arrived",)
+    max HP once arrived. Standing on spawn heals to full at turn end [rules]. stuck(): the episode never recalled and
+    gained no HP (09 H2.3: traced `heal stuck` on its timeout, 90_main guards)."""
+    __slots__ = ("arrived", "hp0", "rec")
     name, code = "heal", 0                      # broadcast as idle: the byte has no free code (7 is dead)
 
     def __init__(self):
-        self.arrived = None
+        self.arrived, self.hp0, self.rec = None, 0, False
 
     def enter(self, w, s, tg):
-        self.arrived = None
+        self.arrived, self.hp0, self.rec = None, s.hp, False
         return 10, 7                            # step out of reach, 5-turn recall, the heal turn on spawn
 
+    def stuck(self, s):
+        return not self.rec and s.hp <= self.hp0
+
     def execute(self, w, s, _t):
+        if s.recalling:
+            self.rec = True
         if not s.spawn:
             return safe_recall(w, s)
         if s.hp >= s.maxhp or (self.arrived is not None and s.hp >= 0.9 * s.maxhp):
@@ -746,15 +702,15 @@ class Dead(Behavior):
     name, code = "dead", 7
 
 
-FARM, BANK, KILL, HUNT, HOLD, SHOP, JOIN, HEAL, FALL, DEAD = (Farm(), Bank(), Kill(), Hunt(), Hold(), Shop(), Join(),
-                                                              Heal(), Fall(), Dead())
-BEH = {b.name: b for b in (Behavior(), FARM, BANK, KILL, HUNT, HOLD, SHOP, JOIN, HEAL, FALL, DEAD)}
+FARM, BANK, KILL, HUNT, SHOP, JOIN, HEAL, FALL, DEAD = (Farm(), Bank(), Kill(), Hunt(), Shop(), Join(), Heal(), Fall(),
+                                                        Dead())
+BEH = {b.name: b for b in (Behavior(), FARM, BANK, KILL, HUNT, SHOP, JOIN, HEAL, FALL, DEAD)}
 
 
 def prog_update(w, s, hit):
     """[IMPROVEMENTS 2, 15 Oct night] w.prog in [0, 1] for the current choice (Behavior.progress, from values already
     at hand: chebyshev to the target, s.live / o.hp, s.submitting, last turn's attack); join, hunt = walk; shop,
-    heal, fall, hold = 0. pbest / pstall: the best so far and the rounds since it rose."""
+    heal, fall = 0. pbest / pstall: the best so far and the rounds since it rose."""
     w.prog = min(1.0, max(0.0, BEH[w.cur[0]].progress(w, s, hit)))
     if w.prog > w.pbest + 1e-6:
         w.pbest, w.pstall = w.prog, 0
@@ -782,7 +738,7 @@ class ScanWard:
         op, tg = w.cur
         if op == "farm" and tg in w.G:
             return w.G[tg].anchor
-        if op in ("bank", "hold") and tg is not None and tg < len(w.apos):
+        if op == "bank" and tg is not None and tg < len(w.apos):
             return w.apos[tg]
         if op in ("shop", "heal"):
             return w.sp0

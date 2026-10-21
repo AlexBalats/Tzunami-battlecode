@@ -133,7 +133,7 @@ Digging into R5's 401 enemy-credited deaths (scratch scripts, this session):
 
 | Id | Change | Mechanic | Where |
 | --- | --- | --- | --- |
-| F1 | **Fight-turn fuel**: with an enemy within 8, FARM prices only the current farm target; the death cost keeps the last full turn's best raw farm price (`w.rawb`). The second `decide` of a turn needs `DECIDE2_FUEL` left. | M6, §3 fuel | 50_prices `price_all`, 90_main `act` |
+| F1 | **Fight-turn fuel**: with an enemy within 8, FARM prices only the current farm target; the death cost keeps the last full turn's best raw farm price (`w.rawb`). The second `decide` of a turn needs `DECIDE2_FUEL` left. *(Replaced 21 Oct by the 09 H1 turn ledger: `EXEC_RES`, `DEC_Q`, `Nav.can_build`; see `09_HOTFIX_R8.md` §7.)* | M6, §3 fuel | 50_prices `price_all`, 90_main `act` |
 | F2 | **P(lose) from the square law on damage per turn** (`duel`), replacing `lanchester`: per body D = Strength x (1 + reset / 8) + ability damage / 8 (`FKIT`, by champion type, Focus read live), H = health (+ Varg's shield / 2); the nearest enemy's free shots on approach (M3); P(lose) = x^2 / (1 + x^2). | M3, M5 | 50_prices |
 | F3 | **Under fire, decide at the first hit**: when an enemy hit me and P(lose) > HEAL_PLOSE and I am not trapped, HEAL's P(die) is at least P(lose), at any HP. | M1, §3 heal deaths | 50_prices HEAL |
 | F4 | **Recall only out of reach**: no recall start (and cancel a running one) while a visible enemy is within its range + my recall turns + 2, or within 2 rounds of a hit with no visible attacker and no camp in range (unseen, P-a). | M4 | 60_behaviors `safe_recall`, 50_prices `sense` |

@@ -103,7 +103,7 @@ Behavior ──► Nav.step(goal, mode) ──► L8 pick my destination tile(s)
   build, only above 1.5M fuel; trace `nav|camp walls`). As built: all camp tiles, not only the remembered live ones
   (simpler, and a field that avoids every camp is still a valid path).
 - **Budget:** at most one new global field per turn per body (~31 % of a turn each at 100×100), a second only above
-  1.5M fuel (`GOAL_FUEL`). A goal whose field can't be built this turn returns `"blocked"` and is built next turn (as
+  1.5M fuel (`GOAL_FUEL`). *(Replaced 21 Oct by the 09 H1 turn ledger: `EXEC_RES`, `DEC_Q`, `Nav.can_build`; see `09_HOTFIX_R8.md` §7.)* A goal whose field can't be built this turn returns `"blocked"` and is built next turn (as
   built; the window towards the anchor was dropped: `compute_to` costs as much as a seventh of a build anyway).
 
 ### L1. Waypoint + local window (Om Nom's Optimal Bug, CAMBC version)

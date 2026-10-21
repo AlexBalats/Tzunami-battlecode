@@ -95,8 +95,9 @@ class Codec(unittest.TestCase):
 
     def test_behavior_codes_fit_three_bits(self):
         codes = behavior_codes()
-        for name in ("idle", "farm", "bank", "kill", "hunt", "hold", "shop", "join", "heal", "fall", "dead"):
+        for name in ("idle", "farm", "bank", "kill", "hunt", "shop", "join", "heal", "fall", "dead"):
             self.assertIn(name, codes)
+        self.assertNotIn(4, codes.values())     # code 4 (hold) unused since 09 H5 (04_COMMS.md section 2)
         for name, code in codes.items():
             self.assertTrue(0 <= code <= 7, f"{name}: code {code} overflows the 3-bit field")
         self.assertEqual(codes["fall"], 0)      # fall and heal broadcast as idle, target 0 (04_COMMS.md section 4)

@@ -6,7 +6,20 @@ import bot as _bot
 globals().update({k: v for k, v in vars(_bot).items() if not k.startswith('__')})   # one namespace
 
 # ---- 90_main.py ----
-"""Entry: the play turn loop (play_main, turn); the draft entry is 80_draft draft_main."""
+"""Entry: the play turn loop (play_main, turn); the draft entry is 80_draft draft_main.
+
+09 H1, the turn ledger (P12, P22): a big item starts only if the turn can still pay for it plus the execute after it,
+else the body keeps its last choice and cached fields and the item runs next turn. Decide's cost is the DEC_Q quantile of my last
+DEC_N decides (w.cdec, full and cheap); a field build's is Nav.fcost (30_nav can_build)."""
+
+EXEC_RES = 700_000          # GUESS 09 H1 (U3): execute's reserve; its p90 is 0.47-1.05M [measured]
+DEC_N = 16                  # 09 H1: decide's cost = the DEC_Q quantile of my last DEC_N decides (per body: Varg's is dearer)
+DEC_Q = 0.75                # GUESS: the max starved decide (one 1.9M outlier blocked 80% of them [measured, 01big-world])
+# a refused decide drops its list's oldest sample (the last one decays 10 %), so the estimate cannot lock: cold-memo
+# decides cost 1.9M, later ones 0.5-0.9M [measured, 01big-world]
+DEC_COST0 = 1_000_000       # GUESS: decide's cost before one is measured
+FRESH_E = 4                 # 09 H1: an enemy within this, none last turn, is a fresh threat
+DEC_SKIP = 4                # GUESS: after this many skipped decides in a row, decide on the cheap path (no starving)
 
 
 def turn(w):
@@ -38,8 +51,8 @@ def turn(w):
     Comms.encode(w, s, BEH[w.cur[0]])
     w.nav.order(w, s)                         # 05 L3: next round's turn order
     act_trace(w, s)
-    if w.nav.F_home is None and fuel() > 1_200_000:
-        w.nav.home_field()
+    w.ne4 = s.near_e <= FRESH_E
+    w.nav.home_field()                        # lazily, when the ledger allows
 
 
 def dead(w, s):
@@ -52,7 +65,7 @@ def dead(w, s):
         w.was_alive = False
         op, tg = w.cur
         w.excl[w.cur] = r + DEATH_EXCL            # no re-entry where I just died
-        if op in ("kill", "hold", "hunt"):
+        if op in ("kill", "hunt"):
             w.kh_until = r + DEATH_EXCL
         if op == "farm" and tg in w.G and w.G[tg].mi < 31:
             Comms.mark_death(w.G[tg].mi, r)       # team marker: avoid this group
@@ -105,9 +118,17 @@ def guards(w, s, flags):
     if not w.was_alive:
         w.was_alive = True
         w.status = "done"
-        w.nav.build_fme(s.pos)
+        w.fme_wait = 1                            # respawned: F_me is due
     elif s.pos.chebyshev_distance(w.nav.fme_root) > FME_MOVE:
-        w.nav.build_fme(s.pos)                    # also after a recall (the jump is > 6)
+        w.fme_wait = max(1, w.fme_wait)           # also after a recall (the jump is > 6)
+    if w.fme_wait:
+        # 09 H1: the rebuild leaves room for a decide and an execute; deferred once, it only leaves the execute's
+        # (decide's own guard then skips this turn's decide). gd / ad / near6 are a turn stale meanwhile.
+        if w.nav.can_build(EXEC_RES + (dec_cost(w, s) if w.fme_wait == 1 else 0)):
+            w.nav.build_fme(s.pos)
+            w.fme_wait = 0
+        else:
+            w.fme_wait += 1
     # still: same tile, last turn neither capturing, channelling, attacking nor dead
     exempt = flags[0] or flags[1] or s.recalling or s.submitting
     if flags[2] and not exempt and stack_mode(w, r):
@@ -123,7 +144,7 @@ def guards(w, s, flags):
     if w.status == "going":
         # [IMPROVEMENTS 2] stall guard: w.prog has not risen for PROG_STALL rounds -> failed like `stuck`. Exempt:
         # attacking / capturing / waiting last turn, recalling, channelling, a pair seek (Farm.seeking: own 10-15
-        # round fail), and kill / shop / heal / fall / hold (own chase and timeout rules)
+        # round fail), and kill / shop / heal / fall (own chase and timeout rules)
         prog_update(w, s, flags[0])
         seek = BEH[w.cur[0]].seeking()
         if exempt or flags[2] or seek or w.cur[0] not in ("farm", "bank", "join", "hunt"):
@@ -135,6 +156,8 @@ def guards(w, s, flags):
             w.pstall = 0
     if w.status == "going" and r > w.deadline and not (s.recalling or s.submitting):
         trace("exec", f"{w.cur[0]} {tname(w, w.cur[0], w.cur[1])} failed timeout")
+        if w.cur[0] == "heal" and HEAL.stuck(s):
+            trace("heal", f"stuck {s.pos.x},{s.pos.y} hp={s.hp:.0f} uhit={r - w.uhit}")    # 09 H2.3: a measure
         if w.cur[0] == "kill":
             KILL.ban(w.cur[1], r)                   # a timed-out kill: finishers excluded too (60_behaviors Kill); backoff
             w.excl[w.cur] = KILL.kfail[w.cur[1]]
@@ -143,16 +166,53 @@ def guards(w, s, flags):
         w.status = "failed"
 
 
+def dec_cost(w, s):
+    """09 H1: what a decide costs this turn: the DEC_Q quantile of my last DEC_N full (or cheap: FIGHT_FARM cut) ones."""
+    d = sorted(w.cdec[s.cheap or s.near_e <= 8])
+    return d[int(len(d) * DEC_Q)]
+
+
+def can_decide(w, s, k):
+    """09 H1 (P12): decide only if the turn pays for it and the execute after it; else keep w.cur. The first decide of
+    a turn with a fresh threat (hit, or an enemy within FRESH_E none was within last turn), a Behavior that ended, or
+    DEC_SKIP skipped turns in a row decides on the cheap path when the full one does not fit."""
+    if s.recalling or s.submitting:
+        return False
+    s.cheap = False
+    if fuel() > dec_cost(w, s) + EXEC_RES:
+        return True
+    d = w.cdec[s.near_e <= 8]
+    if len(d) > 1:
+        d.pop(0)                              # refused: age the estimate (else one cold 1.9M decide refused all [measured])
+    else:
+        d[0] = d[0] * 9 // 10
+    if k == 0 and (s.attacker is not None or (s.near_e <= FRESH_E and not w.ne4) or w.status != "going"
+                   or w.dskip >= DEC_SKIP):
+        s.cheap = True
+        return fuel() > dec_cost(w, s) + (0 if s.attacker is not None or s.near_e <= FRESH_E else EXEC_RES)
+    return False
+
+
 def act(w, s):
-    """Up to 2 decide + execute: a Behavior that ends this turn (done / failed) lets decide pick again, fuel
-    permitting (FUEL_FLOOR before decide, DECIDE2_FUEL after an execute). Channelling and recalling skip decide. A Nav
-    failure this execute (05 L6: no gain on the goal for STALL_FAIL turns) fails the Behavior."""
+    """Up to 2 decide + execute: a Behavior that ends this turn (done / failed) lets decide pick again when the
+    ledger allows (can_decide). Channelling and recalling skip decide. A Nav failure this execute (05 L6: no gain on
+    the goal for STALL_FAIL turns) fails the Behavior."""
     r = s.r
     for _k in range(2):
-        if not (s.recalling or s.submitting) and fuel() > FUEL_FLOOR:
+        if can_decide(w, s, _k):
             fb = fuel()
             UPD.decide(w, s)
-            w.ph[1] = max(w.ph[1], fb - fuel())
+            c = fb - fuel()
+            w.ph[1] = max(w.ph[1], c)
+            d = w.cdec[s.cheap or s.near_e <= 8]
+            d.append(c)
+            if len(d) > DEC_N:
+                d.pop(0)
+            w.dskip = 0
+            w.ndec[1 if s.cheap else 0] += 1
+        elif _k == 0:
+            w.dskip += 1
+            w.ndec[2] += 1
         op, tg = w.cur
         fb = fuel()
         w.nav.fail = None
@@ -170,8 +230,6 @@ def act(w, s):
             st = "failed"
             w.excl[w.cur] = max(w.excl.get(w.cur, 0), KILL.kfail.get(tg, 0) if op == "kill" else r + EXCL)   # keeps a longer one
         w.status = st
-        if fuel() < DECIDE2_FUEL:
-            break                             # 08 F1 (M6): no second decide that would roll the turn over
 
 
 def act_trace(w, s):
@@ -206,6 +264,9 @@ def play_main():
     w.attacked = w.capt = w.waiting = False
     w.bag_alive, w.hp_alive, w.ne_alive = 0, 0, 0
     w.ph = [0] * 3
+    w.cdec = ([DEC_COST0], [DEC_COST0 // 2])          # 09 H1: last decides' fuel, full and cheap (GUESS start)
+    w.dskip, w.fme_wait, w.ne4 = 0, 0, False          # skipped decides in a row, F_me rebuild due (turns), enemy within 4
+    w.ndec = [0, 0, 0]                                # decides full / cheap / skipped (tick `dec=`)
     w.idle = 0
     w.kh_until = 0
     w.hit = False
@@ -265,11 +326,14 @@ def play_main():
                               f"pos={w.pos.x},{w.pos.y} act={'/'.join(map(str, w.act))} ph={w.ph} "
                               f"score={w.score[0]}-{w.score[1]} shards={w.shards} "
                               f"str={me.strength() if alive else 0:.0f} sw={SCAN.n} nav={'/'.join(map(str, w.nav.n))} "
-                              f"errs={nerr[0]}")
+                              f"errs={nerr[0]} dec={'/'.join(map(str, w.ndec))} dcost={max(w.cdec[0])},{max(w.cdec[1])} "
+                              f"dmed={sorted(w.cdec[0])[len(w.cdec[0]) // 2]},{sorted(w.cdec[1])[len(w.cdec[1]) // 2]} "
+                              f"fc={w.nav.fcost}")
             except Exception as e:
                 trace("err", "tick " + err_text(e))
             fu = []
             w.ph = [0] * 3
+            w.ndec = [0, 0, 0]
             w.act = [0] * 7
             w.nav.n = [0] * 8
         cambc.end_turn()

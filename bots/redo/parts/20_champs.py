@@ -14,14 +14,14 @@ see spells, splash or resets, so the farm column carries that.
 """
 
 _IT = cambc.ItemType
-_KEYS = ("farm", "bank", "kill", "hold", "shop", "join", "heal")
+_KEYS = ("farm", "bank", "kill", "shop", "join", "heal")
 
 
-def _row(farm, bank, kill, hold, shop, join, heal=1.0, phases=None, splash=False):
+def _row(farm, bank, kill, shop, join, heal=1.0, phases=None, splash=False):
     """phases: optional ((shards_threshold, overrides), ...) ascending; the last entry whose threshold <= shards owned
     overrides the row's keys (apply_phase()). splash: basic attacks splash Strength onto every other monster within 1
     of the target [rules, Varg] (60_behaviors Farm targeting, 50_prices splash_m in the live clear model)."""
-    return {"farm": farm, "bank": bank, "kill": kill, "hold": hold, "shop": shop, "join": join, "heal": heal,
+    return {"farm": farm, "bank": bank, "kill": kill, "shop": shop, "join": join, "heal": heal,
             "phases": phases, "splash": splash}
 
 
@@ -41,29 +41,28 @@ ROLE_BUILD = {"main": ((_HS, _TS, _MS, _PS), (_DH, _PS)),
 ROLE_GOLD = {"main": 3.0, "second": 1.0, "crew": 0.05}    # second 1.0 (06 section 4.4): lost with Vendetta
 # (0/14 vs 5/14), won with Ren (06 section 11.6: 21W/21L margin +147 vs 0.05's 17W/25L +42) [measured]
 
-NEUTRAL = _row(1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+NEUTRAL = _row(1.0, 1.0, 1.0, 1.0, 1.0)
 
 PROFILES = {
     # Ryth [guess all]: farm 1.1 stun adds 1x Focus and hits connected monsters; bank 0.9 safest carrier (1200 HP),
-    # can carry longer; kill 1.2 area stun holds the target (PRICES); hold 1.5 stun breaks channels (PRICES);
+    # can carry longer; kill 1.2 area stun holds the target (PRICES);
     # join 1.2 front body for pair takes and stun in fights.
-    0: _row(1.1, 0.9, 1.2, 1.5, 1.0, 1.2),
+    0: _row(1.1, 0.9, 1.2, 1.0, 1.2),
     # Vendetta [guess all]: farm 1.1 monster kills reset her reset (faster group clears); bank 1.1 800 HP and no
-    # escape once the dash is spent, bank sooner; kill 1.3 dash closes, kill resets cooldowns (PRICES);
-    # hold 0.5 no stun (PRICES says 0; a 10-gold lock still lets anyone break a channel).
-    2: _row(1.1, 1.1, 1.3, 0.5, 1.0, 1.0),
+    # escape once the dash is spent, bank sooner; kill 1.3 dash closes, kill resets cooldowns (PRICES).
+    2: _row(1.1, 1.1, 1.3, 1.0, 1.0),
     # Varg [guess all; 3.0 Str 50 -> 40 [sdk]]: farm 1.3 splash = Strength on adjacent monsters, 2-3x on groups;
-    # kill 0.8 no mobility, no CC, mediocre single target; hold 0.5 no stun; join 1.2 packs are where splash pays.
+    # kill 0.8 no mobility, no CC, mediocre single target; join 1.2 packs are where splash pays.
     # [user decision 15 Oct] splash=True: targets / stands by the monster with the most live neighbours within 1, and the
     # live clear model counts his hits x the splash count (50_prices splash_m)
-    9: _row(1.3, 1.0, 0.8, 0.5, 1.0, 1.2, splash=True),
+    9: _row(1.3, 1.0, 0.8, 1.0, 1.2, splash=True),
     # Marcella [guess all]: farm 1.1 2x Focus nuke on camps beyond her 45 Str; bank 0.8 stun-immune tributer, the
-    # designated carrier (3.0: +2 gold per gem tributed [sdk]); kill 1.1 enhanced attack stuns; hold 1.2 melee stun +
-    # immune to theirs; join 1.1 1200 HP front body.
-    6: _row(1.1, 0.8, 1.1, 1.2, 1.0, 1.1),
+    # designated carrier (3.0: +2 gold per gem tributed [sdk]); kill 1.1 enhanced attack stuns;
+    # join 1.1 1200 HP front body.
+    6: _row(1.1, 0.8, 1.1, 1.0, 1.1),
     # Vesper Vale [guess all]: farm 1.2 ranged (range 3, hits from outside melee monsters' reach); bank 1.1 dash 2 makes
     # her hard to catch, a good gem runner; kill 0.9 dash closes and the reset adds a hit, but no stun to hold a
-    # target; hold 0.0 no stun (later: the altar-lock buyer); join 1.0. Her gold is her role's (ROLE_GOLD).
+    # target; join 1.0. Her gold is her role's (ROLE_GOLD).
     # Phases [user's plan 15 Oct, ladders 2-6; numbers guess]: below 15 shards farm (farm 1.5, kill 0.9, bank 1.1,
     # shop 2.0: she buys instead of hoarding); from 15 shards (three emblems) hunt: farm 0.4, kill 2.5, bank 1.5,
     # shop 0.5 (fewer trips home between patrol altars), hunt 20 (KILL reach + 20 tiles), chase 8 (rounds Kill follows a
@@ -71,18 +70,18 @@ PROFILES = {
     # HUNT gate; default KILL_PLOSE 0.6), dcost_fight 30 (fight risk cap; default DCOST_FIGHT_CAP 150).
     # [user decision 15 Oct afternoon] below 15 shards: hunt 6 tiles, chase 6; denial 60 in both phases (others: DENIAL
     # 24); patrol 0: no sighting hunt / patrol before 15 shards.
-    1: _row(1.2, 1.1, 0.9, 0.0, 1.0, 1.0, 1.0,
+    1: _row(1.2, 1.1, 0.9, 1.0, 1.0, 1.0,
             ((0, {"farm": 1.5, "kill": 0.9, "bank": 1.1, "shop": 2.0, "hunt": 6, "chase": 6, "denial": 60, "patrol": 0}),
              (15, {"farm": 0.4, "kill": 2.5, "bank": 1.5, "shop": 0.5, "hunt": 20, "chase": 8,
                    "heal": 0.5, "retreat_hp": 0.3, "kill_plose": 0.95, "dcost_fight": 30, "denial": 60}))),
     # Stellar [guess all]: farm 1.5 spells deal ~77/turn vs 30 Str (3.0 [sdk]; 2.5x), cut for cast-only-standing and 2 casts per
-    # 8; bank 1.2 750 HP, fragile carrier; kill 1.2 235 burst at range 4 finishes carriers; hold 0.5 no stun;
+    # 8; bank 1.2 750 HP, fragile carrier; kill 1.2 235 burst at range 4 finishes carriers;
     # join 1.2 area spell on groups, needs a frontline. Not in our roster.
-    4: _row(1.5, 1.2, 1.2, 0.5, 1.0, 1.2),
+    4: _row(1.5, 1.2, 1.2, 1.0, 1.2),
     # Ren (06 section 11.2) [GUESS all]: farm 1.1 his slot 0 (1.25 x Focus + 1-round stun, range 4 [rules]) on the
     # monster he hits; retaliation on camps unknown; bank 1.0 dash 2 escapes; kill 1.2 the stun at 4 holds the target,
-    # the dash closes; hold 1.5 a stun breaks a channel [rules] (Ryth's value); join 1.1 900 HP front body.
-    8: _row(1.1, 1.0, 1.2, 1.5, 1.0, 1.1),
+    # the dash closes; join 1.1 900 HP front body.
+    8: _row(1.1, 1.0, 1.2, 1.0, 1.1),
     # Not in our roster: neutral multipliers: Prism 5, Willow 7, Tavi 10, Heart of Ruin 11 (the first backup pick,
     # 80_draft BACKUP). Cassi & Issac 3: rows by type (TYPE_ROWS, below).
 }
@@ -90,9 +89,9 @@ PROFILES = {
 # Cassi & Issac share draft id 3 and are two champions: rows by ChampionType (06 section 11.3) [guess all]. Not in
 # PICKS (drafted 3rd they lost: 15W/27L, 22.8 deaths a game, 06 section 11.6); the rows serve a backup pick.
 # Cassi (3), 600 HP and the pair's life (one dies, both die [rules]): heal 2.0 retreats sooner, bank 1.2, farm 1.1
-# nuke 2x Focus at 4, kill 1.0, hold 1.5 stun at 4 breaks a channel, join 1.0.
-# Issac (4), 900 HP melee: farm 1.1 attack reset, bank 1.0, kill 1.1, hold 0.5 no stun, join 1.1.
-TYPE_ROWS = {3: _row(1.1, 1.2, 1.0, 1.5, 1.0, 1.0, 2.0), 4: _row(1.1, 1.0, 1.1, 0.5, 1.0, 1.1)}
+# nuke 2x Focus at 4, kill 1.0, join 1.0.
+# Issac (4), 900 HP melee: farm 1.1 attack reset, bank 1.0, kill 1.1, join 1.1.
+TYPE_ROWS = {3: _row(1.1, 1.2, 1.0, 1.0, 1.0, 2.0), 4: _row(1.1, 1.0, 1.1, 1.0, 1.1)}
 
 _TYPE_TO_DRAFT = (0, 1, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10, 11)     # ChampionType -> ChampionDraft [sdk 3.0.1 enums]
 

@@ -240,7 +240,7 @@ different bot on 2.2.4, about 2 SE apart, with no cause found; gate c (§5.1) is
 - **What is expensive stays expensive:** fields (~79–340k), `camp_groups` (0.74M, cached once), the scan per camp
   (~12k a camp). The refactor moves these, it doesn't add any.
 - **`__slots__` on Behaviors and Snap,** as `World` already has, for cheaper attribute access.
-- **Fuel gates stay explicit** (`FUEL_FLOOR`, the 900k check before a second decide, `SCAN_FUEL`). They are why an
+- **Fuel gates stay explicit** (`FUEL_FLOOR`, the 900k check before a second decide, `SCAN_FUEL`). *(Replaced 21 Oct by the 09 H1 turn ledger: `EXEC_RES`, `DEC_Q`, `Nav.can_build`; see `09_HOTFIX_R8.md` §7.)* They are why an
   inert edit moves games [measured 16 Oct, memory `testing-noise`], so they must sit in one place (the loop) with names.
 
 ## 5. R1: the parity refactor

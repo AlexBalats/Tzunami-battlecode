@@ -4,7 +4,7 @@ DraftModel.encode, read once at boot by draft_decode). Layout: strat/MEMORY_LAYO
 
 Option codes (shared byte, low 3 bits; Behavior.code in 60_behaviors): 0 idle (also heal and fall, target 0; fall was
 8, which overflowed into the target bits: docs/redo/04_COMMS.md section 2; tests/test_comms.py), 1 farm, 2 bank, 3 kill
-(also hunt, target 31), 4 hold, 5 shop, 6 join, 7 dead; target in the high 5 bits (group index in draft-memory order, altar index, enemy handle & 31, ally slot for join).
+(also hunt, target 31), 4 unused (was hold, deleted by 09 H5), 5 shop, 6 join, 7 dead; target in the high 5 bits (group index in draft-memory order, altar index, enemy handle & 31, ally slot for join).
 Byte 5: enemy sighting, high 3 bits = enemies seen together (within SIGHT_R of one of them, capped 7; 0 = none), low
 5 bits = (round // 4) & 31 when seen. Byte 6: the sighting's region, index of the altar nearest the cluster.
 A reader treats age >= SIGHT_LIVE rounds as stale and clears byte 5. Byte 7: group death marker (mark_death).

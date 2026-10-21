@@ -4,6 +4,40 @@ Older entries are in `docs/archive/`: `HANDOFF_to_19oct.md` (13–19 Oct), `HAND
 19 Oct) and `HANDOFF_20oct_redo.md` (the patch and redo sessions 1–6, 20 Oct). Keep this file short: the newest entry
 on top, then the standing sections.
 
+## 21 Oct, late: R8 built and zipped (`submissions/redo-r8.zip`); H4 is next
+
+- **R8 = R7 + H1 (fuel ledger), H2 (heal deadlock), H3 (finish or leave), H5 (HOLD deleted).** H4 (idle crews) is
+  not built. Results are in `docs/redo/09_HOTFIX_R8.md` §7.
+- **Results [measured]:**
+  - vs strat-sw: **51W/19L**, margin +217, 19/35 maps won from both sides (R7 the same night: 48W/21L, +198, 17/35).
+  - vs `_r7`: **37W/32L**, margin +37.
+  - Rollovers: 57 a game (R7 236). Deaths 9.0 (R7 11.2). Bags lost 83 (R7 74).
+- **Two bugs found and fixed while building H1:**
+  1. `s.edps` was read on skipped decides before it was set (AttributeError). It is now set in `sense`.
+  2. The decide-cost estimate locked at a cold 1.9M, so 80 % of decides were skipped. Fixed with the `DEC_Q` quantile
+     and aging on refusal; skips are now 3–12 %.
+- **The `bots/redo` sources** equal the zip byte for byte. `.gitignore` whitelists `redo-r8.zip`. R7 is in git (`8aae86e`) and
+  `submissions/redo-r7.zip` (the scratch `bots/_r7` was deleted; recreate it from either for a head to head).
+- **Next session:** build H4 from 09 §3 (tank share, the takeable candidate list, Fall heals/escorts, crew gold
+  0.3), then ablate in the order H4.4, then H4.1. Add 09 §4's `navstats.py` measures (heal A-B-A, trips per take,
+  crew fall %) first, so H2/H3/H4 are measured, not only judged by totals. Read R8's ladder games first; watch
+  broken-curve, starfish and bags lost.
+
+## 21 Oct: R7's ladder losses analysed; the R8 hotfix designed (`docs/redo/09_HOTFIX_R8.md`)
+
+- **Input:** 7 ladder losses of R7 in `replays_from_others/redo-r7/` and the user's four observations (zzz, the
+  dance, half-done camps, idle crews). No bot code changed this session.
+- **Found [measured]:** (1) rollovers up to 791 a game (big-world; the opponent 0). `decide` costs 1.3–2.3M of the
+  2.5M budget, `need_k` alone 0.64M, and the F_me rebuild and the first goal build have no fuel check. (2) + (3) A heal
+  deadlock: `sense` tests the unseen-hit rule on the tile I moved to, not the tile I was hit on, so `safe_recall`
+  steps back into the wolf's range (Varg 84 rounds, Ren 297 A-B-A rounds in one game). Farm's go-line (`SURVIVE` 0.6)
+  and heal's line (0.5) disagree, so takes are dropped halfway (Varg: 3 trips, 87 rounds for one take). (4) Crews
+  find no takeable group (`TANK_SHARE` 0.6 floor; `near6` holds untakeable groups) and Fall stands at the altar
+  (islands: 500–1,084 rounds in fall per crew body). HOLD: up to 623 rounds per body, 0 tributes cancelled.
+- **Next session:** build R8 by 09 §6 (H1 first), measure by 09 §4, judge vs strat-sw and vs `_r7`, zip
+  `submissions/redo-r8.zip` if it passes. The scratch probe `bots/_r8probe` was deleted; the decoded replays were
+  in the session scratchpad only (re-decode with `tools/replay/decode.mjs`; clean the NUL bytes from the stdout first).
+
 ## 20 Oct, wrap-up: the codebase cleaned for commit; R7 on the ladder
 
 - **The repo now holds:** `bots/redo` (R7, the ladder entry, = `submissions/redo-r7.zip` byte for byte), `bots/strat-sw`

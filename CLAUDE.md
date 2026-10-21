@@ -95,7 +95,9 @@ Sprint locks **17 Oct**, 24 Oct, 31 Oct · international qualifiers 4 Nov · UK 
 - [x] Zip a ladder candidate: `redo-r6.zip` (20 Oct; replaced by R7, deleted at the wrap-up)
 - [x] The fix pass (20 Oct, `08_FIGHT.md` §9): **R7 = R6 + G3** (ward guards), vs strat-sw 31W/11L, margin +230; G1 (memory/sightings in `duel`, no lone kill) and G2 (full-weight `duel`) built, lost, dropped (diff in `docs/redo/patches/`); cambc 3.0.2 (35 maps), R7 18W/10L on the 14 new maps; zipped `submissions/redo-r7.zip` for the ladder
 - [x] The wrap-up (20 Oct): unused bots, tools, zips, `maps_old/`, `runs/` and caches deleted; `.gitignore` commits `redo-r7.zip` and `strat-sw.zip`; the old 20 Oct handoff entries in `docs/archive/HANDOFF_20oct_redo.md` (`docs/HANDOFF.md` top entry)
-- [ ] **Next: read R7's ladder results** (R7 went to the ladder 20 Oct)
+- [x] Read R7's ladder results (21 Oct): 7 losses analysed, the design `docs/redo/09_HOTFIX_R8.md` written (no code changed)
+- [x] R8 hotfix (21 Oct, `docs/redo/09_HOTFIX_R8.md` §7): H1 fuel ledger, H2 heal deadlock, H3 finish-or-leave, H5 HOLD deleted; vs strat-sw 51W/19L (R7 48W/21L), vs `_r7` 37W/32L, rollovers 236 → 57/game; zipped `submissions/redo-r8.zip`
+- [ ] **Next: H4 idle crews (09 §3) + the 09 §4 navstats measures**, after reading R8's ladder games
 - [ ] X5 (altar locks), tribute denial, the main carry's gold share (0.64 vs ~0.35)
 
 ### Later

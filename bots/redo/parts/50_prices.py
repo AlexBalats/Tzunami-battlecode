@@ -8,11 +8,10 @@ KILL_PL_POWS = {0.6: 0.756, 0.95: 0.231}    # KILL value x (1 - pl) ** pow, pow 
 KILL_PL_POW = 0.756                         # is 0.5 at pl = kill_plose (no math module: precomputed; other kp -> this)
 EXCL = 20                   # rounds an (option, target) is excluded after a timeout / failure
 DENIAL = 24                 # default of the profile key `denial` (Vesper 60, 20_champs); [measured-ish] their farm rate 0.4 g/r x 60 rounds out (PRICES KILL)
-THEIR_RATE = 0.4            # [guess] their gems per round per body (HOLD value 30 x 0.4)
 P_NEAR = 0.5                # [guess] P(lose the bag) with an enemy within 8
 DANGER_W = 0.2              # [guess] P(lose the bag) per unit of draft danger (cell value / 14)
 SHOP_RETURN = True          # [deviation] SHOP rounds include the walk back from spawn to where I am
-SURVIVE = 0.6               # [tuned] k bodies are enough if the most-hit body keeps > 40 % of its current HP
+WALK_OUT = 1.5              # GUESS 09 H3: rounds of the group's live Strength my walk out of its range costs (camps don't chase)
 WAIT_PARTNER = 15           # [guess] rounds added to a pair take while the partner is not committed
 # Group game [user plan 15 Oct, game type + pair/trio opener; all guess]: while stack_mode() (round < GROUP_UNTIL and the
 # draft's solo share <= GROUP_SOLO_MAX) the team opens in subgroups (70_updaters opening_slots: trio + pair / two pairs /
@@ -37,14 +36,11 @@ SHIELD_COVER = 0.6          # [measured 17 Oct, A59] the shield took every camp 
                             # turns per 8-turn cooldown covered 59 % of Varg's hit rounds (62.5 % at most)
 SPAWN_KILL_R = 2            # [user decision 15 Oct] KILL / JOIN a fight / HUNT price 0 on targets within this of an enemy
                             # spawn tile (it heals to full at turn end [rules], camps ring it); Kill fails there (-1: off)
-FUEL_FLOOR = 400_000        # after sensing: below this skip pricing, repeat the executor step
-DECIDE2_FUEL = 1_500_000    # GUESS 08 section 5.1: a second decide in one turn only above this (was 900k: fight turns rolled over)
 FARM_PLOSE = 0.99           # [tuned] off: 0.65 (2 v 1) lost corners and interlock (we must contest the centre)
-HOLD_PLOSE = 0.3            # [guess] HOLD needs a clearly safe altar
 KILL_PLOSE = 0.6            # [user plan 15 Oct, ladder 2; was 0.45 tuned] fight even and slightly worse local fights
                             # [user plan 15 Oct, ladder 6] default of the profile / phase key `kill_plose` (Vesper hunt phase 0.95)
                             # (ladder: nobody fought back; 0.5 = even; 0.99 lost 9 champions in kills)
-DEATH_EXCL = 100            # rounds a death excludes its (option, target), and kill/hold after a kill/hold death
+DEATH_EXCL = 100            # rounds a death excludes its (option, target), and kill/hunt after a kill/hunt death
 HEAL_K = 1.5                # [guess] (2.0 -> 1.5, 15 Oct ladder 2: 11 of 27 deaths healing at 316-644 HP) HEAL: P(die) = clamp((1 - hp/maxhp) x (1 + enemies within 8) x HEAL_K, 0, 1)
 MY_RATE = 0.4               # [guess] floor of my gems per round in death_cost (60 x max(this, best FARM now) + bag)
 DEATH_OUT = 60              # [rules] rounds out after a death
@@ -88,7 +84,9 @@ REN_RET = 0.2               # [rules] Ren retaliates 0.2 x Focus when damaged (c
 # kits]: Varg (shield 2.5 F), Vesper, Ren (1.25 F + stun, retaliation), Ryth (1 F + stun), Vendetta, Marcella (2 F + stun)
 FKIT = {10: (1, 0.0, 2.5), 1: (1, 0.0, 0.0), 9: (0, 1.25 + STUN_F + 8 * REN_RET, 0.0), 0: (1, 1.0 + STUN_F, 0.0),
         2: (1, 0.0, 0.0), 7: (1, 2.0 + STUN_F, 0.0)}
-FIGHT_FARM = 2              # 08 F1: with an enemy within 8, FARM prices only the current target + this many nearest groups
+FIGHT_FARM = 2              # 08 F1: with an enemy within 8 (or s.cheap: 09 H1's cheap decide), FARM prices only the current
+                            # target + this many nearest groups
+HP_STEP = 50                # 09 H1.4: need_k's memo keys my HP in steps of this, rounded down (never more reckless)
 HEAL_LOW = 0.3              # [guess] below this HP fraction with an enemy within 8, HEAL P(die) >= HEAL_FLOOR
 HEAL_FLOOR = 0.8            # [guess] whatever plose says (ladder: farm 3.34 beat heal 2.96 at 10 HP, 44 bag, 2 enemies)
 HEAL_WB = 15                # [guess] HEAL divisor uses min(walk back, this): far from spawn must not zero the heal
@@ -172,7 +170,7 @@ def sig(x):
 # Selection (posture(), every champion locally, same inputs, no byte): draft regime few -> defend, pick / many /
 # unknown -> economy; a fresh sighting (<= SIGHT_FRESH rounds) of >= STACK_N enemies -> defend; a fresh one of <= 2
 # while we lead by > PUNISH_LEAD -> punish. Our side of an enemy: its nearest altar has draft side 0 or 1; theirs: 2.
-_PK = ("farm", "farm_their_side", "bank_risk", "kill_our_side", "kill_their_side", "hold", "shop", "join", "ward", "heal")
+_PK = ("farm", "farm_their_side", "bank_risk", "kill_our_side", "kill_their_side", "shop", "join", "ward", "heal")
 
 
 def _col(**kw):
@@ -186,9 +184,8 @@ POSTURE = {
     "economy": _col(heal=0.7),                  # open maps: the baseline prices as they are
     # defend [guess all]: farm_their_side 0.3 their half is where the stack lives; bank_risk 1.5 cash the bag before
     # it is caught; kill_our_side 1.3 intruders on our half are near help; kill_their_side 0.5 no dives into them;
-    # hold 1.3 deny tributes at contested altars; join 1.3 move in pairs.
     # join 2.0 [guess, 15 Oct ladder phase 1; was 1.3]: on few maps move in pairs.
-    "defend": _col(farm_their_side=0.3, bank_risk=1.5, kill_our_side=1.3, kill_their_side=0.5, hold=1.3, join=2.0),
+    "defend": _col(farm_their_side=0.3, bank_risk=1.5, kill_our_side=1.3, kill_their_side=0.5, join=2.0),
     # punish [guess all]: a small group seen while we lead: fight it, mostly on our half; bank a bit sooner.
     "punish": _col(kill_our_side=1.4, kill_their_side=1.1, bank_risk=1.2),
 }
@@ -254,12 +251,14 @@ def race(w):
 
 
 CLEAR_MEMO = {}
+NEED_MEMO = {}              # 09 H1.4: need_k's answers, keyed on everything they read; cleared at CLEAR_MEMO's cap
 
 
 class Snap:
     __slots__ = ("r", "st", "shut", "alive", "recalling", "submitting", "can_move", "can_attack", "pos", "hp", "maxhp",
                  "bag", "gold", "S", "enemies", "allies", "live", "vis", "mem", "slots", "spawn", "near_e", "P", "walt", "edps", "plose",
-                 "sc", "sa", "sage", "stack", "dead_g", "dcost", "attacker", "trapped", "ba", "bwk", "sap")
+                 "sc", "sa", "sage", "stack", "dead_g", "dcost", "attacker", "trapped", "ba", "bwk", "sap",
+                 "cheap")
 
 
 def sense(w):
@@ -279,8 +278,8 @@ def sense(w):
     except Exception:
         pass
     s.enemies, s.allies, s.live, s.near_e = [], [], {}, 99
-    s.dcost = 0.0
-    s.attacker, s.trapped = None, False
+    s.dcost = s.edps = 0.0
+    s.attacker, s.trapped, s.cheap = None, False, False
     if not s.alive:
         s.pos, s.hp, s.maxhp, s.bag, s.S, s.vis, s.spawn = w.pos, 0, 1, 0, 1, None, False
         return s
@@ -294,6 +293,8 @@ def sense(w):
             s.enemies.append((c, p, c.health(), c.gem_count(), dd, c.strength()))
             if dd < s.near_e:
                 s.near_e = dd
+            if dd <= 4:
+                s.edps += c.strength()          # 09 H3: finish_dmg's enemies (execute reads it on skipped decides)
         except Exception:
             pass
     for c in champs(Team.ALLY):
@@ -330,10 +331,24 @@ def sense(w):
                 pass
         if lv:
             s.live[h] = lv
-    if s.attacker is None and s.hp < (getattr(w, "hp_alive", 0) or 0) and not any(
-            p.chebyshev_distance(pos) <= crng(c) for lv in s.live.values() for c, _hp, p, _st in lv):
+    if s.attacker is None and s.hp < (getattr(w, "hp_alive", 0) or 0) and not camp_hit_me(w, s):
         w.uhit = r                              # 08 F4 (M4, P-a): hit by nobody I can see (a bush): no recall for a while
     return s
+
+
+def camp_hit_me(w, s):
+    """09 H2.1: a live camp in vision had me in range now or where the hit landed (w.pos: my tile at the start of last
+    turn; camps don't chase [rules])."""
+    pos, p0 = s.pos, w.pos
+    for lv in s.live.values():
+        for c, _hp, p, _st in lv:
+            if min(p.chebyshev_distance(pos), p.chebyshev_distance(p0)) <= crng(c):
+                return True
+    ti = w.tinfo
+    for q in vision.awake_camp_tiles().positions():
+        if min(q.chebyshev_distance(pos), q.chebyshev_distance(p0)) <= ti.get((q.x, q.y), (None, 5))[1]:
+            return True
+    return False
 
 
 def champs(team):
@@ -450,6 +465,31 @@ def my_dmg(dmg, k, clear):
     return d
 
 
+def finish_dmg(w, s, h, k, mons, m):
+    """09 H3 (P1, P4): damage I take finishing group h with k bodies from now (live clear model on the remembered HP,
+    my splash m, enemies' edps), plus WALK_OUT rounds of its live Strength: if the model is wrong, the exit is paid."""
+    Se = s.S if m == 1.0 else s.S * (m + k - 1) / k             # s_eff: [user decision 15 Oct] splash
+    key = (h, k, Se) if w.G[h].hp is None else None
+    cd = CLEAR_MEMO.get(key) if key else None
+    if cd is None:
+        cd = clear_dmg(mons, Se, k)
+        if key:
+            if len(CLEAR_MEMO) > 400:
+                CLEAR_MEMO.clear()
+            CLEAR_MEMO[key] = cd
+    wo = 0
+    for x in mons:
+        wo += x[1]
+    return my_dmg(cd[1] + WALK_OUT * wo, k, cd[0]) + s.edps * min(cd[0] + 5, 10)   # TANK_SHARE; [K3] mitigation
+
+
+def can_finish(w, s, h, k, hp):
+    """09 H3: k bodies finish h from now with me above KEEP_HP (the line HEAL uses), the walk out included."""
+    o = w.G[h]
+    mons = [x for x in (o.hp if o.hp is not None else o.mons) if x[0] > 0]
+    return not mons or finish_dmg(w, s, h, k, mons, splash_m(w, s, h)) <= hp - KEEP_HP * s.maxhp
+
+
 def mit_refresh(w):
     """[K3] ME['jmit'] (0.7 with a Jungle emblem of any stat) and ME['shield_amt'] (the shield slot's amount
     now: it grows with Focus; 0 without KIT_ON) for my_dmg; ME['recall'] (RECALL_HOME with a Home emblem, else 5
@@ -523,8 +563,8 @@ def farm_price(w, s, h, bodies, walk, c=None):
 
 
 def need_k(w, s, h, c):
-    """Smallest k >= 1 + c (claimants + me), at most the team, whose most-hit body keeps KEEP_HP (live clear model:
-    my HP and Strength, monsters' remembered HP); None if no team size does. Pair takes price with this k and pay
+    """Smallest k >= 1 + c (claimants + me), at most the team, that can finish h from now (09 H3: finish_dmg, me above
+    KEEP_HP); None if no team size does. Memoised (09 H1.4) on what it reads, my HP rounded down to HP_STEP. Pair takes price with this k and pay
     WAIT_PARTNER per body not yet committed, so the first champion claims and the second sees one claimant."""
     o = w.G[h]
     if o.st != "alive":
@@ -536,18 +576,25 @@ def need_k(w, s, h, c):
     if sm and UPD.seed is not None:
         return max(1 + c, sub_size(w))          # [user plan 15 Oct, pair/trio opener] seed: my subgroup takes it
     T = max(1, len(w.roster))
-    floor = s.hp * SURVIVE                      # survival, as FARM's own zero rule (KEEP_HP stays a risk term)
-    for k in range(1 + c, T + 1):
-        Se = s_eff(w, s, h, k)                  # [user decision 15 Oct] splash (50_prices s_eff)
-        key = (h, k, Se) if o.hp is None else None
-        cd = CLEAR_MEMO.get(key) if key else None
-        if cd is None:
-            cd = clear_dmg(mons, Se, k)
-            if key:
-                CLEAR_MEMO[key] = cd
-        if my_dmg(cd[1], k, cd[0]) + s.edps * min(cd[0] + 5, 10) <= floor:   # [15 Oct afternoon] TANK_SHARE; [K3] mitigation
-            return min(k, max(1 + c, sub_size(w))) if sm else k   # group mode: capped at my subgroup's size
-    return None
+    hq = int(s.hp) // HP_STEP * HP_STEP         # 09 H1.4: the memo's HP, rounded down
+    m = splash_m(w, s, h)
+    mk = (h, c, None if o.hp is None else tuple(x[0] for x in o.hp), hq, s.maxhp, s.S, m, int(s.edps) // 10,
+          ME.get("jmit", 1.0), ME.get("shield_amt", 0), T)
+    if mk in NEED_MEMO:
+        k = NEED_MEMO[mk]
+    else:
+        k = None
+        floor = hq - KEEP_HP * s.maxhp          # 09 H3: the take ends with me above KEEP_HP, as HEAL's line
+        for j in range(1 + c, T + 1):
+            if finish_dmg(w, s, h, j, mons, m) <= floor:
+                k = j
+                break
+        if len(NEED_MEMO) > 400:
+            NEED_MEMO.clear()
+        NEED_MEMO[mk] = k
+    if k is not None and sm:
+        return min(k, max(1 + c, sub_size(w)))  # group mode: capped at my subgroup's size
+    return k
 
 
 RESET_X = {}                # champion id -> 2 with an attack-reset ability (double hit), else 1; cached per id
@@ -694,7 +741,7 @@ def price_all(w, s, cl, by):
     out = []
     # FARM over the ~6 nearest groups by F_me (+ the current target, + cleared groups seen)
     cand = list(w.nav.near6)
-    fight = s.near_e <= 8
+    fight = s.near_e <= 8 or s.cheap            # 09 H1: the cheap decide cuts like a fight turn
     if fight:
         cand = cand[:FIGHT_FARM]                # 08 F1 (M6): a fight turn keeps its fuel; the rest keep last turn's price
     cur = w.cur
@@ -706,7 +753,6 @@ def price_all(w, s, cl, by):
         if h in w.G and h not in cand and len(cand) < (FIGHT_FARM + 1 if fight else 9):
             cand.append(h)
     s.P = danger_p(w, s)
-    s.edps = sum(e[5] for e in s.enemies if e[4] <= 4)
     s.walt = fget(w.nav.F_alt, s.pos)
     s.plose = duel(s) if s.enemies else 0.0
     dead_g = s.dead_g
@@ -855,15 +901,6 @@ def price_all(w, s, cl, by):
             w.roam = min(2.0, max(0.0, s.S / 100 - 1)) * (0.5 if r - w.big3 <= ROAM_STACK else 1.0)
             if pl <= kp and w.roam > 0:
                 fights.append((HUNT_BAG + KILL_PRICE * KILL_G * g2g(r) + dn, wk + 10, kmul * w.roam, pl, "hunt", tgt[1]))
-    # HOLD: contested altar, stun or lock gold, a fresh sighting there
-    if s.sc and s.sage < SIGHT_LIVE:
-        a = s.sa
-        # spec: stun OR lock gold; we never buy or place locks, so only a stun counts [deviation]
-        if a < len(w.apos) and w.aside[a] == 1 and ME.get("has_cc") and                 r >= w.kh_until and s.plose <= HOLD_PLOSE:
-            wk = w.nav.walk_to(f"a{a}", s.pos)
-            if wk is None or wk >= FAR:
-                wk = max(0, w.nav.ad[a] - 1)
-            out.append((30 * THEIR_RATE / (wk + 30) * prof["hold"] * pm["hold"], "hold", a))
     # JOIN a fight [rule, 15 Oct ladder 2: nobody converged]: an ally within JOIN_FIGHT_R broadcasting kill (code 3) ->
     # KILL's price with the ally and me in the Lanchester bodies, x POSTURE["defend"]["join"] whatever my posture.
     # Target not in my vision: its spot = the ally's, bag 0, ttk JOIN_TTK. Join walks to the ally; KILL takes over.
@@ -925,8 +962,13 @@ def price_all(w, s, cl, by):
     hc = dcost
     if not ne8:
         # [user plan 15 Oct, ladder 6] no enemy within 8: HEAL 0 at hp >= HEAL_NOENEMY_HP, below that the death cost
-        # is capped at HEAL_NOENEMY_CAP (ladder: 64 % HP and nobody in sight chose heal 15 over farm 10)
-        if s.hp >= HEAL_NOENEMY_HP * s.maxhp:
+        # is capped at HEAL_NOENEMY_CAP (ladder: 64 % HP and nobody in sight chose heal 15 over farm 10).
+        # 09 H3 (P1): engaged on my farm group, HEAL is 0 while I can finish it (the bodies within 3 share the hits),
+        # whatever my HP; HEAL_NOENEMY_HP is the rule only when not engaged
+        if cur[0] == "farm" and cur[1] in w.G and engaged(s, cur[1]):
+            if can_finish(w, s, cur[1], 1 + sum(1 for a in s.allies if a[1].chebyshev_distance(s.pos) <= 3), s.hp):
+                pdie = 0
+        elif s.hp >= HEAL_NOENEMY_HP * s.maxhp:
             pdie = 0
         hc = min(HEAL_NOENEMY_CAP, dcost)
     if pdie > 0 and flee_ok(s):
@@ -978,6 +1020,6 @@ def tname(w, op, tg):
         return f"g{tg}@{o.anchor.x},{o.anchor.y}" if o else str(tg)
     if op == "hunt" and tg >= 100:
         return f"g{tg - 100}"
-    if op in ("bank", "hold", "hunt"):
+    if op in ("bank", "hunt"):
         return f"A{tg}"
     return str(tg)

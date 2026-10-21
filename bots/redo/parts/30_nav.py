@@ -3,8 +3,8 @@ decision: "here" | "moved" | "blocked" | "waiting" | ("failed", reason).
 
 L0 global goal fields over static blockers (walls, holes, altars, enemy spawn; camp tiles are NOT blockers: which
    camps live is dynamic), per key: "g<h>" tiles within my attack range of group h's camps, "c<h>" its spawn tiles,
-   "a<i>" altar i's ring, "home"; LRU-capped, at most one new build a turn. Plus F_alt, F_enemy, F_home, and F_me
-   with the walks gd / ad / near6 that Prices read.
+   "a<i>" altar i's ring, "home"; LRU-capped. Plus F_alt, F_enemy, F_home, and F_me with the walks gd / ad / near6
+   that Prices read. Every build asks the turn ledger first (09 H1: can_build; fcost = one build's measured fuel).
 L1 a waypoint K_WP steps down the global field (units ignored), then a local window compute_to(waypoint -> me) with
    units, live camps and danger as walls: Om Nom's Optimal Bug, our exact field as the bug walk. Fast path: nothing
    within FAST_R of the next FAST_N steps -> the global step.
@@ -20,7 +20,9 @@ L7 tie-breaks among the window's optimal steps. L8 near the goal the window's ro
 
 FME_MOVE = 6                # rebuild F_me when I am more than this from its root
 NAV_CACHE = 6               # goal fields kept (~31k memory each; ~0.77M fuel to build at 100x100 [measured 20 Oct])
-GOAL_FUEL = 1_500_000       # a second goal-field build in one turn only above this fuel
+FIELD_K = 770_000           # 09 H1: one field build at 100x100 [measured 20 Oct]; x area until the boot build is measured
+GOAL_RES = 200_000          # 09 H1: fuel a goal-field build leaves for the rest of execute
+HOME_RES = 100_000          # 09 H1: ... and the home field (its callers are cheap)
 K_WP = 8                    # GUESS: waypoint steps down the global field (05 L1)
 WIN_EXTRA = 4               # window max distance = K_WP + this: the detour it can find (05 L1)
 FAST_N, FAST_R = 3, 2       # GUESS: fast path when no unit / live camp / danger within FAST_R of the next FAST_N steps
@@ -44,7 +46,7 @@ class Nav:
         nw = terr | terr.shift_right(1) | terr.shift_right(-1)
         self.nearw = (nw | nw.shift_up(1) | nw.shift_up(-1)) & ~terr     # L7: tiles along a wall
         self.goals, self.keys, self.cw = {}, [], set()
-        self.built = -1
+        self.fcost = FIELD_K * w.Wm * w.Hm // 10000   # GUESS (09 U2): area scaling, replaced by build_fme's measure
         self.moved, self.fail, self.last_step, self.lastp = False, None, "-", None
         self.wp = self.wpk = None
         self.mk, self.mbest, self.mn, self.mr, self.mpos = None, FAR, 0, -9, []
@@ -58,7 +60,7 @@ class Nav:
         self.F_alt.compute(self.blk & ~rings, rings, Bitboard(), FAR - 1)
         self.F_enemy = DistanceField()
         self.F_enemy.compute(terr, w.esp, Bitboard(), FAR - 1)
-        self.F_home = None
+        self.F_home = self.F_me = None
         self.dash_ab = None
         try:
             for a in w.me.abilities():
@@ -72,20 +74,29 @@ class Nav:
         self.moved, self.fail, self.lastv = False, None, None
 
     # ---- fields ----
+    def can_build(self, extra):
+        """09 H1 (P12): a field build starts only if the turn can still pay for it plus `extra` after it."""
+        return fuel() > self.fcost + extra
+
     def build_fme(self, pos):
-        """F_me from pos; gd/ad: walk distance to every group anchor / altar tile (stale until the next build)."""
+        """F_me from pos; gd/ad: walk distance to every group anchor / altar tile (stale until the next build). Its
+        cost sets fcost (the first build measures it, later ones can only raise it)."""
         w = self.w
         f = DistanceField()
         b = Bitboard()
         b.set(pos)
+        f0 = fuel()
         f.compute(self.blk_dist, b, Bitboard(), FAR - 1)
+        c = f0 - fuel()
+        self.fcost = c if self.F_me is None else max(self.fcost, c)
         self.F_me, self.fme_root = f, pos
         self.gd = {h: fget(f, w.G[h].anchor) for h in w.order}
         self.ad = [fget(f, a) for a in w.apos]
         self.near6 = sorted(w.order, key=lambda h: self.gd[h])[:6]
 
     def home_field(self):
-        if self.F_home is None:
+        """F_home, built lazily when the ledger allows (else None: fget(None, p) is FAR)."""
+        if self.F_home is None and self.can_build(HOME_RES):
             self.F_home = DistanceField()
             self.F_home.compute(game_map.walls() | game_map.holes(), self.w.sp, Bitboard(), FAR - 1)
         return self.F_home
@@ -124,13 +135,12 @@ class Nav:
         return g
 
     def goal(self, key, r):
-        """Cached goal field, else built (at most one build a turn below GOAL_FUEL); None: not this turn."""
+        """Cached goal field, else built if the ledger allows (09 H1); None: not this turn."""
         g = self.goals.get(key)
         if g is not None:
             return g
-        if self.built == r and fuel() < GOAL_FUEL:
+        if not self.can_build(GOAL_RES):
             return None
-        self.built = r
         return self.build(key)
 
     def walk_to(self, key, pos):
@@ -363,7 +373,7 @@ class Nav:
         elif fget(f, wp) == 0 and (wr & ~(self.blk | units | INFO.camps())).is_empty():
             self.last_step = f"{key} v={v} waiting"
             return "waiting"                    # L8: every goal tile near me is taken (Gone Fishin's congested well)
-        elif key not in self.cw and not (INFO.camps() & disk(pos, md)).is_empty() and fuel() > GOAL_FUEL:
+        elif key not in self.cw and not (INFO.camps() & disk(pos, md)).is_empty() and self.can_build(GOAL_RES):
             self.cw.add(key)                    # L0 fallback: the global path runs into live camps the window can't pass
             self.build(key, True)
             trace("nav", f"camp walls {key} v={v}")
