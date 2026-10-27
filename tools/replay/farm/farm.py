@@ -205,7 +205,7 @@ def game(path):
                 banks=banks, rec=rec, shop=shop, deaths=deaths, roll=[roll[0], roll[1]], legs=legs,
                 ngroups=len(comps), gem_supply=sum(gem_of), dsp=[gd(0, 0)],
                 spawn_g=[[dspawn[t][cpos[comps[g][0]][1]][cpos[comps[g][0]][0]] for g in range(len(comps))] for t in (0, 1)],
-                gtype=gtype, gem_of=gem_of, ghp=ghp)
+                gtype=gtype, gem_of=gem_of, ghp=ghp, gtiles=[sorted(cpos[c] for c in cs) for cs in comps])   # gtiles: match to MAPDUMP groups (hpb.py)
 
 out = [game(p) for p in sys.argv[4:]]
 json.dump(out, open(OUT, 'w'))

@@ -1,0 +1,119 @@
+diff -ru bots/_t_teams13/src/beh.cpp bots/_t_siege/src/beh.cpp
+--- bots/_t_teams13/src/beh.cpp	2026-10-26 23:14:30
++++ bots/_t_siege/src/beh.cpp	2026-10-27 12:09:37
+@@ -179,7 +179,7 @@
+             bool now = false; const Status res = group_go(w, s, mem, g, &now);
+             if (!now) return res;
+         }
+-        else if (!sm && o.need >= 2 && !hurt && !can_finish_r9(w, s, mem, g, 1 + partners_near(w, s, g), s.hp))
++        else if (!sm && o.need >= 2 && !hurt && (siege_group(g) ? 1 + partners_near(w, s, g) < SIEGE_MIN : !can_finish_r9(w, s, mem, g, 1 + partners_near(w, s, g), s.hp)))
+         {
+             int near = 99; for (int k = 0; k < nl; ++k) { const int d = cheb(s.live[idx[k]].p, s.pos); if (d < near) near = d; }
+             if (near > 4) NAV.step(w, s, mem, Goal{ NavKey::Ring, g }, NavMode::Fast);
+@@ -196,6 +196,27 @@
+             }
+             ST.waiting = true;
+             return Status::Going;
++        }
++        // E7: a siege body leaves while it can still walk out: HP after SIEGE_OUT rounds of the awake monsters that reach
++        // me must stay above the keep line (a monolith hits 200 a round to 5 tiles [rules]); the heal takes over
++        if (siege_group(g))
++        {
++            float inc = 0;
++            // only the monsters whose nearest champion is me hit me [rules: a monster hits the nearest champion]
++            for (int k = 0; k < nl; ++k)
++            {
++                const LiveCamp& c = s.live[idx[k]];
++                if (c.hp <= 0 || !c.awake || cheb(c.p, s.pos) > c.range + 1) continue;
++                const int dm = cheb(c.p, s.pos); bool mine = true;
++                for (int a = 0; a < s.na && mine; ++a) if (cheb(c.p, s.a[a].p) < dm) mine = false;
++                if (mine) inc += c.str;
++            }
++            if (s.hp - SIEGE_OUT * inc < SIEGE_KEEP * s.maxhp)
++            {
++                ST.exclude(Beh::Farm, g, s.r + SIEGE_REST);
++                TR("exec", "siege g%d out hp=%.0f inc=%.0f", g, s.hp, inc);
++                return Status::Failed;
++            }
+         }
+         // targets in range
+         int tg[MAXCG]; int nt = 0;
+diff -ru bots/_t_teams13/src/prices.cpp bots/_t_siege/src/prices.cpp
+--- bots/_t_teams13/src/prices.cpp	2026-10-27 10:33:07
++++ bots/_t_siege/src/prices.cpp	2026-10-27 12:10:04
+@@ -260,6 +260,13 @@
+ // need_k memo (09 H1.4): per group, keyed on what it reads
+ static u32 NK_KEY[MAXG]; static int NK_VAL[MAXG]; static bool NK_INIT = false;
+ 
++// E7 the siege (LOSSES_P15 §10): a gem group no team size finishes in one go (a monolith, 00stampede's 20-camp block,
++// 02the-pack's 48-camp one) is never priced, so maps whose gems sit in such groups go 0-0 (00stampede alone: 0 gems in
++// 2,000 rounds) while the ladder's teams take it with the whole team over heal trips (damaged camps keep their damage
++// [measured]). Such a group is a siege: the whole roster, its heal trips priced in farm_price
++static bool SIEGE[MAXG];
++bool siege_group(int g) { return g >= 0 && g < MAXG && SIEGE[g]; }
++
+ int need_k_r9(const World& w, const Snap& s, const Mem& mem, int g, int c)
+ {
+     if (!NK_INIT) { for (int i = 0; i < MAXG; ++i) NK_KEY[i] = 0xFFFFFFFFu; NK_INIT = true; }
+@@ -282,6 +289,15 @@
+         for (int j = 1 + c; j <= T; ++j) if (finish_dmg_r9(w, s, g, j, m) <= floor) { k = j; break; }
+         NK_KEY[g] = key; NK_VAL[g] = k;
+     }
++    // not a gate: an altar's gate (02guardians: two monoliths flank the only altar) has its own logic; a woken gate shoots
++    // every body walking in to bank (66 deaths a game alone on the map)
++    bool gate = false; for (int a = 0; a < w.nA && !gate; ++a) for (int q = 0; q < w.ngate[a]; ++q) if (w.gate[a][q] == g) gate = true;
++    // a siege stays one while its group carries the damage (bodies come back to finish it rather than re-price it as a
++    // normal take with a long partner wait: 00stampede was taken once a game)
++    float hpl = 0, hp0 = 0; for (int i = 0; i < m.n; ++i) hpl += m.hp[i]; for (int i = 0; i < w.G[g].n; ++i) hp0 += w.G[g].hp0[i];
++    const bool sticky = SIEGE[g] && hpl < hp0 - 1.f;
++    SIEGE[g] = (!k || sticky) && !gate && w.G[g].gems >= SIEGE_GEMS;
++    if (SIEGE[g]) return T;
+     if (k && sm) { const int cap = sub_size(w) > 1 + c ? sub_size(w) : 1 + c; return k < cap ? k : cap; }
+     return k;
+ }
+@@ -322,10 +338,19 @@
+     const Mons m = take_mons(w, mem, g);
+     if (m.n == 0) return value / div / (walk + 5);
+     const float spm = splash_m(w, mem, g, ME.prof.splash);
+-    const float Se = spm == 1.f ? s.S : s.S * (spm + b - 1) / b;
++    const bool siege = siege_group(g);
++    const float S0 = siege && s.teamS > 1 ? s.teamS : s.S;
++    const float Se = spm == 1.f ? S0 : S0 * (spm + b - 1) / b;
+     const Clear cd = clear_model(m, b, Se);
+     const int er = cd.rounds + 5 < 10 ? cd.rounds + 5 : 10;
+     const float per = my_dmg(cd.dmg, b, cd.rounds) + s.edps * er;
++    if (siege)
++    {   // my heal trips: my share of the damage over the HP I may lose a trip, each a recall and the walk back
++        const float trips = per / ((1.f - KEEP_HP) * s.maxhp);
++        const float back = walk_home(w, o.anchor);
++        const float extra = trips * (KIT.recall_turns + (back < 60 ? back : 60));
++        return value / div / (walk + wait + cd.rounds + 5 + extra) - s.P * s.bag;
++    }
+     if (per >= s.hp) return 0;
+     const int miss = bodies - 1 - c;
+     if (miss > 0) walk += (sm ? STACK_WAIT_PARTNER : rc.wait) * miss;
+diff -ru bots/_t_teams13/src/prices.h bots/_t_siege/src/prices.h
+--- bots/_t_teams13/src/prices.h	2026-10-26 23:14:41
++++ bots/_t_siege/src/prices.h	2026-10-27 12:09:37
+@@ -58,6 +58,11 @@
+ constexpr int RACE_RICH = 4;
+ constexpr int SEED_UNTIL = 40;
+ constexpr int NEAR6 = 6;
++constexpr int SIEGE_GEMS = 40;   // GUESS (E7): the least gems a group needs to be sieged
++constexpr int SIEGE_MIN = 3;     // GUESS (E7): bodies at a siege before it starts
++constexpr float SIEGE_OUT = 1.5f; // GUESS (E7): rounds of incoming damage a siege body keeps in hand to walk out
++constexpr float SIEGE_KEEP = 0.12f; // GUESS (E7): the HP share a siege body keeps after that
++constexpr int SIEGE_REST = 15;   // GUESS (E7): rounds a body that left a siege skips it (the heal decides)
+ constexpr float MID_X = 1.5f;   // contested (side 1) groups' value: 1.25 / 1.5 / 2.0 = +1.8 / +6.1 / +6.5 win v p15 paired (LOSSES_P15 §7)
+ constexpr int SHARE_MARGIN = 10;   // GUESS (E1): rounds of work left beyond my walk for me to join a claimed need-1 group
+ 
+@@ -84,7 +89,8 @@
+ bool provoke_ok(const World& w, const Snap& s, const Mem& mem, const Enemy& e);   // LOSSES_P15: a first hit only from strength
+ void bank_altar(const World& w, const Snap& s, const Mem& mem, int gn, int* a_out, u16* wk_out);
+ float farm_price(const World& w, const Snap& s, const Mem& mem, int g, int bodies, float walk, int c);
+-int need_k_r9(const World& w, const Snap& s, const Mem& mem, int g, int c);   // 0 = none
++int need_k_r9(const World& w, const Snap& s, const Mem& mem, int g, int c);
++bool siege_group(int g);                   // E7: g was last priced as a siege (no team size finishes it in one go)   // 0 = none
+ bool can_finish_r9(const World& w, const Snap& s, const Mem& mem, int g, int k, float hp);
+ float walk_home(const World& w, vec2 p);
+ int near6(const World& w, int* out);        // the NEAR6 nearest groups by F_me (NAV.gd)

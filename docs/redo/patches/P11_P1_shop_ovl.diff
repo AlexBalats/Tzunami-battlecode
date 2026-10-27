@@ -1,0 +1,25 @@
+--- bots/cpp-p10/src/prices.h	2026-10-24 18:12:52
++++ bots/_p1b/src/prices.h	2026-10-24 19:09:06
+@@ -22,6 +22,7 @@
+ constexpr int BAG_CAP = 50;          // GUESS: a bag this big is banked next (team 3: 93 % from 50, TOP_TEAMS §A)
+ constexpr int WIN_GEMS = 1000; constexpr float BANK_DUE_X = 1.25f;   // the win line [rules]; a due bank outbids farm and shop by this
+ constexpr int SHOP_MUST = 300; constexpr float SHOP_MUST_X = 3.0f;
++constexpr int SHOP_OVL = 3;           // GUESS: shards an overlapped (free) trip shops from (P1, TOP_P9 §10)
+ constexpr int CAP_PAY = 5;            // GUESS (U-T9.7): the capture pays this many rounds after my first turn on the tile
+ constexpr float STACK_FOLLOW = 3.0f;
+ constexpr int SPAWN_KILL_R = 2;
+--- bots/cpp-p10/src/prices.cpp	2026-10-24 18:12:52
++++ bots/_p1b/src/prices.cpp	2026-10-24 19:09:06
+@@ -500,8 +500,11 @@
+         // Q1: the same trip after the capture pays its gold (my share), with the recall free: only the walk back is paid
+         if (capg >= 0)
+         {
++            // P1 (TOP_P9 §10): the trip is free, so it goes from SHOP_OVL shards, not the whole emblem (T4 buys 1.9 items a
++            // trip, T6's Vesper 2.6, T7's Marcella 2.8; our crew's first buy r202-410)
+             const int gold = s.gold + w.G[capg].gold / capn;
+-            if (gold >= (cost > need ? cost : need)) { const float t = shop_p(gold, 1.f + walk_home(w, s.pos)); if (t > s.trip) s.trip = t; }
++            const int og = need < SHOP_OVL * cost ? need : SHOP_OVL * cost;
++            if (gold >= (cost > og ? cost : og)) { const float t = shop_p(gold, 1.f + walk_home(w, s.pos)); if (t > s.trip) s.trip = t; }
+         }
+     }
+     // JOIN a farm

@@ -1,0 +1,22 @@
+--- bots/cpp-p10/src/prices.cpp	2026-10-24 18:12:52
++++ bots/_p2a300/src/prices.cpp	2026-10-24 19:09:38
+@@ -18,7 +18,7 @@
+ bool stack_mode(const World& w, int r)
+ {
+     if (ST.sm_r == r) return ST.sm;
+-    const bool on = r < OPEN_END || (r < GROUP_UNTIL && group_map(w));
++    const bool on = r < OPEN_END || r < GROUP_UNTIL;
+     if (on != ST.sm) TR("stack", "%s solo=%.2f ggems=%.2f", on ? "on" : "off", w.solo, w.ggems);
+     ST.sm = on; ST.sm_r = r;
+     return on;
+--- bots/cpp-p10/src/upd.cpp	2026-10-24 18:12:52
++++ bots/_p2a300/src/upd.cpp	2026-10-24 19:09:38
+@@ -210,7 +210,7 @@
+     {
+         ST.subs_r = r;
+         int slots[6];
+-        if (group_map(w)) group_slots(w, r, slots); else for (int k = 0; k < 6; ++k) ST.subs[k] = 0;
++        group_slots(w, r, slots);
+         TR("stack", "open end subs=%d", w.slot < 6 ? ST.subs[w.slot] : 0);
+         upd_claims(w, s);
+     }

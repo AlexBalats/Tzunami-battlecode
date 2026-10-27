@@ -1,9 +1,12 @@
 """Make team 0 = us in decoded ladder replays (farm.py assumes team A is us).
 
 usage: python3 -I tools/replay/farm/flip.py DEC_DIR BUNDLE_DIR OUT_DIR
+       python3 -I tools/replay/farm/flip.py DEC_DIR --arena OUT_DIR
 
 DEC_DIR holds decode.mjs output named <first 8 hex of the match id>.json; BUNDLE_DIR holds the unzipped bundles
 (match-<id>/), whose team-a.* or team-b.* logs say which side was ours (the ladder gives only our own logs).
+With --arena, DEC_DIR holds arena games named <map>-<A|B>.json (tools/arena.py's folders): in -B the first bot
+played team B, so "us" = the arena's first bot.
 """
 import glob
 import json
@@ -15,10 +18,13 @@ os.makedirs(dst, exist_ok=True)
 F = lambda t: 1 - t if t in (0, 1) else t
 for f in sorted(glob.glob(os.path.join(src, '*.json'))):
     gid = os.path.basename(f)[:8]
-    logs = glob.glob(os.path.join(bun, 'match-' + gid + '*', 'team-*.stdout'))
-    if not logs:
-        sys.exit('flip: no team-*.stdout for ' + gid)
-    us = 0 if os.path.basename(logs[0]).startswith('team-a') else 1
+    if bun == '--arena':
+        us = 1 if os.path.basename(f)[:-5].endswith('-B') else 0
+    else:
+        logs = glob.glob(os.path.join(bun, 'match-' + gid + '*', 'team-*.stdout'))
+        if not logs:
+            sys.exit('flip: no team-*.stdout for ' + gid)
+        us = 0 if os.path.basename(logs[0]).startswith('team-a') else 1
     d = json.load(open(f))
     m = d['meta']
     m['us_was'] = 'AB'[us]

@@ -1,0 +1,41 @@
+--- bots/cpp-p10/src/prices.h	2026-10-24 18:12:52
++++ bots/_p2b/src/prices.h	2026-10-24 19:10:10
+@@ -54,6 +54,7 @@
+ constexpr int RACE_RICH = 4;
+ constexpr int SEED_UNTIL = 40;
+ constexpr int NEAR6 = 6;
++constexpr float COH_X = 1.5f; constexpr int COH_R = 5;   // GUESS: P2 the pack (TOP_P9 §10): a group near an ally pays x COH_X
+ 
+ struct Posture { float farm = 1, farm_their_side = 1, bank_risk = 1, kill_our_side = 1, kill_their_side = 1, shop = 1, join = 1, ward = 1, heal = 1; };
+ struct Race { float walk_w, farm_hyst, wait; int bank_ret; };
+--- bots/cpp-p10/src/prices.cpp	2026-10-24 18:12:52
++++ bots/_p2b/src/prices.cpp	2026-10-24 19:10:10
+@@ -357,6 +357,20 @@
+     s.trip = 0; s.nxt = 0;
+     float rawb = 0;
+     int gbest = -1; float pbest = 0; bool held = false;
++    // P2 (TOP_P9 §10), P20 concentrate: team 6 is never alone (an ally within 5 in 64 % of its off-spawn rounds, p10 47 %),
++    // so it meets the enemy 2.00 v 1.57 and takes elk by crews. After the stack window a group whose anchor lies within
++    // COH_R of an ally (its shared farm target, or the ally itself in sight off our spawn) pays x COH_X. Any ally, not a
++    // fixed partner (T6's partner is the same 10 rounds later 54 % of the time)
++    vec2 coh[10]; int ncoh = 0; int cohg[10];
++    if (!sm)
++    {
++        for (int k = 0; k < 5; ++k)
++        {
++            if (k == w.slot || CL.by_op[k] != C_FARM) continue;
++            for (int g = 0; g < w.nG; ++g) if (w.G[g].mi == CL.by_tg[k] && w.G[g].mi < 31) { cohg[ncoh] = g; coh[ncoh++] = w.G[g].anchor; break; }
++        }
++        for (int i = 0; i < s.na && ncoh < 10; ++i) if (!bb_get(w.sp, s.a[i].p)) { cohg[ncoh] = -1; coh[ncoh++] = s.a[i].p; }
++    }
+     for (int i = 0; i < nc; ++i)
+     {
+         const int g = cand[i]; const Group& o = w.G[g];
+@@ -379,6 +393,7 @@
+         float p = fp * prof.farm * (o.side == 2 ? pm.farm_their_side : pm.farm);
+         if (s.have_sap) p *= 1 - (1 - STACK_FARM) * sig((STACK_R - cheb(o.anchor, s.sap)) / 3.f);
+         if (sm && CL.lowsub[g]) p *= STACK_FOLLOW;
++        for (int j = 0; j < ncoh; ++j) if ((cohg[j] != g || o.need >= 2) && cheb(o.anchor, coh[j]) <= COH_R) { p *= COH_X; break; }
+         push(p, Beh::Farm, g);
+         if (g != capg && p > s.nxt) s.nxt = p;
+         if (p > 0 && (gbest < 0 || p > pbest)) { gbest = g; pbest = p; }

@@ -14,6 +14,18 @@ def cheb(a, b):
     return max(abs(a[0] - b[0]), abs(a[1] - b[1]))
 
 
+def labels(gid):
+    """Labels of a game for split tables: 'ALL' plus every FARM_GROUPS line naming its id (FARM_GROUPS may list several
+    files, comma-separated, e.g. the opponent families and the map-feature buckets; a game can carry many labels)."""
+    if not hasattr(labels, 'L'):
+        labels.L = defaultdict(list)
+        for f in filter(None, __import__('os').environ.get('FARM_GROUPS', '').split(',')):
+            for line in open(f):
+                c, *ids = line.split()
+                for i in ids: labels.L[i].append(c)
+    return ['ALL'] + labels.L.get(gid, [])
+
+
 def team_of(champs):
     return {c['i']: c['team'] for c in champs}
 

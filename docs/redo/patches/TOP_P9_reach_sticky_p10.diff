@@ -1,0 +1,65 @@
+diff -ru cpp-p9/src/prices.cpp _s1/src/prices.cpp
+--- cpp-p9/src/prices.cpp	2026-10-24 13:22:26
++++ _s1/src/prices.cpp	2026-10-24 15:40:39
+@@ -342,6 +342,39 @@
+         const int g = s.live[i].g; bool in = false; for (int j = 0; j < nc; ++j) if (cand[j] == g) in = true;
+         if (!in && nc < (fight ? FIGHT_FARM + 1 : 9)) cand[nc++] = g;
+     }
++    // TOP_P9 T1: + the RATE_K best groups by rate (value / (walk + the clear + 5)) that my live need_k takes with at most
++    // RATE_NEED bodies: the nearest six keep a body on the home wolves while the rich elk groups 50-70 away win the price
++    // when priced (00expanse trace: 8 of 11). The draft's need (S 50, 1,000 HP) still calls a 2-elk group 4 bodies, and
++    // a monolith group by its gems pulled a lone body to a take it never finished (TOP_P9 §8)
++    // the set is refreshed every RATE_EVERY rounds and held between: rebuilt each turn it cost ~48 turn rollovers a game
++    // (the far targets' fields and altar-leg rows churned; p9 1.4) [measured]
++    if (r >= ST.rate_at + RATE_EVERY)
++    {
++        ST.rate_at = r; ST.nrate = 0;
++        int og[MAXG]; float ov[MAXG]; int no = 0;
++        for (int g = 0; g < w.nG; ++g)
++        {
++            const u16 wk = NAV.gd[g]; if (wk >= FAR) continue;
++            const Group& o = w.G[g]; if (o.side >= 2) continue;
++            float hp = 0; for (int i = 0; i < o.n; ++i) hp += o.hp0[i];
++            ov[no] = (o.gems + g2g(r) * o.gold * prof.gold) / (wk + hp / (2.f * (s.S > 1 ? s.S : 1)) + 5); og[no++] = g;
++        }
++        for (int it = 0; it < no && ST.nrate < RATE_K; ++it)
++        {
++            int bi = -1; for (int i = 0; i < no; ++i) if (og[i] >= 0 && (bi < 0 || ov[i] > ov[bi])) bi = i;
++            if (bi < 0) break;
++            const int g = og[bi]; og[bi] = -1;
++            const int k = need_k_r9(w, s, mem, g, CL.lowcn[g]);
++            if (k == 0 || k > RATE_NEED) continue;
++            ST.rate[ST.nrate++] = g;
++        }
++    }
++    if (!fight)
++        for (int i = 0; i < ST.nrate && nc < 12; ++i)
++        {
++            const int g = ST.rate[i]; bool in = false; for (int j = 0; j < nc && !in; ++j) if (cand[j] == g) in = true;
++            if (!in && NAV.gd[g] < FAR) cand[nc++] = g;
++        }
+     { u16 best = FAR; for (int a = 0; a < w.nA; ++a) if (NAV.ad[a] < best) best = NAV.ad[a]; s.walt = best < FAR ? best : 0; }
+     s.P = dz_p(w, s);
+     s.shut = w.nA > 0; for (int a = 0; a < w.nA && s.shut; ++a) if (w.altar_open(a, mem)) s.shut = false;
+diff -ru cpp-p9/src/prices.h _s1/src/prices.h
+--- cpp-p9/src/prices.h	2026-10-24 13:22:26
++++ _s1/src/prices.h	2026-10-24 15:40:39
+@@ -53,6 +53,7 @@
+ constexpr int RACE_RICH = 4;
+ constexpr int SEED_UNTIL = 40;
+ constexpr int NEAR6 = 6;
++constexpr int RATE_K = 3, RATE_NEED = 2, RATE_EVERY = 25;   // TOP_P9 T1: farm candidates by rate beside the nearest six // GUESS
+ 
+ struct Posture { float farm = 1, farm_their_side = 1, bank_risk = 1, kill_our_side = 1, kill_their_side = 1, shop = 1, join = 1, ward = 1, heal = 1; };
+ struct Race { float walk_w, farm_hyst, wait; int bank_ret; };
+diff -ru cpp-p9/src/state.h _s1/src/state.h
+--- cpp-p9/src/state.h	2026-10-24 13:22:26
++++ _s1/src/state.h	2026-10-24 15:40:39
+@@ -19,6 +19,7 @@
+     Choice cur; int started = 0; Status status = Status::Done; int deadline = 0;
+     float prog = 0, pbest = 0; int pstall = 0; int d0 = -1;   // sunk progress [R9 IMPROVEMENTS 2]
+     bool hit = false;               // attacked since this choice
++    int rate_at = -1000, nrate = 0, rate[4] = {};   // TOP_P9 T1: the farm candidates by rate, refreshed every RATE_EVERY
+     // per-turn flags (last turn's are read by the guards)
+     bool attacked = false, capt = false, waiting = false;
+     // exclusions (option, target) -> round

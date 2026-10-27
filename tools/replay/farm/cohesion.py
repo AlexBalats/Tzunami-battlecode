@@ -1,7 +1,9 @@
 """Team cohesion in decoded replays (team 0 = us): how bodies move together.
 usage: python3 -I tools/replay/farm/cohesion.py DEC_DIR [skip-ids...]
-(bodies more than 6 tiles from spawn, every 2nd round from r5; clusters link at Chebyshev <= 4)"""
+(bodies more than 6 tiles from spawn, every 2nd round from r5; clusters link at Chebyshev <= 4)
+22 Oct: one table per label (FARM_GROUPS, see report.labels)."""
 import glob, json, os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')); import report
 from collections import Counter, defaultdict
 
 def cheb(a, b):
@@ -9,12 +11,12 @@ def cheb(a, b):
 
 src = sys.argv[1]
 skip = set(sys.argv[2:])
-T = {t: defaultdict(float) for t in (0, 1)}
+TL = defaultdict(lambda: {t: defaultdict(float) for t in (0, 1)}); NG = Counter()
 for f in sorted(glob.glob(os.path.join(src, '*.json'))):
     gid = os.path.basename(f)[:8]
     if gid in skip:
         continue
-    d = json.load(open(f))
+    d = json.load(open(f)); T = {t: defaultdict(float) for t in (0, 1)}
     team = {c['i']: c['team'] for c in d['champs']}
     name = {c['i']: c['name'] for c in d['champs']}
     R = d['rounds']
@@ -66,9 +68,16 @@ for f in sorted(glob.glob(os.path.join(src, '*.json'))):
             tot = sum(cnt.values())
             T[t]['ptot'] += tot
             T[t]['ptop'] += cnt.most_common(1)[0][1]
-for t, lab in ((0, 'us'), (1, 'them')):
+    for L in report.labels(gid):
+        NG[L] += 1
+        for t in (0, 1):
+            for k, v in T[t].items(): TL[L][t][k] += v
+for L in sorted(TL, key=lambda x: (x != 'ALL', x)):
+  print('==', L, NG[L], 'games'); T = TL[L]
+  for t, lab in ((0, 'us'), (1, 'them')):
     S = T[t]
     b = S['body']
+    if not b: continue
     print(f"{lab:5s} bodies out of spawn per round {S['out']/S['rounds']:.2f} (alive {S['alive']/S['rounds']:.2f}), "
           f"clusters/round {S['clusters']/S['rounds']:.2f}")
     print(f"      ally within 3: {S['w3']/b:.2f}  within 6: {S['w6']/b:.2f}  none within 8: {S['alone8']/b:.2f}")

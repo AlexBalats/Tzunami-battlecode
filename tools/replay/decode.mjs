@@ -14,7 +14,7 @@
 //   camps:   [{i, type, x, y, group}], groups: [{i, gem, gold, camps}]  (the map file: one HALF of the map)
 //   scamps:  the full map's camps [idx, type, x, y] as the engine numbers them (idx = file camp * 2 + k,
 //            k = 1 the mirror); groups are their cardinally connected sets (report.py full_groups)
-//   rounds:  per round (state at the end of the round): r, banked [A,B], champs [[idx,x,y,hp,alive,gold,gems,kills]],
+//   rounds:  per round (state at the end of the round): r, banked [A,B], champs [[idx,x,y,hp,alive,gold,gems,kills,maxHp]],
 //            campHp (by scamps idx), cap (per group: reward + 2 * capture; capture 0 = A, 1 = B, 2 = none), wards
 //   champs:  [{i, team, type, name, items (final)}]
 //   events:  [round, kind, actor, extra...] for attacks, casts, recalls, submits, shop, wards,
@@ -42,9 +42,12 @@ if (!replayPath) { console.error('usage: node tools/replay/decode.mjs REPLAY [OU
 
 export const CHAMP = ['Ryth', 'VesperVale', 'Vendetta', 'Cassi', 'Issac', 'Stellar', 'Prism', 'Marcella', 'Willow', 'Ren', 'Varg', 'Tavi', 'HeartOfRuin'];
 export const DRAFT = ['Ryth', 'VesperVale', 'Vendetta', 'CassiAndIssac', 'Stellar', 'Prism', 'Marcella', 'Willow', 'Ren', 'Varg', 'Tavi', 'HeartOfRuin'];
-export const CAMP = ['WOLF', 'ELK', 'GEM_CLUSTER', 'GOLD_CLUSTER', 'MONOLITH'];
+export const CAMP = ['WOLF', 'ELK', 'GEM_CLUSTER', 'GOLD_CLUSTER', 'MONOLITH', 'GOLEM'];
 export const STEP = 'Phase.Respawn.Capture.Tick.Move.Attack.Cast ability.Input.End turn.Set priority..Recall.Submit gems.Shop.Place ward.Consumable.Cancel channel.Sandbox.Gems submitted.Draft champion.Place altar lock.Teleport channel.Teleport complete.Movement blocked.Resign.Sell item.Turn rollover'.split('.');
 export const ITEMS = 'Monster Shard of Strength.Monster Emblem of Strength.Monster Shard of Focus.Monster Emblem of Focus.Monster Shard of Health.Monster Emblem of Health.Power Shard of Strength.Power Emblem of Strength.Power Shard of Focus.Power Emblem of Focus.Power Shard of Health.Power Emblem of Health.Durability Shard of Strength.Durability Emblem of Strength.Durability Shard of Focus.Durability Emblem of Focus.Durability Shard of Health.Durability Emblem of Health.Treasure Shard of Strength.Treasure Emblem of Strength.Treasure Shard of Focus.Treasure Emblem of Focus.Treasure Shard of Health.Treasure Emblem of Health.Jungle Shard of Strength.Jungle Emblem of Strength.Jungle Shard of Focus.Jungle Emblem of Focus.Jungle Shard of Health.Jungle Emblem of Health.Home Shard of Strength.Home Emblem of Strength.Home Shard of Focus.Home Emblem of Focus.Home Shard of Health.Home Emblem of Health.Bruiser Shard of Strength.Bruiser Emblem of Strength.Bruiser Shard of Focus.Bruiser Emblem of Focus.Bruiser Shard of Health.Bruiser Emblem of Health'.split('.');
+// engine 2.0.0 (cambc 4.0): seven more families after Bruiser, the same six slots each (84 item types)
+const ITEMS4 = ITEMS.concat(['Tribute', 'Capture', 'Prospector', 'Hunter', 'Skirmish', 'Greed', 'Collectors'].flatMap((f) =>
+  ['Strength', 'Focus', 'Health'].flatMap((st) => [`${f} Shard of ${st}`, `${f} Emblem of ${st}`])));
 export const CONSUMABLES = ['Teleport crystal', 'Control ward', 'Altar lock', 'TP scroll'];
 
 // ---- engine -------------------------------------------------------------
@@ -140,8 +143,11 @@ check(X.Game_Visualiser_Timeline_GetMain(H, outBuf));
 const main = dv().getBigUint64(outBuf, true);
 check(X.Game_Visualiser_Timeline_Info(H, main, args, args + 8, args + 16));
 const size = dv().getUint32(args, true);
-if (X.Game_Visualiser_TimelineSnapshotSize() !== 40152) throw new Error('unsupported snapshot layout');
-const SNAP = 40152, R = 120;
+// engine 2.0.0's snapshot is 2,688 bytes longer: each of the 16 champion records holds 84 item counts, not 42
+const SNAP = X.Game_Visualiser_TimelineSnapshotSize(), R = 120;
+if (SNAP !== 40152 && SNAP !== 42840) throw new Error('unsupported snapshot layout ' + SNAP);
+const NIT = SNAP === 40152 ? 42 : 84, CST = 48 + NIT * 4 + 36, CEND = 196 + 16 * CST, SH = CEND - 4228;
+const IT = NIT === 42 ? ITEMS : ITEMS4;
 const tp = X.Engine_Malloc(SNAP);
 check(X.Game_Visualiser_Timeline_Seek(H, main, 0, 0));
 
@@ -158,10 +164,10 @@ function decode() {
     inputPosition: u(56),
     step: { phase: u(64), kind: u(68), actorKind: u(72), actor: u(76), from: [i(80), i(84)], to: [i(88), i(92)], round: u(96), substep: u(104), slot: slot === 4294967295 ? -1 : slot },
     drafts,
-    champions: arr(172, 196, 252, 16, (n) => ({ idx: u(n + 4), team: u(n + 8), type: u(n + 12), x: i(n + 16), y: i(n + 20), hp: f(n + 24), maxHp: f(n + 28), alive: !!u(n + 32), gold: u(n + 36), gems: u(n + 40), kills: u(n + 44), items: Array.from({ length: ITEMS.length }, (_, k) => u(n + 48 + k * 4)), cons: Array.from({ length: 4 }, (_, k) => u(n + 216 + k * 4)) })),
-    camps: arr(176, 4228, 28, 500, (n) => ({ idx: u(n + 4), team: u(n + 8), type: u(n + 12), x: i(n + 16), y: i(n + 20), hp: f(n + 24) })),
-    groups: arr(180, 18228, 8, 500, (n) => ({ reward: !!u(n), capture: u(n + 4) })),
-    wards: arr(184, 22228, 8, 128, (n) => ({ team: u(n) })),
+    champions: arr(172, 196, CST, 16, (n) => ({ idx: u(n + 4), team: u(n + 8), type: u(n + 12), x: i(n + 16), y: i(n + 20), hp: f(n + 24), maxHp: f(n + 28), alive: !!u(n + 32), gold: u(n + 36), gems: u(n + 40), kills: u(n + 44), items: Array.from({ length: NIT }, (_, k) => u(n + 48 + k * 4)), cons: Array.from({ length: 4 }, (_, k) => u(n + 48 + NIT * 4 + k * 4)) })),
+    camps: arr(176, 4228 + SH, 28, 500, (n) => ({ idx: u(n + 4), team: u(n + 8), type: u(n + 12), x: i(n + 16), y: i(n + 20), hp: f(n + 24) })),
+    groups: arr(180, 18228 + SH, 8, 500, (n) => ({ reward: !!u(n), capture: u(n + 4) })),
+    wards: arr(184, 22228 + SH, 8, 128, (n) => ({ team: u(n) })),
   };
 }
 
@@ -198,7 +204,7 @@ for (;;) {
         const sign = st.kind === 13 ? 1 : -1;
         const k = b.items.findIndex((v, j) => (v - a.items[j]) * sign > 0);
         const q = b.cons.findIndex((v, j) => (v - a.cons[j]) * sign > 0);
-        ev.push(k >= 0 ? ITEMS[k] : q >= 0 ? CONSUMABLES[q] : '?', b.gold);
+        ev.push(k >= 0 ? IT[k] : q >= 0 ? CONSUMABLES[q] : '?', b.gold);
       }
     }
     if (st.kind === 18) ev.push(s.banked[0] - prev.banked[0], s.banked[1] - prev.banked[1]);
@@ -224,7 +230,7 @@ for (;;) {
   if (s.round !== prev.round && prev.phase !== 12) {
     rounds.push({
       r: prev.round, banked: prev.banked,
-      champs: prev.champions.map((c) => [c.idx, c.x, c.y, r1(c.hp), c.alive ? 1 : 0, c.gold, c.gems, c.kills]),
+      champs: prev.champions.map((c) => [c.idx, c.x, c.y, r1(c.hp), c.alive ? 1 : 0, c.gold, c.gems, c.kills, r1(c.maxHp)]),
       campHp: prev.camps.map((m) => r1(m.hp)),
       cap: prev.groups.map((g) => (g.reward ? 1 : 0) + 2 * g.capture),
       wards: prev.wards.length,
@@ -233,7 +239,7 @@ for (;;) {
   prev = s;
 }
 const fin = prev;
-rounds.push({ r: fin.round, banked: fin.banked, champs: fin.champions.map((c) => [c.idx, c.x, c.y, r1(c.hp), c.alive ? 1 : 0, c.gold, c.gems, c.kills]), campHp: fin.camps.map((m) => r1(m.hp)), cap: fin.groups.map((g) => (g.reward ? 1 : 0) + 2 * g.capture), wards: fin.wards.length });
+rounds.push({ r: fin.round, banked: fin.banked, champs: fin.champions.map((c) => [c.idx, c.x, c.y, r1(c.hp), c.alive ? 1 : 0, c.gold, c.gems, c.kills, r1(c.maxHp)]), campHp: fin.camps.map((m) => r1(m.hp)), cap: fin.groups.map((g) => (g.reward ? 1 : 0) + 2 * g.capture), wards: fin.wards.length });
 
 const out = {
   meta: {
@@ -243,7 +249,7 @@ const out = {
   },
   camps: L.camps.map((c) => ({ ...c, type: CAMP[c.type] ?? c.type })),
   groups: L.groups,
-  champs: [...champMeta.values()].map((m) => { const c = fin.champions.find((c) => c.idx === m.i); return { ...m, items: c ? Object.fromEntries(c.items.map((v, k) => [ITEMS[k], v]).filter(([, v]) => v)) : {}, cons: c?.cons }; }),
+  champs: [...champMeta.values()].map((m) => { const c = fin.champions.find((c) => c.idx === m.i); return { ...m, items: c ? Object.fromEntries(c.items.map((v, k) => [IT[k], v]).filter(([, v]) => v)) : {}, cons: c?.cons }; }),
   scamps,
   rounds, events,
 };

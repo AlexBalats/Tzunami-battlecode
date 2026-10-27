@@ -17,6 +17,12 @@ as text). Where they disagree with this file, this file and the SDK (`sdk/python
   below are unchanged; `cambc init --yes` downloaded **14 new maps** (35 in the pool): `00packs 00pilgrimage
   00quadrants 00reverse-spiral 00rows 00rushbait-v2 00split 00stampede 00swirl 01shortcut 01starfish 01starvation
   01the-farm 01yellow-brick-road` [sdk, measured]. The arena now plays all 35 with no `--maps` (70 games).
+- **3.0.5** (installed 22 Oct; 3.0.3–3.0.4 skipped): `cambc init --yes` added **5 maps** (40 in the pool, 80 games
+  with no `--maps`): `00gem-fields 00gemfight 00great-wall 00lost-world 00road-of-riches`; the other 35 are
+  byte-identical. SDK diff 3.0.2 → 3.0.5 [sdk]: **Prism focus per gem 1.0 → 1.5** (the only balance change);
+  new `distance_field::copy_from(src[, mask])` (C++, `DistanceField.copy_from` in Python): copy a field into existing
+  storage, optionally only the masked tiles; debug drawings now last until the drawing champion's next turn (were:
+  the current round). `cambc.toml` lists `languages = ["python", "cpp"]` (the bot is C++ from 22 Oct, `bots/cpp`).
 - **The pool is 21 maps**: `00ambush 00collision 00contest 00corners 00eight 00elkring 00expanse 00fragment
   00interlock 00lanes 00monolith` (the old 11, **changed**: none is byte-identical to its 2.2 file) and ten new ones:
   `01big-world 01boss-battle 01broken-curve 01concentrated-wealth 01corridors 01elk-arena 01fracture 01gold-rush

@@ -14,7 +14,7 @@ when a feature in R3/R4 needs a byte it doesn't have, and §5 lists the candidat
 
 | Byte | Writer | Layout | Readers |
 | --- | --- | --- | --- |
-| 0–4 | slot k (one each) | low 3 bits = code from `OPT`: 0 idle, 1 farm, 2 bank, 3 kill, 4 unused (was hold: deleted by `09_HOTFIX_R8.md` H5, 21 Oct), 5 shop, 6 join, 7 dead; high 5 bits = target (group index, altar, enemy slot, ward j + 1; 31 = hunt on a sighting) | `claims` (who farms what), join / kill partners, ward claims, ball lead |
+| 0–4 | slot k (one each) | low 3 bits = code from `OPT`: 0 idle, 1 farm, 2 bank, 3 kill, 4 unused (was hold: deleted by `09_HOTFIX_R8.md` H5, 21 Oct; in `bots/cpp` since 23 Oct 4 = captured mi, `docs/nav/ROUTING.md` §1.6), 5 shop, 6 join, 7 dead; high 5 bits = target (group index, altar, enemy slot, ward j + 1; 31 = hunt on a sighting) | `claims` (who farms what), join / kill partners, ward claims, ball lead |
 | 5 | anyone seeing ≥ 2 enemies together | count (3 bits, capped 7) << 5 \| `(round // 4) & 31` | posture, stack terms, hunt |
 | 6 | with byte 5 | the altar index nearest the sighting | as above |
 | 7 | a body that dies farming | group index + 1 (5 bits) \| `(round // 32) & 7` << 5 | the farm price: avoid that group for `DEATH_MARK` = 100 rounds |

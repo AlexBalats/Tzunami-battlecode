@@ -1,0 +1,104 @@
+diff -ru bots/cpp-p9/src/beh.cpp bots/_r1/src/beh.cpp
+--- bots/cpp-p9/src/beh.cpp	2026-10-24 13:22:26
++++ bots/_r1/src/beh.cpp	2026-10-24 15:55:38
+@@ -358,6 +358,12 @@
+         }
+         catch (...) { return Status::Failed; }
+     }
++    // TOP_P9 T2: bank by recall when the recall + the walk from home saves RB_GAIN rounds over the walk (as priced)
++    if (!s.spawn)
++    {
++        const u16 wk = NAV.walk_to(Goal{ NavKey::Altar, a }, s.pos);
++        if (s.recalling || recall_bank_walk(w, a) + RB_GAIN <= (wk < FAR ? wk : NAV.ad[a])) { if (ST.rbank < 0) ST.rbank = s.r; return safe_recall(w, s, mem); }
++    }
+     if (NAV.step(w, s, mem, Goal{ NavKey::Altar, a }, NavMode::Fast) == NavRes::Blocked && NAV.walk_to(Goal{ NavKey::Altar, a }, s.pos) >= FAR && NAV.ad[a] >= FAR) return Status::Failed;   // Blocked while the field builds is not unreachable
+     return Status::Going;
+ }
+diff -ru bots/cpp-p9/src/prices.cpp bots/_r1/src/prices.cpp
+--- bots/cpp-p9/src/prices.cpp	2026-10-24 13:22:26
++++ bots/_r1/src/prices.cpp	2026-10-24 15:55:38
+@@ -164,6 +164,23 @@
+     return (float)cheb(p, w.sp0);
+ }
+ 
++// TOP_P9 T2: the bank trip by recall: the recall's turns + the walk from home to the altar's ring. The winners bank via
++// spawn on 53 % of open-map trips (heal and shop on the way, 99 % shop), ours 33 %, and their trips that way are shorter
++// (14 rounds from the gain vs our 20) [measured]
++float recall_bank_walk(const World& w, int a)
++{
++    // the altar tile is blocked, so its own home-field value is FAR (walk_home falls back to a straight line through
++    // walls: banking stopped on 11 maps): the best walkable tile of its ring
++    if (!w.have_home) return (float)FAR;
++    u16 h = FAR;
++    for (int dx = -1; dx <= 1; ++dx) for (int dy = -1; dy <= 1; ++dy)
++    {
++        const vec2 q{ w.apos[a].x + dx, w.apos[a].y + dy };
++        if ((dx || dy) && q.x >= 0 && q.y >= 0 && q.x < META.W && q.y < META.H) { const u16 v = df_get(w.F_home, q); if (v < h) h = v; }
++    }
++    return h < FAR ? (float)KIT.recall_turns + h : (float)FAR;
++}
++
+ // P12: bank on the way (ROUTING §2.7). The open altar with the least added walk ad + AW - gd to the next group gn (the
+ // nearest with no gn, no AW row yet or gn unreachable); their side only if none of ours is open, away from a fresh stack
+ // if any is. *wk_out: the walk to its ring, which the BANK price reads as before
+@@ -376,6 +393,7 @@
+     }
+     // BANK at the altar on the way to the next group (U2.3: the held farm target, else the best farm price)
+     s.ba = 0; s.bwk = FAR; int ib = -1;
++    if (s.bag == 0 || (ST.rbank >= 0 && r - ST.rbank > RB_HOLD)) ST.rbank = -1;
+     if (s.bag > 0 && w.nA) bank_altar(w, s, mem, held ? cur.target : gbest, &s.ba, &s.bwk);
+     if (s.bag > 0 && w.nA && s.bwk < FAR)
+     {
+@@ -383,7 +401,10 @@
+         const float near = s.bwk <= BANK_NEAR ? 1 + BANK_NEAR_BONUS : 1;
+         // Marcella's passive pays 2 gold a gem tributed [rules], priced at my gold weight
+         const float tg = w.my_type == 7 ? MARC_GOLD * g2g(r) * prof.gold : 0.f;
+-        float bp = s.bag * (1 + s.P + tg) * near / (s.bwk * race(w).bank_ret + chan) * prof.bank * pm.bank_risk;
++        // T2: by recall when that saves RB_GAIN rounds over the walk (beh.cpp bank recalls the same way)
++        const float rbw = s.spawn ? (float)FAR : recall_bank_walk(w, s.ba);
++        const float bwk = rbw + RB_GAIN <= s.bwk ? rbw : (float)s.bwk;
++        float bp = s.bag * (1 + s.P + tg) * near / (bwk * race(w).bank_ret + chan) * prof.bank * pm.bank_risk;
+         if (sm && GROUP_BANK_BAG && s.bag >= GROUP_BANK_BAG) bp *= GROUP_BANK_X * s.bag / GROUP_BANK_BAG;
+         bp *= sig((s.near_e - 4) / 1.5f);
+         push(bp, Beh::Bank, s.ba);
+@@ -392,6 +413,9 @@
+         // price above caps at ~11 a round, and our Vesper ended a ladder loss holding 980 (LADDER_P4 §10.2, §11)
+         int team = s.bag; for (int i = 0; i < s.na; ++i) team += s.a[i].bag;
+         if (s.near_e > 4 && (s.bag >= BAG_CAP || s.score_us + team >= WIN_GEMS)) ib = n - 1;
++        // T2: a bank by recall stays due until the bag is in: from spawn the farm price outbid it and the body walked off
++        // with the bag, the recall's turns lost (01starfish 128 banked, TOP_P9 §8)
++        if (ST.rbank >= 0 && r - ST.rbank <= RB_HOLD) ib = n - 1;
+     }
+     // KILL
+     // a spell that hits from range opens the fight from there (Marcella's slot 1 from 4: her most common opener, TOP_TEAMS §8)
+diff -ru bots/cpp-p9/src/prices.h bots/_r1/src/prices.h
+--- bots/cpp-p9/src/prices.h	2026-10-24 13:22:26
++++ bots/_r1/src/prices.h	2026-10-24 15:55:38
+@@ -53,6 +53,8 @@
+ constexpr int RACE_RICH = 4;
+ constexpr int SEED_UNTIL = 40;
+ constexpr int NEAR6 = 6;
++constexpr int RB_HOLD = 60;   // TOP_P9 T2: rounds a bank by recall stays due // GUESS
++constexpr float RB_GAIN = 1.f;   // TOP_P9 T2: bank by recall when it saves at least this many rounds over the walk (a slack looped: off spawn, recall, back)
+ 
+ struct Posture { float farm = 1, farm_their_side = 1, bank_risk = 1, kill_our_side = 1, kill_their_side = 1, shop = 1, join = 1, ward = 1, heal = 1; };
+ struct Race { float walk_w, farm_hyst, wait; int bank_ret; };
+@@ -77,6 +79,7 @@
+ int need_k_r9(const World& w, const Snap& s, const Mem& mem, int g, int c);   // 0 = none
+ bool can_finish_r9(const World& w, const Snap& s, const Mem& mem, int g, int k, float hp);
+ float walk_home(const World& w, vec2 p);
++float recall_bank_walk(const World& w, int a);   // TOP_P9 T2: recall turns + the walk home -> altar ring
+ int near6(const World& w, int* out);        // the NEAR6 nearest groups by F_me (NAV.gd)
+ void pre_turn(const World& w, Snap& s, const Mem& mem);   // edps, plose, score: before any decision
+ // the per-turn claims (set by the updater before price_all)
+diff -ru bots/cpp-p9/src/state.h bots/_r1/src/state.h
+--- bots/cpp-p9/src/state.h	2026-10-24 13:22:26
++++ bots/_r1/src/state.h	2026-10-24 15:55:38
+@@ -19,6 +19,7 @@
+     Choice cur; int started = 0; Status status = Status::Done; int deadline = 0;
+     float prog = 0, pbest = 0; int pstall = 0; int d0 = -1;   // sunk progress [R9 IMPROVEMENTS 2]
+     bool hit = false;               // attacked since this choice
++    int rbank = -1;                 // TOP_P9 T2: the round a bank by recall started (held due until the bag is in)
+     // per-turn flags (last turn's are read by the guards)
+     bool attacked = false, capt = false, waiting = false;
+     // exclusions (option, target) -> round

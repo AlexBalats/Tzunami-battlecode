@@ -37,7 +37,7 @@ import io
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BOTS = os.path.join(ROOT, "bots")
-MAPS = os.path.join(ROOT, "maps")
+MAPS = os.path.join(ROOT, os.environ.get("ARENA_MAPS", "maps"))   # ARENA_MAPS=maps_sprint2: the unseen-map holdout (TOP_TEAMS_R4 §1.3)
 OUT = os.path.join(ROOT, "runs", "arena")
 CACHE = os.path.join(OUT, "cache")
 CACHE_VERSION = 1  # bump when the stored record format changes

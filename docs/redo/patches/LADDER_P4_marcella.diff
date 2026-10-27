@@ -1,0 +1,11 @@
+--- bots/cpp-p6/src/draft.h	2026-10-23 20:34:04
++++ bots/_mv/src/draft.h	2026-10-23 20:31:51
+@@ -2,7 +2,7 @@
+ #pragma once
+ #include "types.h"
+ 
+-constexpr int PICKS[6] = { 9, 1, 8, 0, 2, 6 };          // Varg, Vesper, Ren, Ryth, Vendetta, Marcella [R9]
++constexpr int PICKS[6] = { 6, 1, 8, 0, 2, 9 };          // Marcella, Vesper, Ren, Ryth, Vendetta, Varg: the ladder plays Marcella, Varg rotated out (LADDER_P4 §10.2)
+ constexpr int BACKUP[6] = { 11, 3, 4, 5, 7, 10 };       // Heart of Ruin first, then the rest [R9 X6 guess]
+ constexpr int R_REACT = 8;                              // side margin [R9]
+ constexpr float KEEP_FRAC = 0.4f;

@@ -1,0 +1,123 @@
+diff -ruN --strip-trailing-cr rnd-vcore/src/draft.cpp _t_sym/src/draft.cpp
+--- rnd-vcore/src/draft.cpp	2026-10-26 15:00:21
++++ _t_sym/src/draft.cpp	2026-10-26 15:31:42
+@@ -3,6 +3,7 @@
+ // Dropped [DESIGN §4.2]: blocks, danger, paths, chokes (nB = 0, flag 64 clear).
+ // Turn 1 picks, then models; every later turn encodes and submits BEFORE its pick [measured: submit after pick fails].
+ #include "draft.h"
++#include "sym.h"
+ #include "world.h"
+ #include "model.h"
+ #include <vector>
+@@ -12,7 +13,7 @@
+ 
+ constexpr u16 DMAX = 254;                   // fields' max distance: 255+ = unreached [R9]
+ constexpr u32 FIELD_100 = 31000;            // one full field at 100x100 [measured]
+-constexpr u32 GROUPS_COST = 90000;          // camp_groups() first call 65k + per-group work [measured 65k]
++constexpr u32 GROUPS_COST = 115000;         // camp_groups() first call 65k + per-group work [measured 65k] + team B's mirror order (~21k [measured])
+ constexpr u32 GROUP_UNIT = 8000;            // one group's box minima (<= 8 camps x 9 tiles x 2 fields) [guess]
+ constexpr int UNREACHED = 255;
+ constexpr int ORDER[8] = { 9, 1, 8, 0, 2, 6, 3, 12 };   // slot order (world.cpp World::boot) [R9]
+@@ -150,7 +151,8 @@
+ 
+ void st_groups()
+ {
+-    const auto groups = cambc::map::camp_groups();     // the only call [measured 65k first call]
++    auto groups = cambc::map::camp_groups();           // the only call [measured 65k first call]
++    sym::mirror_order(groups, W, H);                   // RND_DRAFTS §6: team B sees team A's order, mirrored
+     nG = (int)groups.size() > MAXG ? MAXG : (int)groups.size();
+     float khp[8] = { 0 }, kst[8] = { 0 }; bool kok[8] = { false };
+     int n1 = 0, gtot = 0, g2 = 0;
+diff -ruN --strip-trailing-cr rnd-vcore/src/sym.h _t_sym/src/sym.h
+--- rnd-vcore/src/sym.h	1970-01-01 01:00:00
++++ _t_sym/src/sym.h	2026-10-26 15:30:39
+@@ -0,0 +1,71 @@
++// Side symmetry (RND_DRAFTS §6). camp_groups() comes in the same order for both teams, in mirror pairs with team A's
++// member first [measured 26 Oct: 00quarry, 00collision, 02harvest], so every "lowest index wins" tie-break in the bot
++// picked an own-side group as team A and an enemy-side one as team B: one bot, two behaviours (p13 and VC both win
++// less as team B). Team B reorders the groups so that its index i is the mirror image of team A's group i: on a
++// symmetric map both sides then see the same world and decide alike. Called by the draft and by World::boot, so the
++// draft record's group indices (open1 / open2) agree with play.
++#pragma once
++#include <cambc.h>
++#include <vector>
++
++namespace sym
++{
++// transform t (0 rotation, 1 and 2 the reflections) carries our spawn onto theirs
++inline bool spawn_fits(int t, const cambc::bitboard& sp, const cambc::bitboard& esp, int W, int H)
++{
++    const auto ps = sp.positions();
++    {
++        bool ok = !ps.empty();
++        for (const auto& p : ps)
++        {
++            const cambc::vec2 q = t == 0 ? cambc::vec2{ W - 1 - p.x, H - 1 - p.y } : t == 1 ? cambc::vec2{ W - 1 - p.x, p.y } : cambc::vec2{ p.x, H - 1 - p.y };
++            if (q.x < 0 || q.y < 0 || q.x >= W || q.y >= H || !esp.is_set(q)) { ok = false; break; }
++        }
++        return ok;
++    }
++}
++
++inline cambc::vec2 apply(int t, cambc::vec2 p, int W, int H)
++{
++    return t == 0 ? cambc::vec2{ W - 1 - p.x, H - 1 - p.y } : t == 1 ? cambc::vec2{ W - 1 - p.x, p.y } : cambc::vec2{ p.x, H - 1 - p.y };
++}
++
++// team B only: groups[i] becomes the mirror partner of the old groups[i]. Unchanged when the map has no such symmetry
++// or the partners are not one to one (the bot then plays as before)
++inline void mirror_order(std::vector<cambc::map::camp_group>& gs, int W, int H)
++{
++    if (cambc::detail::sdk_my_team() == 0 || gs.empty()) return;
++    const auto sp = cambc::map::spawn_region(cambc::team::enemy), esp = cambc::map::spawn_region(cambc::team::ally);
++    const int n = (int)gs.size();
++    std::vector<int> owner(W * H, -1);
++    std::vector<cambc::vec2> first(n, cambc::vec2{ -1, -1 });
++    for (int g = 0; g < n; ++g)
++        for (const auto& c : gs[g].camps())
++        {
++            const cambc::vec2 p = c.spawn_position();
++            if (p.x < 0 || p.y < 0 || p.x >= W || p.y >= H) continue;
++            owner[p.y * W + p.x] = g;
++            if (first[g].x < 0) first[g] = p;
++        }
++    // a spawn can fit two transforms (00quarry: rotation and the left-right reflection); the camps settle it
++    std::vector<int> partner(n, -1);
++    bool found = false;
++    for (int t = 0; t < 3 && !found; ++t)
++    {
++        if (!spawn_fits(t, sp, esp, W, H)) continue;
++        std::vector<bool> used(n, false); found = true;
++        for (int g = 0; g < n && found; ++g)
++        {
++            if (first[g].x < 0) { found = false; break; }
++            const cambc::vec2 q = apply(t, first[g], W, H);
++            const int h = q.x < 0 || q.y < 0 || q.x >= W || q.y >= H ? -1 : owner[q.y * W + q.x];
++            if (h < 0 || used[h]) { found = false; break; }
++            partner[g] = h; used[h] = true;
++        }
++    }
++    if (!found) return;
++    std::vector<cambc::map::camp_group> out; out.reserve(n);
++    for (int g = 0; g < n; ++g) out.push_back(gs[partner[g]]);
++    gs.swap(out);
++}
++} // namespace sym
+diff -ruN --strip-trailing-cr rnd-vcore/src/world.cpp _t_sym/src/world.cpp
+--- rnd-vcore/src/world.cpp	2026-10-26 12:47:11
++++ _t_sym/src/world.cpp	2026-10-26 15:29:24
+@@ -1,5 +1,6 @@
+ // World: boot once from the engine and the draft record (world.h).
+ #include "world.h"
++#include "sym.h"
+ #include "draft.h"
+ #include "memory.h"
+ #include "model.h"
+@@ -100,6 +101,7 @@
+     // groups: the only camp_groups() call (25k)
+     std::memset(gid, 255, sizeof gid); std::memset(crange, 0, sizeof crange);   // bulk memory: cheap
+     GROUPS = cambc::map::camp_groups();
++    sym::mirror_order(GROUPS, META.W, META.H);   // RND_DRAFTS §6: team B sees team A's order, mirrored
+     nG = (int)GROUPS.size() > MAXG ? MAXG : (int)GROUPS.size();
+     ctiles.clear();
+     float khp[8] = { 0 }, kst[8] = { 0 }; int krg[8] = { 0 }; bool kok[8] = { false };

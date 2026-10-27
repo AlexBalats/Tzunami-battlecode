@@ -1,0 +1,14 @@
+[
+ {"name": "HEAL_K", "x0": 1.5, "lo": 0.8, "hi": 2.5, "why": "RND_P11 near miss (1.0: +6.6 alone)"},
+ {"name": "EXCL", "x0": 20, "lo": 10, "hi": 40, "int": true, "why": "RND_P11 near miss (35: +4.7)"},
+ {"name": "G2G_K", "x0": 0.5, "lo": 0.25, "hi": 0.8, "why": "RND_P11 near miss (0.35: +4.8, hot maps)"},
+ {"name": "BANK_NEAR_BONUS", "x0": 1.0, "lo": 0.0, "hi": 2.0, "why": "RND_P11 near miss; ladder F4 banking cadence"},
+ {"name": "SUNK_K", "x0": 3.0, "lo": 1.5, "hi": 5.0, "why": "p12's winner, re-centred"},
+ {"name": "MY_RATE", "x0": 0.6, "lo": 0.3, "hi": 1.0, "why": "p12's winner, re-centred"},
+ {"name": "KEEP_HP", "x0": 0.40, "lo": 0.30, "hi": 0.50, "why": "take threshold; ladder F2 deaths"},
+ {"name": "TANK_K", "x0": 1.5, "lo": 1.0, "hi": 2.5, "why": "take threshold (port audit row 2)"},
+ {"name": "WAIT_MAX", "x0": 15, "lo": 8, "hi": 30, "int": true, "why": "respawn wait (U3; ladder F7)"},
+ {"name": "STANCE_PL", "x0": 0.7, "lo": 0.5, "hi": 0.85, "why": "ladder F2 fights lost at equal numbers"},
+ {"name": "BAG_CAP", "x0": 50, "lo": 30, "hi": 90, "int": true, "why": "ladder F4/F8 banking cadence, bag at death"},
+ {"name": "P_NEAR", "x0": 0.5, "lo": 0.2, "hi": 0.8, "why": "ladder F4/F8: the bag's risk near an enemy"}
+]

@@ -95,5 +95,5 @@ def show(label, gs):
     print()
 
 show('ALL', G)
-for c in ('O1', 'O2', 'O3', 'O4', 'O5'):
+for c in sorted({g['cl'] for g in G} - {'-'}):   # the labels of FARM_GROUPS (opponent, or a map-feature bucket)
     show(c, [g for g in G if g['cl'] == c])

@@ -1,0 +1,90 @@
+--- a/bots/cpp/src/prices.cpp
++++ b/bots/cpp/src/prices.cpp
+@@ -204,11 +204,12 @@
+     return finish_dmg(w, s, m, k, KIT.jmit, KIT.shield_amt, s.edps, sm);
+ }
+ 
+-bool can_finish_r9(const World& w, const Snap& s, const Mem& mem, int g, int k, float hp)
++bool can_finish_r9(const World& w, const Snap& s, const Mem& mem, int g, int k, float hp, bool sessions)
+ {
+     const Mons m = live_mons(w, mem, g);
+     if (m.n == 0) return true;
+-    return finish_dmg_r9(w, s, g, k, m) <= hp - KEEP_HP * s.maxhp;
++    const float extra = sessions ? (SESS_MAX - 1) * (1.f - KEEP_HP) * s.maxhp : 0.f;   // R4-1: the heal trips a take may span
++    return finish_dmg_r9(w, s, g, k, m) <= hp - KEEP_HP * s.maxhp + extra;
+ }
+ 
+ // need_k memo (09 H1.4): per group, keyed on what it reads
+@@ -234,6 +235,11 @@
+         k = 0;
+         const float floor = hq - KEEP_HP * s.maxhp;
+         for (int j = 1 + c; j <= T; ++j) if (finish_dmg_r9(w, s, g, j, m) <= floor) { k = j; break; }
++        // R4-1 sessions (TOP_TEAMS_R4 §6: team K recalls 3.5 times a multi-big take): damaged camps keep their HP and
++        // sleep [measured, LOSSES_P10 §8.1], so a take that one trip can't finish is finished on the next; the fewest
++        // bodies whose damage fits SESS_MAX trips (this one from my HP now, the rest from full)
++        if (!k && floor > 0)
++            for (int j = 1 + c; j <= T; ++j) if (finish_dmg_r9(w, s, g, j, m) <= floor + (SESS_MAX - 1) * (1.f - KEEP_HP) * s.maxhp) { k = j; break; }
+         NK_KEY[g] = key; NK_VAL[g] = k;
+     }
+     if (k && sm) { const int cap = sub_size(w) > 1 + c ? sub_size(w) : 1 + c; return k < cap ? k : cap; }
+@@ -277,11 +283,20 @@
+     const float Se = spm == 1.f ? s.S : s.S * (spm + b - 1) / b;
+     const Clear cd = clear_model(m, b, Se);
+     const int er = cd.rounds + 5 < 10 ? cd.rounds + 5 : 10;
+-    const float per = my_dmg(cd.dmg, cd.dmg_rot, b, cd.rounds) + s.edps * er;
+-    if (per >= s.hp) return 0;
++    float per = my_dmg(cd.dmg, cd.dmg_rot, b, cd.rounds) + s.edps * er;
++    // R4-1 sessions: damage past my floor is paid as heal trips (recall, the heal, the walk back), each from full HP
++    bool sess = false;
++    { const float budget = s.hp - KEEP_HP * s.maxhp, full = (1.f - KEEP_HP) * s.maxhp;
++      if (per > budget)
++      {
++          const int ns = budget > 0 && full > 0 ? (int)((per - budget + full - 1) / full) : 99;
++          if (ns > SESS_MAX - 1) return 0;
++          float wb = walk_home(w, o.anchor); if (wb > SESS_WALK) wb = SESS_WALK;
++          walk += ns * (KIT.recall_turns + SESS_HEAL + wb); per = budget > 0 ? budget : 0; sess = true;
++      } }
+     const int miss = bodies - 1 - c;
+     if (miss > 0) walk += (sm ? STACK_WAIT_PARTNER : rc.wait) * miss;
+-    const bool low = s.hp - per < KEEP_HP * s.maxhp;
++    const bool low = sess || s.hp - per < KEEP_HP * s.maxhp;
+     const float risk = s.shut ? 0 : (low ? (float)s.bag : s.P * s.bag);
+     if (low) { float wb = walk_home(w, o.anchor); walk += 5 + (wb < 20 ? wb : 20); }
+     float detour = 0;
+--- a/bots/cpp/src/prices.h
++++ b/bots/cpp/src/prices.h
+@@ -52,6 +52,8 @@
+ constexpr float MARC_GOLD = 2.0f;   // Marcella: gold per gem tributed [rules]
+ constexpr float KILL_PRICE = 1.0f, G2G_K = 0.4816f; constexpr int SHUT_GATE = 500;   // G2G_K 0.5 -> 0.4816 p13: SPSA p13a
+ constexpr int RACE_RICH = 4;
++// R4-1 sessions: trips a big take may span; the rounds a heal at spawn takes; the cap on the walk back priced [guess all]
++constexpr int SESS_MAX = 2, SESS_HEAL = 10; constexpr float SESS_WALK = 40;
+ constexpr int SEED_UNTIL = 40;
+ constexpr int NEAR6 = 6;
+ 
+@@ -76,7 +78,7 @@
+ void bank_altar(const World& w, const Snap& s, const Mem& mem, int gn, int* a_out, u16* wk_out);
+ float farm_price(const World& w, const Snap& s, const Mem& mem, int g, int bodies, float walk, int c);
+ int need_k_r9(const World& w, const Snap& s, const Mem& mem, int g, int c);   // 0 = none
+-bool can_finish_r9(const World& w, const Snap& s, const Mem& mem, int g, int k, float hp);
++bool can_finish_r9(const World& w, const Snap& s, const Mem& mem, int g, int k, float hp, bool sessions = false);   // sessions: k bodies finish it within SESS_MAX trips
+ float walk_home(const World& w, vec2 p);
+ int near6(const World& w, int* out);        // the NEAR6 nearest groups by F_me (NAV.gd)
+ void pre_turn(const World& w, Snap& s, const Mem& mem);   // edps, plose, score: before any decision
+--- a/bots/cpp/src/beh.cpp
++++ b/bots/cpp/src/beh.cpp
+@@ -170,12 +170,12 @@
+         bool hurt = false; for (int k = 0; k < nl; ++k) if (s.live[idx[k]].hp < o.hp0[s.live[idx[k]].i]) hurt = true;
+         ST.cap_lg = g; ST.cap_lr = s.r; ST.cap_lhp = 0; for (int k = 0; k < nl; ++k) if (s.live[idx[k]].hp > 0) ST.cap_lhp += s.live[idx[k]].hp;
+         const bool sm = stack_mode(w, s.r);
+-        if (sm && o.need >= 2 && !hurt && !can_finish_r9(w, s, mem, g, 1, s.hp))
++        if (sm && o.need >= 2 && !hurt && !can_finish_r9(w, s, mem, g, 1, s.hp, true))
+         {
+             bool now = false; const Status res = group_go(w, s, mem, g, &now);
+             if (!now) return res;
+         }
+-        else if (!sm && o.need >= 2 && !hurt && !can_finish_r9(w, s, mem, g, 1 + partners_near(w, s, g), s.hp))
++        else if (!sm && o.need >= 2 && !hurt && !can_finish_r9(w, s, mem, g, 1 + partners_near(w, s, g), s.hp, true))
+         {
+             int near = 99; for (int k = 0; k < nl; ++k) { const int d = cheb(s.live[idx[k]].p, s.pos); if (d < near) near = d; }
+             if (near > 4) NAV.step(w, s, mem, Goal{ NavKey::Ring, g }, NavMode::Fast);
