@@ -1,258 +1,113 @@
-// Decode a replay into a JSON timeline, using the visualiser's own engine.wasm.
+// Decode a .repl26a replay into JSON lines, using the engine's own WASM build and the visualiser's snapshot parser
+// (both served by `cambc view`; see tools/replay/README.md).
 //
-//   node tools/replay/decode.mjs REPLAY [OUT.json] [--engine PATH] [--maps DIR]
+//   node tools/replay/decode.mjs VIS_DIR replay.repl26a > out.jsonl
 //
-// REPLAY is the inner replay.repl26a (raw, starts with "a62per"). OUT defaults to stdout.
-// The engine is picked from the replay's version byte: tools/mapgen/.cache/engine.wasm for cambc 2.1.x replays
-// (tools/mapgen/fetch.mjs), engine-v0_0_2.wasm for 2.2.0-2.2.2, engine-v0_0_3.wasm for 2.2.4 (ladder, 16 Oct);
-// tools/replay/fetch-engine.sh saves every engine the installed cambc's visualiser ships.
-// The map is matched against maps/*.map26a by size and camp layout (else "unknown").
-//
-// Layouts are copied from the visualiser bundle (cambc 2.1.6, timeline snapshot 40152 bytes).
-// Output:
-//   meta:    map, size, picks per team, winner, end round, banked gems
-//   camps:   [{i, type, x, y, group}], groups: [{i, gem, gold, camps}]  (the map file: one HALF of the map)
-//   scamps:  the full map's camps [idx, type, x, y] as the engine numbers them (idx = file camp * 2 + k,
-//            k = 1 the mirror); groups are their cardinally connected sets (report.py full_groups)
-//   rounds:  per round (state at the end of the round): r, banked [A,B], champs [[idx,x,y,hp,alive,gold,gems,kills,maxHp]],
-//            campHp (by scamps idx), cap (per group: reward + 2 * capture; capture 0 = A, 1 = B, 2 = none), wards
-//   champs:  [{i, team, type, name, items (final)}]
-//   events:  [round, kind, actor, extra...] for attacks, casts, recalls, submits, shop, wards,
-//            consumables, deaths, captures, banked gems, fuel rollovers
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+// VIS_DIR holds assets/PanelChrome-*.js and assets/v3.wasm. The replay is the inner replay.repl26a of a bundle.
+// Output: one {"t":"round", ...} line per round with every champion's state, and one {"t":"step", ...} line per
+// engine step (moves, attacks, casts, end turns) with its actor, from/to and the actor's state after it.
+import fs from 'fs';
+import path from 'path';
+import zlib from 'zlib';
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(HERE, '..', '..');
-const argv = process.argv.slice(2);
-const opt = (k, d) => { const i = argv.indexOf(k); if (i < 0) return d; const v = argv[i + 1]; argv.splice(i, 2); return v; };
-const engineOpt = opt('--engine', null);
-const mapsDir = opt('--maps', path.join(ROOT, 'maps'));
-const [replayPath, outPath] = argv;
-// Byte 10 of a raw replay is the engine's minor version: 1 = cambc 2.1.x (engine 0.0.1, tools/mapgen/fetch.mjs
-// saves it as engine.wasm), 2 = cambc 2.2.x (engine 0.0.2, engine-v0_0_2.wasm from the 2.2.2 visualiser).
-// Bytes 8-10 are the engine version major.minor.patch: cambc 3.0.1 replays are engine 1.0.0 (engine-v1_0_0.wasm).
-const ev = fs.readFileSync(replayPath).subarray(8, 11);
-const engineMinor = ev[2];
-const engineName = ev.join('_') === '0_0_1' ? 'engine.wasm' : `engine-v${ev.join('_')}.wasm`;
-const enginePath = engineOpt || path.join(ROOT, 'tools/mapgen/.cache', engineName);
-if (!fs.existsSync(enginePath)) throw new Error(`no ${enginePath} for engine ${ev.join('.')}: run sh tools/replay/fetch-engine.sh`);
-if (!replayPath) { console.error('usage: node tools/replay/decode.mjs REPLAY [OUT.json]'); process.exit(2); }
+const [VIS, REPLAY] = process.argv.slice(2);
+const chrome = fs.readdirSync(path.join(VIS, 'assets')).find((f) => f.startsWith('PanelChrome-') && f.endsWith('.js'));
+const P = await import(path.resolve(VIS, 'assets', chrome));
+const parseState = P.F, parseHeader = P.P, OMNI = P.T;  // xr, yr and the spectator perspective {team: 2}
 
-export const CHAMP = ['Ryth', 'VesperVale', 'Vendetta', 'Cassi', 'Issac', 'Stellar', 'Prism', 'Marcella', 'Willow', 'Ren', 'Varg', 'Tavi', 'HeartOfRuin'];
-export const DRAFT = ['Ryth', 'VesperVale', 'Vendetta', 'CassiAndIssac', 'Stellar', 'Prism', 'Marcella', 'Willow', 'Ren', 'Varg', 'Tavi', 'HeartOfRuin'];
-export const CAMP = ['WOLF', 'ELK', 'GEM_CLUSTER', 'GOLD_CLUSTER', 'MONOLITH', 'GOLEM'];
-export const STEP = 'Phase.Respawn.Capture.Tick.Move.Attack.Cast ability.Input.End turn.Set priority..Recall.Submit gems.Shop.Place ward.Consumable.Cancel channel.Sandbox.Gems submitted.Draft champion.Place altar lock.Teleport channel.Teleport complete.Movement blocked.Resign.Sell item.Turn rollover'.split('.');
-export const ITEMS = 'Monster Shard of Strength.Monster Emblem of Strength.Monster Shard of Focus.Monster Emblem of Focus.Monster Shard of Health.Monster Emblem of Health.Power Shard of Strength.Power Emblem of Strength.Power Shard of Focus.Power Emblem of Focus.Power Shard of Health.Power Emblem of Health.Durability Shard of Strength.Durability Emblem of Strength.Durability Shard of Focus.Durability Emblem of Focus.Durability Shard of Health.Durability Emblem of Health.Treasure Shard of Strength.Treasure Emblem of Strength.Treasure Shard of Focus.Treasure Emblem of Focus.Treasure Shard of Health.Treasure Emblem of Health.Jungle Shard of Strength.Jungle Emblem of Strength.Jungle Shard of Focus.Jungle Emblem of Focus.Jungle Shard of Health.Jungle Emblem of Health.Home Shard of Strength.Home Emblem of Strength.Home Shard of Focus.Home Emblem of Focus.Home Shard of Health.Home Emblem of Health.Bruiser Shard of Strength.Bruiser Emblem of Strength.Bruiser Shard of Focus.Bruiser Emblem of Focus.Bruiser Shard of Health.Bruiser Emblem of Health'.split('.');
-// engine 2.0.0 (cambc 4.0): seven more families after Bruiser, the same six slots each (84 item types)
-const ITEMS4 = ITEMS.concat(['Tribute', 'Capture', 'Prospector', 'Hunter', 'Skirmish', 'Greed', 'Collectors'].flatMap((f) =>
-  ['Strength', 'Focus', 'Health'].flatMap((st) => [`${f} Shard of ${st}`, `${f} Emblem of ${st}`])));
-export const CONSUMABLES = ['Teleport crystal', 'Control ward', 'Altar lock', 'TP scroll'];
-
-// ---- engine -------------------------------------------------------------
 let mem;
-const dv = () => new DataView(mem.buffer);
-const wasi = {
-  random_get(p, n) { new Uint8Array(mem.buffer, p, n).fill(7); return 0; },
-  environ_sizes_get(a, b) { dv().setUint32(a, 0, true); dv().setUint32(b, 0, true); return 0; },
-  environ_get() { return 0; },
-  fd_close() { return 0; },
-  fd_fdstat_get(fd, p) { dv().setUint8(p, 2); return 0; },
-  fd_prestat_get() { return 8; }, fd_prestat_dir_name() { return 8; },
-  fd_read(fd, a, b, n) { dv().setUint32(n, 0, true); return 0; },
-  fd_seek() { return 70; },
-  fd_write(fd, iov, cnt, out) {
-    let t = 0;
-    for (let i = 0; i < cnt; i++) { const p = dv().getUint32(iov + i * 8, true), l = dv().getUint32(iov + i * 8 + 4, true); process.stderr.write(Buffer.from(mem.buffer, p, l)); t += l; }
-    dv().setUint32(out, t, true); return 0;
-  },
-  proc_exit(c) { throw new Error('exit ' + c); },
-};
-const { instance } = await WebAssembly.instantiate(fs.readFileSync(enginePath), { wasi_snapshot_preview1: wasi });
-const X = instance.exports; mem = X.memory;
-if (X._initialize) X._initialize();
-const cstr = (p) => { const u = new Uint8Array(mem.buffer); let e = p; while (u[e]) e++; return Buffer.from(u.subarray(p, e)).toString(); };
-const check = (rc) => { if (rc !== 0) throw new Error('engine error ' + rc + ': ' + cstr(X.GetLastErrorMsg())); };
-const outBuf = X.Engine_Malloc(64);
-const args = X.Engine_Malloc(128);
-
-function load(bytes, replay) {
-  const p = X.Engine_Malloc(bytes.length);
-  new Uint8Array(mem.buffer, p, bytes.length).set(bytes);
-  check(replay ? X.Game_FromReplayFileBytes(p, bytes.length, outBuf) : X.Game_FromMapFileBytes(p, bytes.length, outBuf, 0));
-  X.Engine_Free(p);
-  return dv().getBigUint64(outBuf, true);
-}
-const u32 = (H, fn, ...a) => { check(X[fn](H, ...a, outBuf)); return dv().getUint32(outBuf, true); };
-
-function layout(H) {
-  check(X.Game_GetBitboardMetadata(H, outBuf));
-  const w = dv().getInt32(outBuf, true), h = dv().getInt32(outBuf + 4, true);
-  const nc = u32(H, 'Game_GetNumCamps');
-  const camps = [];
-  const handles = new Map();
-  for (let i = 0; i < nc; i++) {
-    check(X.Game_GetCampHandle(H, i, outBuf));
-    const ch = dv().getBigUint64(outBuf, true);
-    handles.set(ch, i);
-    check(X.Game_GetCamp(H, ch, outBuf));
-    camps.push({ i, type: dv().getInt32(outBuf, true), x: dv().getInt32(outBuf + 4, true), y: dv().getInt32(outBuf + 8, true), group: -1 });
-  }
-  const ng = u32(H, 'Game_GetNumCampGroups');
-  const groups = [];
-  for (let g = 0; g < ng; g++) {
-    check(X.Game_GetCampGroupHandle(H, g, outBuf));
-    const gh = dv().getBigUint64(outBuf, true);
-    check(X.Game_GetCampGroup(H, gh, outBuf));
-    const gr = { i: g, gem: dv().getUint32(outBuf, true), gold: dv().getUint32(outBuf + 4, true), cooldown: dv().getUint32(outBuf + 8, true), camps: [] };
-    const n = dv().getUint32(outBuf + 12, true);
-    for (let j = 0; j < n; j++) {
-      check(X.Game_GetCampGroupCamp(H, gh, j, outBuf));
-      const c = handles.get(dv().getBigUint64(outBuf, true)) ?? -1;
-      gr.camps.push(c);
-      if (camps[c]) camps[c].group = g;
+const wasi = new Proxy({}, {
+  get: (_, k) => (...a) => {
+    const dv = new DataView(mem.buffer);
+    if (k === 'fd_write') {
+      let n = 0;
+      for (let i = 0; i < a[2]; i++) n += dv.getUint32(a[1] + i * 8 + 4, true);
+      dv.setUint32(a[3], n, true);
+      return 0;
     }
-    groups.push(gr);
+    if (k === 'environ_sizes_get') { dv.setUint32(a[0], 0, true); dv.setUint32(a[1], 0, true); return 0; }
+    if (k === 'random_get') { new Uint8Array(mem.buffer, a[0], a[1]).fill(7); return 0; }
+    if (k === 'fd_prestat_get') return 8;
+    if (k === 'proc_exit') throw new Error('proc_exit ' + a[0]);
+    return 0;
+  },
+});
+const wasmFile = fs.existsSync(path.join(VIS, 'assets', 'v3.wasm')) ? 'v3.wasm' : fs.readdirSync(path.join(VIS, 'assets')).find((f) => f.startsWith('v3_0_0-'));
+const inst = new WebAssembly.Instance(new WebAssembly.Module(fs.readFileSync(path.join(VIS, 'assets', wasmFile))),
+  { wasi_snapshot_preview1: wasi, deep_wasm: { on_assert_fail_impl: () => 1 } });
+const X = inst.exports;
+mem = X.memory;
+X._initialize();
+const dv = () => new DataView(mem.buffer);
+const outBuf = X.Engine_Malloc(32);
+// A local judge replay is a zip bundle (replay.repl26a + stdout/fuel files): take the inner replay.
+function innerReplay(buf) {
+  if (buf.readUInt32LE(0) !== 0x04034b50) return buf;
+  for (let o = 0; o + 30 < buf.length && buf.readUInt32LE(o) === 0x04034b50;) {
+    const method = buf.readUInt16LE(o + 8), csize = buf.readUInt32LE(o + 18);
+    const nlen = buf.readUInt16LE(o + 26), xlen = buf.readUInt16LE(o + 28);
+    const name = buf.subarray(o + 30, o + 30 + nlen).toString();
+    const data = buf.subarray(o + 30 + nlen + xlen, o + 30 + nlen + xlen + csize);
+    if (name === 'replay.repl26a') return method === 8 ? zlib.inflateRawSync(data) : data;
+    o += 30 + nlen + xlen + csize;
   }
-  check(X.Game_GetTeamASpawnArea(H, outBuf));
-  const spawnA = [0, 4, 8, 12].map((o) => dv().getInt32(outBuf + o, true));
-  return { w, h, camps, groups, spawnA };
+  throw new Error('no replay.repl26a in the bundle');
 }
-
-function sig(l) { return `${l.w}x${l.h}:` + l.camps.map((c) => `${c.type}@${c.x},${c.y}`).sort().join(';'); }
-function matchMap(l) {
-  const want = sig(l);
-  let best = 'unknown';
-  if (!fs.existsSync(mapsDir)) return best;
-  for (const f of fs.readdirSync(mapsDir).filter((f) => f.endsWith('.map26a'))) {
-    try {
-      const H = load(fs.readFileSync(path.join(mapsDir, f)), false);
-      if (sig(layout(H)) === want) best = f.replace(/\.map26a$/, '');
-      X.Game_Destroy(H);
-    } catch (e) { /* not a loadable map */ }
-  }
-  return best;
+const bytes = innerReplay(fs.readFileSync(REPLAY));
+const p = X.Engine_Malloc(bytes.length);
+new Uint8Array(mem.buffer, p, bytes.length).set(bytes);
+function check(rc, what) {
+  if (!rc) return;
+  const c = X.GetLastErrorMsg();
+  const msg = Buffer.from(new Uint8Array(mem.buffer, c, 400)).toString().split('\0')[0];
+  throw new Error(`${what}: engine error ${rc} ${msg}`);
 }
-
-// ---- replay ---------------------------------------------------------------
-const H = load(fs.readFileSync(replayPath), true);
-const L = layout(H);
-const mapName = matchMap(L);
-check(X.Game_Visualiser_Timeline_GetMain(H, outBuf));
-const main = dv().getBigUint64(outBuf, true);
-check(X.Game_Visualiser_Timeline_Info(H, main, args, args + 8, args + 16));
+check(X.Game_FromReplayFileBytes(p, bytes.length, outBuf), 'load');
+const h = dv().getBigUint64(outBuf, true);
+const snap = X.Engine_Malloc(X.Game_Visualiser_SnapshotSize());
+const args = X.Engine_Malloc(128);
+check(X.Game_Visualiser_Timeline_GetMain(h, outBuf), 'timeline');
+const tl = dv().getBigUint64(outBuf, true);
+check(X.Game_Visualiser_Timeline_Info(h, tl, args, args + 8, args + 16), 'info');
 const size = dv().getUint32(args, true);
-// engine 2.0.0's snapshot is 2,688 bytes longer: each of the 16 champion records holds 84 item counts, not 42
-const SNAP = X.Game_Visualiser_TimelineSnapshotSize(), R = 120;
-if (SNAP !== 40152 && SNAP !== 42840) throw new Error('unsupported snapshot layout ' + SNAP);
-const NIT = SNAP === 40152 ? 42 : 84, CST = 48 + NIT * 4 + 36, CEND = 196 + 16 * CST, SH = CEND - 4228;
-const IT = NIT === 42 ? ITEMS : ITEMS4;
-const tp = X.Engine_Malloc(SNAP);
-check(X.Game_Visualiser_Timeline_Seek(H, main, 0, 0));
+const pp = args + 48;
+dv().setUint32(pp, OMNI.team, true);
+dv().setUint32(pp + 4, OMNI.champion, true);
 
-function decode() {
-  check(X.Game_Visualiser_ReadTimelineState(H, tp));
-  const e = dv(), t = tp, u = (n) => e.getUint32(t + n, true), i = (n) => e.getInt32(t + n, true), f = (n) => e.getFloat32(t + n, true);
-  const drafts = [[], []];
-  for (let a = 0; a < 2; a++) for (let b = 0; b < 5; b++) drafts[a].push(i(R + 12 + a * 20 + b * 4));
-  const arr = (co, d, stride, cap, fn) => { const n = u(co); const r = []; for (let k = 0; k < Math.min(n, cap); k++) r.push(fn(d + k * stride)); return r; };
-  const slot = u(108);
+const r1 = (x) => (x === undefined ? null : Math.round(x * 10) / 10);
+function champ(c) {
   return {
-    round: u(8), awaitingInput: !!u(20), phase: u(24), outcome: u(28),
-    banked: [Number(e.getBigUint64(t + 32, true)), Number(e.getBigUint64(t + 40, true))],
-    inputPosition: u(56),
-    step: { phase: u(64), kind: u(68), actorKind: u(72), actor: u(76), from: [i(80), i(84)], to: [i(88), i(92)], round: u(96), substep: u(104), slot: slot === 4294967295 ? -1 : slot },
-    drafts,
-    champions: arr(172, 196, CST, 16, (n) => ({ idx: u(n + 4), team: u(n + 8), type: u(n + 12), x: i(n + 16), y: i(n + 20), hp: f(n + 24), maxHp: f(n + 28), alive: !!u(n + 32), gold: u(n + 36), gems: u(n + 40), kills: u(n + 44), items: Array.from({ length: NIT }, (_, k) => u(n + 48 + k * 4)), cons: Array.from({ length: 4 }, (_, k) => u(n + 48 + NIT * 4 + k * 4)) })),
-    camps: arr(176, 4228 + SH, 28, 500, (n) => ({ idx: u(n + 4), team: u(n + 8), type: u(n + 12), x: i(n + 16), y: i(n + 20), hp: f(n + 24) })),
-    groups: arr(180, 18228 + SH, 8, 500, (n) => ({ reward: !!u(n), capture: u(n + 4) })),
-    wards: arr(184, 22228 + SH, 8, 128, (n) => ({ team: u(n) })),
+    i: c.entity.index, tm: c.team, ty: c.type, x: c.position?.x ?? -1, y: c.position?.y ?? -1,
+    hp: r1(c.health), mhp: r1(c.maxHealth), al: c.alive ? 1 : 0, gm: c.gems ?? null, gd: c.gold ?? null,
+    st: r1(c.strength?.effective), fo: r1(c.focus?.effective), cd: c.cooldowns, bf: (c.buffs || []).map((b) => [b.type, b.timer, r1(b.magnitude)]),
+    pr: c.priority ?? null, npr: c.nextPriority ?? null, dro: c.draftOrder ?? null, cht: c.channelTimer ?? null, chy: c.channelType ?? null,  // 10 Nov: scheduling priority (this round / next), draft order, channel
   };
 }
-
-const r1 = (v) => Math.round(v);
-const events = [];
-const rounds = [];
-let prev = decode();
-let steps = 0;
-let scamps = null; // full-map camps [idx, type, x, y] (the map file holds one half)
-const champMeta = new Map();
-const ACT = new Set([5, 6, 11, 12, 13, 14, 15, 16, 18, 20, 21, 22, 24, 25, 26]);
-
-function targetAt(s, x, y) {
-  const c = s.champions.find((c) => c.alive && c.x === x && c.y === y);
-  if (c) return ['C', c.idx];
-  const m = s.camps.find((m) => m.x === x && m.y === y);
-  if (m) return ['M', m.idx];
-  return ['T', x, y];
+const out = [];
+let lastRound = -1;
+// Seek once, then replay forward one input at a time (seeking each position replays from the start: quadratic).
+// ReplayNext advances one substep; a state is emitted once per input position (what Seek(pos, 0) shows).
+check(X.Game_Visualiser_Timeline_Seek(h, tl, 0, 0), 'seek');
+let lastInput = -1;
+for (let it = 0; it < 50 * size + 1000; it++) {
+  if (it > 0 && X.Game_Visualiser_Timeline_ReplayNext(h, 1)) break;
+  check(X.Game_Visualiser_ReadState(h, pp, snap), 'read');
+  const hd = parseHeader(dv(), snap);
+  if (hd.inputPosition === lastInput) continue;
+  lastInput = hd.inputPosition;
+  const st = hd.step;
+  if (hd.round !== lastRound && hd.phase !== 12) {
+    const s = parseState(dv(), snap);
+    out.push(JSON.stringify({ t: 'round', r: hd.round, gems: hd.submittedGems.map(Number), ch: s.champions.map(champ),
+      cp: s.camps.filter((c) => c.health > 0 && c.position).map((c) => [c.position.x, c.position.y, Math.round(c.health), c.type]) }));
+    lastRound = hd.round;
+  }
+  if (st.actor.kind === 1) {
+    const s = parseState(dv(), snap);
+    const a = s.champions.find((c) => c.entity.index === st.actor.index);
+    out.push(JSON.stringify({ t: 'step', r: hd.round, k: st.kind, ph: st.phase, a: st.actor.index, f: [st.from.x, st.from.y], to: [st.to.x, st.to.y],
+      sub: st.substep, slot: st.abilitySlot ?? null, at: st.abilityType ?? null, pv: st.kind === 9 ? st.priority : undefined, hp: a ? r1(a.health) : null, pos: a?.position ? [a.position.x, a.position.y] : null }));
+  }
+  if (out.length > 4000) { process.stdout.write(out.join('\n') + '\n'); out.length = 0; }
 }
-
-for (;;) {
-  if (prev.outcome || (prev.awaitingInput && prev.inputPosition >= size)) break;
-  check(X.Game_Visualiser_Timeline_ReplayNext(H, 1));
-  const s = decode(); steps++;
-  const st = s.step, rd = s.phase === 12 ? 0 : s.round;
-  for (const c of s.champions) if (!champMeta.has(c.idx)) champMeta.set(c.idx, { i: c.idx, team: c.team, type: c.type, name: CHAMP[c.type] });
-
-  if (ACT.has(st.kind) && (st.substep === 0 || (st.kind === 18 && (s.banked[0] !== prev.banked[0] || s.banked[1] !== prev.banked[1])))) {
-    const ev = [rd, STEP[st.kind], st.actorKind === 1 ? st.actor : `${st.actorKind}:${st.actor}`];
-    if (st.kind === 5 || st.kind === 6) { ev.push(...targetAt(s, st.to[0], st.to[1])); if (st.kind === 6) ev.push('slot' + st.slot); }
-    if (st.kind === 13 || st.kind === 25) {
-      const a = prev.champions.find((c) => c.idx === st.actor), b = s.champions.find((c) => c.idx === st.actor);
-      if (a && b) {
-        const sign = st.kind === 13 ? 1 : -1;
-        const k = b.items.findIndex((v, j) => (v - a.items[j]) * sign > 0);
-        const q = b.cons.findIndex((v, j) => (v - a.cons[j]) * sign > 0);
-        ev.push(k >= 0 ? IT[k] : q >= 0 ? CONSUMABLES[q] : '?', b.gold);
-      }
-    }
-    if (st.kind === 18) ev.push(s.banked[0] - prev.banked[0], s.banked[1] - prev.banked[1]);
-    if (st.kind === 12 || st.kind === 11) { const c = s.champions.find((c) => c.idx === st.actor); if (c) ev.push(c.gems, c.x, c.y); }
-    if (st.kind === 14) ev.push(st.to[0], st.to[1]);
-    events.push(ev);
-  }
-  // deaths and kills from state diffs
-  const pm = new Map(prev.champions.map((c) => [c.idx, c]));
-  for (const c of s.champions) {
-    const p = pm.get(c.idx);
-    if (!p) continue;
-    if (p.alive && !c.alive) {
-      const killers = s.champions.filter((k) => k.kills > (pm.get(k.idx)?.kills ?? 0)).map((k) => k.idx);
-      events.push([rd, 'Death', c.idx, p.gems, p.x, p.y, killers, `${STEP[st.kind]}:${st.actorKind}:${st.actor}`]);
-    }
-  }
-  for (let g = 0; g < s.groups.length; g++) {
-    const a = prev.groups[g], b = s.groups[g];
-    if (a && (a.capture !== b.capture || a.reward !== b.reward)) events.push([rd, 'Group', g, a.reward, b.reward, a.capture, b.capture]);
-  }
-  if (!scamps && s.camps.length && s.camps.every((m) => m.x >= 0)) scamps = s.camps.map((m) => [m.idx, CAMP[m.type] ?? m.type, m.x, m.y]);
-  if (s.round !== prev.round && prev.phase !== 12) {
-    rounds.push({
-      r: prev.round, banked: prev.banked,
-      champs: prev.champions.map((c) => [c.idx, c.x, c.y, r1(c.hp), c.alive ? 1 : 0, c.gold, c.gems, c.kills, r1(c.maxHp)]),
-      campHp: prev.camps.map((m) => r1(m.hp)),
-      cap: prev.groups.map((g) => (g.reward ? 1 : 0) + 2 * g.capture),
-      wards: prev.wards.length,
-    });
-  }
-  prev = s;
-}
-const fin = prev;
-rounds.push({ r: fin.round, banked: fin.banked, champs: fin.champions.map((c) => [c.idx, c.x, c.y, r1(c.hp), c.alive ? 1 : 0, c.gold, c.gems, c.kills, r1(c.maxHp)]), campHp: fin.camps.map((m) => r1(m.hp)), cap: fin.groups.map((g) => (g.reward ? 1 : 0) + 2 * g.capture), wards: fin.wards.length });
-
-const out = {
-  meta: {
-    file: replayPath, map: mapName, w: L.w, h: L.h, spawnA: L.spawnA, steps,
-    picks: fin.drafts.map((d) => d.filter((x) => x >= 0).map((x) => DRAFT[x])),
-    outcome: fin.outcome, endRound: fin.round, banked: fin.banked,
-  },
-  camps: L.camps.map((c) => ({ ...c, type: CAMP[c.type] ?? c.type })),
-  groups: L.groups,
-  champs: [...champMeta.values()].map((m) => { const c = fin.champions.find((c) => c.idx === m.i); return { ...m, items: c ? Object.fromEntries(c.items.map((v, k) => [IT[k], v]).filter(([, v]) => v)) : {}, cons: c?.cons }; }),
-  scamps,
-  rounds, events,
-};
-const json = JSON.stringify(out);
-if (outPath) fs.writeFileSync(outPath, json); else process.stdout.write(json);
-console.error(`${path.basename(path.dirname(replayPath))}/${path.basename(replayPath)}: map ${mapName} ${L.w}x${L.h}, picks ${JSON.stringify(out.meta.picks)}, outcome ${fin.outcome}, round ${fin.round}, banked ${fin.banked}, ${steps} steps, ${events.length} events`);
+process.stdout.write(out.join('\n') + '\n');

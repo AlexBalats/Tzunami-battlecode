@@ -2,55 +2,30 @@
 .cambc/
 bots/*/.cambc/
 bots/*/build/
-bots/*/target/
+compile_commands.json
 
-# local match outputs (tools/arena.py writes runs/arena/, cambc writes replays/; matches/ holds run-batch lists)
+# match outputs and downloaded games
 runs/
 replays/
-matches/
-replays_from_others/
-/*.csv
-# downloaded match bundles and raw replays wherever they sit (other_stuff_for_now/fish/, tourney_top/: other teams'
-# games, read by the decoders, never committed)
 match-*.zip
 *.repl26a
 
-# iCloud conflict copies ("cambc 2.h", "src 2/", "compile_commands 3.json"): duplicates the sync drops beside the real file
+# iCloud conflict copies
 * [0-9]
 * [0-9].*
 
-# cambc writes a per-machine compile_commands.json (absolute paths) into every bot folder
-compile_commands.json
-
-# local scratch: every bots/_* folder is a generated copy (arena NAME@REV snapshots, rollbacks, probes),
-# rebuilt on demand and never committed
+# local scratch bots
 bots/_*/
 
-# Python and tooling
+# Python, editors, secrets
 .venv/
 __pycache__/
-.pytest_cache/
-tools/mapgen/.cache/
 .claude/
 .vscode/
 .DS_Store
-
-# submissions: only the ladder entry and the bar are committed
-submissions/*.zip
-!submissions/redo-r7.zip
-!submissions/redo-r9.zip
-!submissions/strat-sw.zip
-!submissions/cpp-port.zip
-!submissions/cpp-p4.zip
-!submissions/cpp-p5.zip
-!submissions/cpp-p6.zip
-!submissions/cpp-p7.zip
-!submissions/cpp-p8.zip
-!submissions/cpp-p9.zip
-!submissions/cpp-p12.zip
-!submissions/cpp-p10.zip
-!submissions/cpp-p13.zip
-!submissions/cpp-p11.zip
-!submissions/cpp-p15.zip
-!submissions/cpp-p16.zip
-!submissions/cpp-p17.zip
+.modal.toml
+.env
+*.pem
+*.key
+matches/
+bots/*/target/

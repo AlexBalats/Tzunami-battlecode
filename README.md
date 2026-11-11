@@ -1,44 +1,18 @@
 # Tzunami-battlecode
 
-Bot submission for Cambridge Battlecode (CAMBC 2026).
-
-## The idea
-
-Our bots are built around Sun Tzu's *Art of War*. Each principle has to earn its place: it must act on a real game mechanic, become a concrete rule or score in the bot, and be tested on/off in matches. Everything is priced in one currency (gems/gold per round), so "fight or farm" is a calculation, not a vibe.
-
-## What's where
-
-| File | What it's for |
-| --- | --- |
-| `CLAUDE.md` | How we work, where things are, key facts, the task list (also Claude Code's context) |
-| `docs/HANDOFF.md` | Where work stopped, what's next, how to run things, engine gotchas |
-| `docs/redo/` | **The redo (20 Oct):** the design docs, built one per session, with each session's results (`docs/redo/README.md`) |
-| `GameRules.md` | Official game rules (reference) |
-| `BotAPIPython.md` | Official Python bot API (reference); the C++ API is `sdk/cpp/cambc.h` |
-| `docs/GETTING_STARTED.md` | Official: install the `cambc` CLI, create a workspace, run, submit |
-| `docs/TESTING.md` | Official: local matches, replays, stats export, batch runs |
-| `docs/QUICKSTART_MATCHES.md` | Running matches fast, and `tools/arena.py` (bot A vs bot B on every map, both sides) |
-| `docs/CHAMPIONS.md`, `docs/Champions/` | One profile per champion: strengths, weaknesses, needs, counters, bot notes |
-| `docs/ART_OF_WAR.md` | Source text: key passages quoted word for word, plus the main principles P1–P23 |
-| `bots/README.md` | What each bot folder is: `bots/cpp` is the bot (C++, from 22 Oct), `bots/cpp-port` the bar, `bots/redo` the Python reference (R9) |
-| `submissions/` | The ladder zips: `cpp-p4.zip` (23 Oct: `bots/cpp` with routing pieces 1, 2 and 4, the new entry), `cpp-port.zip` (the bar, 22 Oct), `redo-r9.zip`, `redo-r7.zip`, `strat-sw.zip` (history) |
-| `tools/` | `arena.py` (bot A vs bot B on every map, both sides), `assemble.py` (build a bot from its parts), match and replay stats (`navstats.py`, `microstats.py`, `champstats.py`, `replay/`) |
-| `tests/` | The comms codec test: `python3 -I -m pytest -q tests` |
-| `docs/archive/` | History: every plan and register before the redo. Not a reference |
-
-## Quick start
+Team Tzunami's bot for Cambridge Battlecode (CAMBC 2026, patch 5.0). **`bots/tz` = v315 (stamp tz-200), locked for the
+11 Nov UK qualifier.** `CLAUDE.md` maps the repo; `docs/BUILD_LOG.md` is the build record.
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install cambc==3.0.5      # SDK version pinned in cambc.toml
-.venv/bin/cambc run starter-python starter-python --map 00expanse --statistics replays/stats.json --json --release
-.venv/bin/cambc view                              # opens the most recent replay
+python3 -m venv .venv && .venv/bin/pip install cambc==5.0.0
+.venv/bin/cambc build tz --release                          # builds bots/tz (C++ -> WASI)
+.venv/bin/cambc run tz v93 --map 00expanse --release         # one local match
+python3 -I tools/judge.py tz --opp v93 idle                  # local judge: 128 maps x 2 sides
 ```
 
-The workspace (`cambc.toml`, `sdk/`, `maps/`) is already in the repo, so there's no need to run `cambc init`. To compare two bots on every map from both sides: `python3 -I tools/arena.py BOT_A BOT_B` (see `docs/QUICKSTART_MATCHES.md` → Arena). `.venv/` and `replays/` are git-ignored. A full match takes about 5 seconds.
-
-## How claims are tagged
-
-Every number or mechanic in our docs says where it comes from: **[rules]** (the handbook), **[sdk]** (the SDK code),
-**[measured]** (our matches) or **[guess]** (not yet checked, not safe to build on). Guesses live in the design doc
-that needs them and are checked in the session that builds that doc.
+| Bot | What it is |
+| --- | --- |
+| `bots/tz` | The locked bot (v315). |
+| `bots/v93` | Our old ladder bot: a local sparring opponent only. |
+| `bots/idle` | Drafts, then never acts. |
+| `bots/starter-cpp` | The official starter. |
